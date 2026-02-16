@@ -1,0 +1,5 @@
+*.ch
+build/
+build_tests/
+.cache/
+examples/
