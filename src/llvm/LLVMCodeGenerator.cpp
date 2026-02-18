@@ -25,6 +25,10 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
   case ast::NodeType::VariableDecl:
     return generateVariableDecl(std::unique_ptr<ast::VariableDecl>(
         static_cast<ast::VariableDecl *>(decl.release())));
+  case ast::NodeType::TupleDestructuringDecl:
+    return generateTupleDestructuringDecl(
+        std::unique_ptr<ast::TupleDestructuringDecl>(
+            static_cast<ast::TupleDestructuringDecl *>(decl.release())));
   case ast::NodeType::FunctionDecl:
     return generateFunctionDecl(std::unique_ptr<ast::FunctionDecl>(
         static_cast<ast::FunctionDecl *>(decl.release())));
@@ -57,9 +61,18 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
 llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     std::unique_ptr<ast::VariableDecl> varDecl) {
   llvm::Type *varType = nullptr;
+  bool isSliceType = false;
+  llvm::Type *sliceElementType = nullptr;
+
   if (varDecl->type) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
       varType = generateType(typeNode);
+      // 检查是否是切片类型
+      if (auto *sliceTypeNode =
+              dynamic_cast<const ast::SliceType *>(varDecl->type.get())) {
+        isSliceType = true;
+        sliceElementType = generateType(sliceTypeNode->baseType.get());
+      }
     }
   } else if (varDecl->initializer) {
     if (auto *literal =
@@ -136,6 +149,65 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   llvm::AllocaInst *alloca =
       builder()->CreateAlloca(varType, nullptr, varDecl->name);
 
+  // 检查是否是切片类型且初始化值是数组初始化表达式，进行临时数组生命周期延长
+  if (isSliceType && sliceElementType && varDecl->initializer) {
+    if (auto *arrayInit =
+            dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
+      // 1. 创建临时数组变量
+      size_t arraySize = arrayInit->elements.size();
+      std::string tempArrayName = "_temp_" + varDecl->name;
+      llvm::Type *tempArrayType = getArrayType(sliceElementType, arraySize);
+      llvm::AllocaInst *tempArrayAlloca =
+          builder()->CreateAlloca(tempArrayType, nullptr, tempArrayName);
+
+      // 2. 生成数组初始化代码
+      std::vector<llvm::Constant *> constants;
+      for (auto &elem : arrayInit->elements) {
+        if (auto *literal = dynamic_cast<ast::Literal *>(elem.get())) {
+          llvm::Value *val = generateLiteralExpr(std::unique_ptr<ast::Literal>(
+              static_cast<ast::Literal *>(elem.release())));
+          if (auto *constVal = llvm::dyn_cast<llvm::Constant>(val)) {
+            constants.push_back(constVal);
+          } else {
+            throw std::runtime_error(
+                "Array initializer elements must be literals");
+          }
+        } else {
+          throw std::runtime_error(
+              "Array initializer elements must be literals");
+        }
+      }
+      llvm::Constant *arrayConstant = llvm::ConstantArray::get(
+          llvm::ArrayType::get(sliceElementType, arraySize), constants);
+      builder()->CreateStore(arrayConstant, tempArrayAlloca);
+
+      // 3. 创建切片，指向临时数组
+      std::vector<llvm::Value *> indices;
+      indices.push_back(
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0));
+      indices.push_back(
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0));
+      llvm::Value *arrayPtr = builder()->CreateGEP(
+          tempArrayType, tempArrayAlloca, indices, "array_ptr");
+
+      // 4. 构建切片结构体
+      llvm::Value *sliceValue = llvm::UndefValue::get(varType);
+      sliceValue =
+          builder()->CreateInsertValue(sliceValue, arrayPtr, 0, "slice_ptr");
+      llvm::Constant *lenConstant =
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), arraySize);
+      sliceValue =
+          builder()->CreateInsertValue(sliceValue, lenConstant, 1, "slice_len");
+
+      // 5. 存储切片到变量
+      builder()->CreateStore(sliceValue, alloca);
+
+      namedValues_[varDecl->name] = alloca;
+      return alloca;
+    }
+  }
+
+  // 正常初始化路径
   if (varDecl->initializer) {
     llvm::Value *initValue =
         generateExpression(std::move(varDecl->initializer));
@@ -144,6 +216,36 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
 
   namedValues_[varDecl->name] = alloca;
   return alloca;
+}
+
+llvm::Value *LLVMCodeGenerator::generateTupleDestructuringDecl(
+    std::unique_ptr<ast::TupleDestructuringDecl> tupleDecl) {
+  if (!tupleDecl->initializer) {
+    throw std::runtime_error("Tuple destructuring must have initializer");
+  }
+
+  // 1. 生成初始化表达式的值
+  llvm::Value *tupleValue =
+      generateExpression(std::move(tupleDecl->initializer));
+
+  // 2. 为每个变量分配空间并赋值
+  for (size_t i = 0; i < tupleDecl->names.size(); ++i) {
+    const auto &name = tupleDecl->names[i];
+    // 我们现在还没有精确的类型信息，不过先简单实现，假设我们已经知道了类型
+    // 这里暂时只做一个占位实现，后续需要类型信息才能正确生成
+    // 先假设所有元素都是 int 类型，用于测试
+    llvm::Type *elemType = llvm::Type::getInt32Ty(context());
+    llvm::AllocaInst *alloca = builder()->CreateAlloca(elemType, nullptr, name);
+
+    // 从 tupleValue 中提取第 i 个元素
+    llvm::Value *elemValue =
+        builder()->CreateExtractValue(tupleValue, i, name + "_elem");
+    builder()->CreateStore(elemValue, alloca);
+
+    namedValues_[name] = alloca;
+  }
+
+  return nullptr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
@@ -452,6 +554,11 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
     auto *varStmt = static_cast<ast::VariableStmt *>(stmt.get());
     stmt.release();
     return generateVariableDecl(std::move(varStmt->declaration));
+  }
+  case ast::NodeType::TupleDestructuringDecl: {
+    auto *tupleStmt = static_cast<ast::TupleDestructuringStmt *>(stmt.get());
+    stmt.release();
+    return generateTupleDestructuringDecl(std::move(tupleStmt->declaration));
   }
   default:
     return nullptr;
@@ -780,6 +887,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::StructInitExpr:
     return generateStructInitExpr(std::unique_ptr<ast::StructInitExpr>(
         static_cast<ast::StructInitExpr *>(expr.release())));
+  case ast::NodeType::TupleExpr:
+    return generateTupleExpr(std::unique_ptr<ast::TupleExpr>(
+        static_cast<ast::TupleExpr *>(expr.release())));
   default:
     return nullptr;
   }
@@ -1324,6 +1434,33 @@ llvm::Value *LLVMCodeGenerator::generateStructInitExpr(
   return nullptr;
 }
 
+llvm::Value *LLVMCodeGenerator::generateTupleExpr(
+    std::unique_ptr<ast::TupleExpr> tupleExpr) {
+  std::vector<llvm::Type *> elementTypes;
+  std::vector<llvm::Value *> elementValues;
+
+  // 生成每个元素的值并收集类型
+  for (auto &elem : tupleExpr->elements) {
+    llvm::Value *val = generateExpression(std::move(elem));
+    elementValues.push_back(val);
+    elementTypes.push_back(val->getType());
+  }
+
+  // 创建一个 StructType 来表示元组
+  llvm::StructType *tupleType = llvm::StructType::get(context(), elementTypes);
+
+  // 创建一个 UndefValue 作为初始值
+  llvm::Value *tupleValue = llvm::UndefValue::get(tupleType);
+
+  // 将每个元素插入到 tupleValue 中
+  for (size_t i = 0; i < elementValues.size(); ++i) {
+    tupleValue = builder()->CreateInsertValue(
+        tupleValue, elementValues[i], i, "tuple_elem_" + std::to_string(i));
+  }
+
+  return tupleValue;
+}
+
 llvm::Type *LLVMCodeGenerator::generateType(const ast::Type *type) {
   if (!type) {
     return llvm::Type::getVoidTy(context());
@@ -1382,6 +1519,15 @@ llvm::Type *LLVMCodeGenerator::generateType(const ast::Type *type) {
     auto llvmFuncType = llvm::FunctionType::get(returnType, paramTypes, false);
     // 返回函数指针类型（不透明指针）
     return llvm::PointerType::get(llvmFuncType, 0);
+  } else if (auto *tupleType = dynamic_cast<const ast::TupleType *>(type)) {
+    std::vector<llvm::Type *> elementTypes;
+    for (const auto &elementType : tupleType->elementTypes) {
+      elementTypes.push_back(generateType(elementType.get()));
+    }
+    if (elementTypes.empty()) {
+      elementTypes.push_back(llvm::Type::getInt8Ty(context()));
+    }
+    return llvm::StructType::create(context(), elementTypes);
   }
 
   return getPrimitiveType(type->toString());
@@ -1456,7 +1602,20 @@ llvm::Type *LLVMCodeGenerator::getArrayType(llvm::Type *elementType,
 }
 
 llvm::Type *LLVMCodeGenerator::getSliceType(llvm::Type *elementType) {
-  return nullptr;
+  static std::unordered_map<llvm::Type *, llvm::StructType *> sliceTypes;
+  auto it = sliceTypes.find(elementType);
+  if (it != sliceTypes.end()) {
+    return it->second;
+  }
+
+  std::vector<llvm::Type *> elements;
+  // ptr: elementType*
+  elements.push_back(llvm::PointerType::get(elementType, 0));
+  // len: long (int64)
+  elements.push_back(llvm::Type::getInt64Ty(context()));
+  auto sliceType = llvm::StructType::create(context(), elements, "Slice");
+  sliceTypes[elementType] = sliceType;
+  return sliceType;
 }
 
 llvm::Type *LLVMCodeGenerator::getLiteralViewType() {

@@ -26,7 +26,8 @@ static Visibility parseVisibility(const std::string &specifiers) {
 }
 
 // SemanticAnalyzer 构造函数
-SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath) {
+SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath)
+    : hasError_(false) {
   if (!stdlibPath.empty()) {
     moduleLoader_ = std::make_unique<ModuleLoader>(stdlibPath);
   } else {
@@ -78,12 +79,56 @@ void SemanticAnalyzer::analyze(std::unique_ptr<ast::Program> program) {
 }
 
 // 分析声明
+// 分析元组解构声明
+void SemanticAnalyzer::analyzeTupleDestructuringDecl(
+    std::unique_ptr<ast::TupleDestructuringDecl> decl) {
+  if (!decl->initializer) {
+    error("Tuple destructuring declaration must have an initializer", *decl);
+    return;
+  }
+
+  // 分析初始化表达式（应该是元组表达式）
+  auto initType = analyzeExpression(std::move(decl->initializer));
+  if (!initType) {
+    return;
+  }
+
+  // 检查初始化表达式是否是元组类型
+  if (!initType->isTuple()) {
+    error("Tuple destructuring initializer must be a tuple", *decl);
+    return;
+  }
+
+  auto tupleType = std::static_pointer_cast<types::TupleType>(initType);
+  if (tupleType->getElementTypes().size() != decl->names.size()) {
+    error(std::format("Tuple destructuring expects {} elements, but got {}",
+                      decl->names.size(), tupleType->getElementTypes().size()),
+          *decl);
+    return;
+  }
+
+  // 为每个解构名称创建变量符号
+  for (size_t i = 0; i < decl->names.size(); ++i) {
+    const auto &name = decl->names[i];
+    auto elementType = tupleType->getElementTypes()[i];
+
+    Visibility visibility = parseVisibility(decl->specifiers);
+    auto varSymbol = std::make_shared<VariableSymbol>(
+        name, elementType, decl->kind, false, visibility);
+    symbolTable.addSymbol(varSymbol);
+  }
+}
+
 void SemanticAnalyzer::analyzeDeclaration(
     std::unique_ptr<ast::Declaration> declaration) {
   switch (declaration->getType()) {
   case ast::NodeType::VariableDecl:
     analyzeVariableDecl(std::unique_ptr<ast::VariableDecl>(
         static_cast<ast::VariableDecl *>(declaration.release())));
+    break;
+  case ast::NodeType::TupleDestructuringDecl:
+    analyzeTupleDestructuringDecl(std::unique_ptr<ast::TupleDestructuringDecl>(
+        static_cast<ast::TupleDestructuringDecl *>(declaration.release())));
     break;
   case ast::NodeType::FunctionDecl:
     analyzeFunctionDecl(std::unique_ptr<ast::FunctionDecl>(
@@ -214,8 +259,8 @@ void SemanticAnalyzer::analyzeEnumDecl(
     }
 
     // 创建枚举成员符号
-    auto memberSymbol =
-        std::make_shared<VariableSymbol>(member->name, enumType, false);
+    auto memberSymbol = std::make_shared<VariableSymbol>(
+        member->name, enumType, ast::VariableKind::Explicit, false);
 
     // 添加到符号表
     symbolTable.addSymbol(memberSymbol);
@@ -250,11 +295,10 @@ void SemanticAnalyzer::analyzeVariableDecl(
   }
 
   // 创建变量符号
-  bool isMutable = varDecl->isLate;
   bool isConst = varDecl->isConst;
   Visibility visibility = parseVisibility(varDecl->specifiers);
   auto varSymbol = std::make_shared<VariableSymbol>(
-      varDecl->name, varType, isMutable, isConst, visibility);
+      varDecl->name, varType, varDecl->kind, isConst, visibility);
 
   // 添加到符号表
   symbolTable.addSymbol(varSymbol);
@@ -332,8 +376,8 @@ void SemanticAnalyzer::analyzeFunctionDecl(
         }
 
         // 创建参数符号
-        auto paramSymbol =
-            std::make_shared<VariableSymbol>(parameter->name, paramType, false);
+        auto paramSymbol = std::make_shared<VariableSymbol>(
+            parameter->name, paramType, ast::VariableKind::Explicit, false);
 
         // 添加到符号表
         symbolTable.addSymbol(paramSymbol);
@@ -411,6 +455,11 @@ void SemanticAnalyzer::analyzeStatement(
   case ast::NodeType::VariableDecl:
     analyzeVariableDecl(std::unique_ptr<ast::VariableDecl>(
         static_cast<ast::VariableStmt *>(statement.release())
+            ->declaration.release()));
+    break;
+  case ast::NodeType::TupleDestructuringDecl:
+    analyzeTupleDestructuringDecl(std::unique_ptr<ast::TupleDestructuringDecl>(
+        static_cast<ast::TupleDestructuringStmt *>(statement.release())
             ->declaration.release()));
     break;
   case ast::NodeType::ExprStmt:
@@ -678,8 +727,8 @@ void SemanticAnalyzer::analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
               static_cast<const ast::Type *>(parameter->type.get()));
 
           // 创建参数符号
-          auto paramSymbol = std::make_shared<VariableSymbol>(parameter->name,
-                                                              paramType, false);
+          auto paramSymbol = std::make_shared<VariableSymbol>(
+              parameter->name, paramType, ast::VariableKind::Explicit, false);
           symbolTable.addSymbol(paramSymbol);
         }
       }
@@ -867,15 +916,39 @@ SemanticAnalyzer::analyzeSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr) {
       types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int));
 }
 
+// 辅助函数：检查表达式的基对象是否为只读类型
+bool SemanticAnalyzer::isBaseObjectReadonly(const ast::Expression *expr) {
+  if (!expr)
+    return false;
+
+  // 如果是 SubscriptExpr（下标访问，如 arr[0]），检查基对象
+  if (expr->getType() == ast::NodeType::SubscriptExpr) {
+    auto subscriptExpr = static_cast<const ast::SubscriptExpr *>(expr);
+    return isBaseObjectReadonly(subscriptExpr->object.get());
+  }
+
+  // 如果是 MemberExpr（成员访问），检查基对象
+  if (expr->getType() == ast::NodeType::MemberExpr) {
+    auto memberExpr = static_cast<const ast::MemberExpr *>(expr);
+    return isBaseObjectReadonly(memberExpr->object.get());
+  }
+
+  // 如果是 Identifier，检查其类型
+  if (expr->getType() == ast::NodeType::Identifier) {
+    auto identifier = static_cast<const ast::Identifier *>(expr);
+    auto symbol = symbolTable.lookupSymbol(identifier->name);
+    if (symbol && symbol->getType() == SymbolType::Variable) {
+      auto varSymbol = std::static_pointer_cast<VariableSymbol>(symbol);
+      return varSymbol->getType()->isReadonly();
+    }
+  }
+
+  return false;
+}
+
 // 分析二元表达式
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeBinaryExpr(
     std::unique_ptr<ast::BinaryExpr> binaryExpr) {
-  // 分析左操作数
-  auto leftType = analyzeExpression(std::move(binaryExpr->left));
-
-  // 分析右操作数
-  auto rightType = analyzeExpression(std::move(binaryExpr->right));
-
   // 检查是否是赋值操作符（包括 =, +=, -= 等）
   bool isAssignment = (binaryExpr->op == ast::BinaryExpr::Op::Assign ||
                        binaryExpr->op == ast::BinaryExpr::Op::AddAssign ||
@@ -888,6 +961,32 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeBinaryExpr(
                        binaryExpr->op == ast::BinaryExpr::Op::XorAssign ||
                        binaryExpr->op == ast::BinaryExpr::Op::ShlAssign ||
                        binaryExpr->op == ast::BinaryExpr::Op::ShrAssign);
+
+  // 如果是赋值操作，先检查左操作数是否是 let 变量（不可重新赋值）
+  if (isAssignment &&
+      binaryExpr->left->getType() == ast::NodeType::Identifier) {
+    auto identifier = static_cast<ast::Identifier *>(binaryExpr->left.get());
+    auto symbol = symbolTable.lookupSymbol(identifier->name);
+    if (symbol && symbol->getType() == SymbolType::Variable) {
+      auto varSymbol = std::static_pointer_cast<VariableSymbol>(symbol);
+      if (varSymbol->isImmutableBinding()) {
+        error(std::format("Cannot reassign to immutable binding '{}'",
+                          identifier->name),
+              *binaryExpr);
+      }
+    }
+  }
+
+  // 如果是赋值操作，检查左操作数的基对象是否是只读类型（如 arr[0] 中的 arr）
+  if (isAssignment && isBaseObjectReadonly(binaryExpr->left.get())) {
+    error("Cannot modify elements of readonly type", *binaryExpr);
+  }
+
+  // 分析左操作数
+  auto leftType = analyzeExpression(std::move(binaryExpr->left));
+
+  // 分析右操作数
+  auto rightType = analyzeExpression(std::move(binaryExpr->right));
 
   // 如果是赋值操作，检查左操作数是否是只读类型
   if (isAssignment && leftType->isReadonly()) {
@@ -1315,6 +1414,14 @@ SemanticAnalyzer::analyzeType(const ast::Type *type) {
     auto baseType = analyzeType(readonlyType->baseType.get());
     return types::TypeFactory::getReadonlyType(baseType);
   }
+  case ast::NodeType::TupleType: {
+    auto tupleType = static_cast<const ast::TupleType *>(type);
+    std::vector<std::shared_ptr<types::Type>> elementTypes;
+    for (const auto &elementType : tupleType->elementTypes) {
+      elementTypes.push_back(analyzeType(elementType.get()));
+    }
+    return types::TypeFactory::getTupleType(std::move(elementTypes));
+  }
   default:
     return types::TypeFactory::getPrimitiveType(
         types::PrimitiveType::Kind::Void);
@@ -1330,7 +1437,8 @@ bool SemanticAnalyzer::checkTypeCompatibility(const types::Type &type1,
 // 报告错误
 void SemanticAnalyzer::error(const std::string &message,
                              const ast::Node &node) {
-  std::cerr << "Semantic error: " << message << std::endl;
+  std::println(std::cerr, "Semantic error:{}", message);
+  hasError_ = true;
   // TODO: 添加更多错误信息，如行号、列号等
 }
 

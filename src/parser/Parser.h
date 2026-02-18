@@ -48,6 +48,11 @@ private:
   // 解析变量声明
   std::unique_ptr<ast::VariableDecl> parseVariableDecl();
 
+  // 解析元组解构声明
+  std::unique_ptr<ast::TupleDestructuringDecl>
+  parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
+                              ast::VariableKind kind);
+
   // 尝试解析变量声明（失败时返回 nullptr，不抛异常）
   std::unique_ptr<ast::VariableDecl> tryParseVariableDecl();
 

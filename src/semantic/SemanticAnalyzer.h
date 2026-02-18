@@ -20,9 +20,15 @@ public:
   // 获取符号表
   SymbolTable &getSymbolTable() { return symbolTable; }
 
+  // 检查是否有错误
+  bool hasError() const { return hasError_; }
+
 private:
   // 符号表
   SymbolTable symbolTable;
+
+  // 错误标志
+  bool hasError_ = false;
 
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
@@ -35,6 +41,10 @@ private:
 
   // 分析变量声明
   void analyzeVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
+
+  // 分析元组解构声明
+  void analyzeTupleDestructuringDecl(
+      std::unique_ptr<ast::TupleDestructuringDecl> decl);
 
   // 分析函数声明
   void analyzeFunctionDecl(std::unique_ptr<ast::FunctionDecl> funcDecl);
@@ -192,6 +202,9 @@ private:
   // 检查类型兼容性
   bool checkTypeCompatibility(const types::Type &type1,
                               const types::Type &type2);
+
+  // 辅助函数：检查表达式的基对象是否为只读类型
+  bool isBaseObjectReadonly(const ast::Expression *expr);
 
   // 报告错误
   void error(const std::string &message, const ast::Node &node);

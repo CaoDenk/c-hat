@@ -14,7 +14,7 @@ bool analyzeSource(const std::string &source) {
 
     semantic::SemanticAnalyzer analyzer;
     analyzer.analyze(std::move(program));
-    return true;
+    return !analyzer.hasError();
   } catch (...) {
     return false;
   }
@@ -52,5 +52,45 @@ TEST_CASE("Array: Array with loop", "[array][loop]") {
 TEST_CASE("Array: Array as function parameter", "[array][function]") {
   SECTION("Array parameter") {
     REQUIRE(analyzeSource("func sum(int[] arr) -> int { return 0; }") == true);
+  }
+}
+
+TEST_CASE("Array: var vs let", "[array][variable]") {
+  SECTION("var can reassign") {
+    REQUIRE(analyzeSource(
+                "func test() { var arr = [1, 2, 3]; arr = [4, 5, 6]; }") ==
+            true);
+  }
+
+  SECTION("let cannot reassign") {
+    REQUIRE(analyzeSource(
+                "func test() { let arr = [1, 2, 3]; arr = [4, 5, 6]; }") ==
+            false);
+  }
+
+  SECTION("let can modify elements") {
+    REQUIRE(analyzeSource(
+                "func test() { let arr = [1, 2, 3]; arr[0] = 99; }") == true);
+  }
+}
+
+TEST_CASE("Array: array assignment type check", "[array][type]") {
+  SECTION("same size array can assign") {
+    REQUIRE(analyzeSource(
+                "func test() { var arr = [1, 2, 3]; arr = [4, 5, 6]; }") ==
+            true);
+  }
+
+  SECTION("different size array cannot assign") {
+    REQUIRE(analyzeSource(
+                "func test() { var arr = [1, 2, 3]; arr = [4, 5, 6, 7]; }") ==
+            false);
+  }
+}
+
+TEST_CASE("Array: const array", "[array][const]") {
+  SECTION("const array declaration") {
+    REQUIRE(analyzeSource("func test() { const int[3] arr = [1, 2, 3]; }") ==
+            true);
   }
 }

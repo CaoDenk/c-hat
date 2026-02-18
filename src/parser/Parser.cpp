@@ -200,11 +200,46 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
         std::move(initializer), true);
   }
 
-  // 8. 尝试解析变量声明
+  // 8. 尝试解析元组解构声明或变量声明
   if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let) ||
       check(lexer::TokenType::Late) || isTypeStart() ||
       check(lexer::TokenType::Public) || check(lexer::TokenType::Private) ||
       check(lexer::TokenType::Protected) || check(lexer::TokenType::Internal)) {
+
+    ParserState tempState = saveState();
+    std::string specifiers = "";
+
+    if (match(lexer::TokenType::Public)) {
+      specifiers = "public";
+    } else if (match(lexer::TokenType::Private)) {
+      specifiers = "private";
+    } else if (match(lexer::TokenType::Protected)) {
+      specifiers = "protected";
+    } else if (match(lexer::TokenType::Internal)) {
+      specifiers = "internal";
+    }
+
+    bool isLate = match(lexer::TokenType::Late);
+
+    ast::VariableKind kind = ast::VariableKind::Explicit;
+    if (match(lexer::TokenType::Var)) {
+      kind = ast::VariableKind::Var;
+    } else if (match(lexer::TokenType::Let)) {
+      kind = ast::VariableKind::Let;
+    }
+
+    // 检查是否是元组解构（接下来是 ( ）
+    if (check(lexer::TokenType::LParen)) {
+      // 尝试解析元组解构声明
+      auto tupleDestructuringDecl =
+          parseTupleDestructuringDecl(specifiers, isLate, kind);
+      if (tupleDestructuringDecl) {
+        return tupleDestructuringDecl;
+      }
+    }
+
+    // 不是元组解构，恢复状态，尝试解析变量声明
+    restoreState(tempState);
     auto varDecl = tryParseVariableDecl();
     if (varDecl) {
       return varDecl;
@@ -277,6 +312,45 @@ Parser::parseImportDecl(const std::string &specifiers) {
                                            std::move(alias));
 }
 
+// 解析元组解构声明
+std::unique_ptr<ast::TupleDestructuringDecl>
+Parser::parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
+                                    ast::VariableKind kind) {
+  expect(lexer::TokenType::LParen, "Expected '(' for tuple destructuring");
+  std::vector<std::string> names;
+  if (!check(lexer::TokenType::RParen)) {
+    do {
+      if (!check(lexer::TokenType::Identifier)) {
+        error("Expected identifier in tuple destructuring");
+        return nullptr;
+      }
+      names.push_back(currentToken->getValue());
+      advance();
+    } while (match(lexer::TokenType::Comma));
+  }
+  expect(lexer::TokenType::RParen,
+         "Expected ')' after tuple destructuring names");
+
+  if (names.size() < 2) {
+    error("Tuple destructuring must have at least 2 names");
+    return nullptr;
+  }
+
+  std::unique_ptr<ast::Expression> initializer;
+  if (match(lexer::TokenType::Assign)) {
+    initializer = parseExpression();
+  } else {
+    error("Tuple destructuring declaration must have an initializer");
+    return nullptr;
+  }
+
+  expect(lexer::TokenType::Semicolon,
+         "Expected ';' after tuple destructuring declaration");
+
+  return std::make_unique<ast::TupleDestructuringDecl>(
+      specifiers, isLate, kind, std::move(names), std::move(initializer));
+}
+
 // 解析变量声明
 std::unique_ptr<ast::VariableDecl> Parser::parseVariableDecl() {
   std::string specifiers = "";
@@ -299,6 +373,13 @@ std::unique_ptr<ast::VariableDecl> Parser::parseVariableDecl() {
     kind = ast::VariableKind::Var;
   } else if (match(lexer::TokenType::Let)) {
     kind = ast::VariableKind::Let;
+  }
+
+  // 检查是否是元组解构（接下来是 ( ）
+  if (check(lexer::TokenType::LParen)) {
+    // 元组解构声明的解析会在 parseDeclaration 中处理
+    error("Tuple destructuring should be handled in parseDeclaration");
+    return nullptr;
   }
 
   std::unique_ptr<ast::Node> type;
@@ -351,6 +432,12 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
       kind = ast::VariableKind::Var;
     } else if (match(lexer::TokenType::Let)) {
       kind = ast::VariableKind::Let;
+    }
+
+    // 检查是否是元组解构（接下来是 ( ）
+    if (check(lexer::TokenType::LParen)) {
+      restoreState(state);
+      return nullptr;
     }
 
     std::unique_ptr<ast::Node> type;
@@ -909,6 +996,36 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     auto varDecl = tryParseVariableDecl();
     if (varDecl) {
       return std::make_unique<ast::VariableStmt>(std::move(varDecl));
+    }
+
+    // 尝试解析元组解构声明
+    std::string specifiers = "";
+    if (match(lexer::TokenType::Public)) {
+      specifiers = "public";
+    } else if (match(lexer::TokenType::Private)) {
+      specifiers = "private";
+    } else if (match(lexer::TokenType::Protected)) {
+      specifiers = "protected";
+    } else if (match(lexer::TokenType::Internal)) {
+      specifiers = "internal";
+    }
+
+    bool isLate = match(lexer::TokenType::Late);
+
+    ast::VariableKind kind = ast::VariableKind::Explicit;
+
+    if (match(lexer::TokenType::Var)) {
+      kind = ast::VariableKind::Var;
+    } else if (match(lexer::TokenType::Let)) {
+      kind = ast::VariableKind::Let;
+    }
+
+    if (check(lexer::TokenType::LParen)) {
+      auto tupleDecl = parseTupleDestructuringDecl(specifiers, isLate, kind);
+      if (tupleDecl) {
+        return std::make_unique<ast::TupleDestructuringStmt>(
+            std::move(tupleDecl));
+      }
     }
   }
 
@@ -1656,6 +1773,34 @@ std::unique_ptr<ast::Expression> Parser::parseStructInit() {
 
 // 解析类型
 std::unique_ptr<ast::Type> Parser::parseType() {
+  // 检查是否是 (Type1, Type2, ...) 元组类型
+  if (check(lexer::TokenType::LParen)) {
+    advance(); // 消费 LParen
+
+    std::vector<std::unique_ptr<ast::Type>> elementTypes;
+    if (!check(lexer::TokenType::RParen)) {
+      do {
+        elementTypes.push_back(parseType());
+      } while (match(lexer::TokenType::Comma));
+    }
+
+    expect(lexer::TokenType::RParen, "Expected ')' after tuple type elements");
+
+    if (elementTypes.size() < 2) {
+      error("Tuple type must have at least 2 elements");
+      return nullptr;
+    }
+
+    // 检查是否是只读类型
+    std::unique_ptr<ast::Type> tupleType =
+        std::make_unique<ast::TupleType>(std::move(elementTypes));
+    if (match(lexer::TokenType::Not)) {
+      tupleType = std::make_unique<ast::ReadonlyType>(std::move(tupleType));
+    }
+
+    return parseTypeSuffix(std::move(tupleType));
+  }
+
   // 检查是否是 func(...) -> ... 函数类型
   if (check(lexer::TokenType::Func)) {
     advance();
@@ -1749,6 +1894,12 @@ Parser::parseTypeSuffix(std::unique_ptr<ast::Type> type) {
       if (match(lexer::TokenType::RBracket)) {
         // 单个 [] → 一维切片
         type = std::make_unique<ast::SliceType>(std::move(type));
+      } else if (match(lexer::TokenType::Dollar)) {
+        // [$] → 自动推导大小的栈数组
+        expect(lexer::TokenType::RBracket,
+               "Expected ']' after $ in array type");
+        // 这里 size 设为 nullptr，语义分析阶段从初始化表达式推导
+        type = std::make_unique<ast::ArrayType>(std::move(type), nullptr);
       } else if (match(lexer::TokenType::Comma)) {
         // 以逗号开头 → 多维切片，如 [, ] 或 [,,]
         int rank = 1; // 第一个隐含的维度
@@ -1818,7 +1969,8 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
     isVariadic = true;
   }
 
-  if (!check(lexer::TokenType::Identifier) && !isTypeKeyword()) {
+  if (!check(lexer::TokenType::Identifier) && !isTypeKeyword() &&
+      !check(lexer::TokenType::LParen)) {
     error("Expected parameter type");
     return nullptr;
   }
@@ -1987,7 +2139,8 @@ bool Parser::isTypeStart() const {
   }
 
   return isTypeKeyword() ||
-         currentToken->getType() == lexer::TokenType::Identifier;
+         currentToken->getType() == lexer::TokenType::Identifier ||
+         currentToken->getType() == lexer::TokenType::LParen;
 }
 
 // 检查当前token是否为类型关键字
@@ -2005,7 +2158,8 @@ bool Parser::isTypeKeyword() const {
          type == lexer::TokenType::Float || type == lexer::TokenType::Double ||
          type == lexer::TokenType::Fp16 || type == lexer::TokenType::Bf16 ||
          type == lexer::TokenType::Char || type == lexer::TokenType::Func ||
-         type == lexer::TokenType::LiteralView;
+         type == lexer::TokenType::LiteralView ||
+         type == lexer::TokenType::LParen;
 }
 
 // 其他TODO函数

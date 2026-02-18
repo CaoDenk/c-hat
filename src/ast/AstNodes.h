@@ -40,6 +40,7 @@
 #include "declarations/NamespaceDecl.h"
 #include "declarations/SetterDecl.h"
 #include "declarations/StructDecl.h"
+#include "declarations/TupleDestructuringDecl.h"
 #include "declarations/TypeAliasDecl.h"
 #include "declarations/VariableDecl.h"
 
@@ -56,6 +57,7 @@
 #include "statements/LabelStmt.h"
 #include "statements/ReturnStmt.h"
 #include "statements/Statement.h"
+#include "statements/TupleDestructuringStmt.h"
 #include "statements/VariableStmt.h"
 #include "statements/WhileStmt.h"
 #include "statements/YieldStmt.h"
@@ -79,6 +81,7 @@
 #include "types/RectangularSliceType.h"
 #include "types/ReferenceType.h"
 #include "types/SliceType.h"
+#include "types/TupleType.h"
 #include "types/Type.h"
 
 // 其他

@@ -14,6 +14,8 @@ public:
   TupleExpr(std::vector<std::unique_ptr<Expression>> elements)
       : elements(std::move(elements)) {}
 
+  NodeType getType() const override { return NodeType::TupleExpr; }
+
   std::string toString() const override {
     std::string result = "(";
     for (size_t i = 0; i < elements.size(); ++i) {

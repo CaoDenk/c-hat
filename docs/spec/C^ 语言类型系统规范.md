@@ -192,9 +192,9 @@ slice[1] = 20;
 - 可以传递给期望 `Type[]` 的函数（协变）
 
 **字符串字面量**：
-- 字符串字面量 `"hello"` 的默认类型是 `std.literal_view`
-- `std.literal_view` 可以隐式转换为 `byte![]`（不可变字节切片）
-- `std.literal_view` 保证指向的数据拥有静态生命周期
+- 字符串字面量 `"hello"` 的默认类型是 `LiteralView`（编译器内置类型，不属于标准库）
+- `LiteralView` 可以隐式转换为 `byte![]`（不可变字节切片）
+- `LiteralView` 保证指向的数据拥有静态生命周期
 
 ```cpp
 // 不可变切片 - 不能修改切片内容
@@ -211,12 +211,12 @@ int first = immutable_slice[0]; // OK
 func print_ints(int[] arr) { ... }
 print_ints(immutable_slice); // OK：int![] 可隐式转换为 int[]
 
-// 字符串字面量默认为 std.literal_view
-var s = "hello"; // 类型为 std.literal_view
+// 字符串字面量默认为 LiteralView
+var s = "hello"; // 类型为 LiteralView
 // s[0] = 'H'; // 编译错误：不能修改字符串字面量
 
 // 字符串字面量可以传递给不可变切片
-byte![] bytes = "hello"; // std.literal_view -> byte![]
+byte![] bytes = "hello"; // LiteralView -> byte![]
 
 // 强制栈分配（可变）
 byte[$] s_stack = "hello"; // 在栈上分配，可修改
@@ -254,11 +254,11 @@ C^ 提供了两种字符串类型：`string` 和 `string_view`。
 ### 5.2 字符串字面量
 
 ```cpp
-// 字符串字面量默认为 std.literal_view
-var s = "hello"; // 类型为 std.literal_view
+// 字符串字面量默认为 LiteralView
+var s = "hello"; // 类型为 LiteralView
 
 // 可以隐式转换为 string
-string hello = "Hello, World!"; // std.literal_view 隐式转换为 string
+string hello = "Hello, World!"; // LiteralView 隐式转换为 string
 
 // 字符串插值
 int age = 30;
@@ -277,7 +277,7 @@ And so are you.
 
 // 字符串字面量不可修改
 var literal = "hello";
-// literal[0] = 'H'; // 编译错误：不能修改 std.literal_view
+// literal[0] = 'H'; // 编译错误：不能修改 LiteralView
 ```
 
 ### 5.3 字符串操作

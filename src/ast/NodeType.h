@@ -29,6 +29,7 @@ enum class NodeType {
   // 声明
   Declaration,
   VariableDecl,
+  TupleDestructuringDecl,
   FunctionDecl,
   ClassDecl,
   StructDecl,
@@ -80,6 +81,7 @@ enum class NodeType {
   EnumType,
   GenericType,
   ReadonlyType,
+  TupleType,
 
   // 其他
   Program,

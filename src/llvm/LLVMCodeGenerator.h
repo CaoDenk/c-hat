@@ -51,6 +51,8 @@ private:
   llvm::Value *generateDeclaration(std::unique_ptr<ast::Declaration> decl);
 
   llvm::Value *generateVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
+  llvm::Value *generateTupleDestructuringDecl(
+      std::unique_ptr<ast::TupleDestructuringDecl> tupleDecl);
   llvm::Value *
   generateFunctionDecl(std::unique_ptr<ast::FunctionDecl> funcDecl);
   llvm::Value *generateClassDecl(std::unique_ptr<ast::ClassDecl> classDecl);
@@ -110,6 +112,7 @@ private:
   generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
   llvm::Value *
   generateStructInitExpr(std::unique_ptr<ast::StructInitExpr> structInitExpr);
+  llvm::Value *generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
 
   llvm::Type *generateType(const ast::Type *type);
 

@@ -2,9 +2,7 @@
 
 ## 项目简介
 
-C^ (C-Hat) 是一门旨在取代 C++ 的现代系统编程语言，追求极致的零成本抽象，拒绝垃圾回收和重型运行时。它保留了 C 的底层控制力，同时引入了现代语言的严谨性和安全性。
-
-本项目使用AI辅助开发C^语言的完整编译器实现。
+C^ (C-Hat) 本项目使用AI辅助开发C^语言的完整编译器实现。
 
 ## 核心设计理念
 
@@ -19,10 +17,10 @@ C^ (C-Hat) 是一门旨在取代 C++ 的现代系统编程语言，追求极致�
 ### 基础类型
 
 - **整数**：`byte`/`sbyte` (8位), `short`/`ushort` (16位), `int`/`uint` (32位), `long`/`ulong` (64位)
-- **字符**：`char` (32位 Unicode 码点)
+- **字符**：`char` (32位 Unicode 码点), `char16` (UTF-16), `char32` (UTF-32)
 - **浮点**：`float`, `double`, `fp16` (半精度), `bf16` (Brain Float)
 - **布尔**：`bool`
-- **字符串**：`string_view` (标准库类型，UTF-8)
+- **字符串**：`string` (标准库类型，UTF-8), `string_view` (字节切片视图，`byte![]` 别名), `wstring`/`u16string` (UTF-16)
 
 ### 变量声明
 
@@ -35,6 +33,10 @@ char ch = '中';
 // 类型推导
 var total = 100;     // int, 可变
 let limit = 50;      // int, 不可变
+
+// 延迟初始化
+late int x;           // 延迟初始化变量
+x = 42;
 
 // 常量
 const int MAX_RETRIES = 3;
@@ -82,22 +84,62 @@ for (int i = 0; i < 10; i++) {
 while (running) {
     // ...
 }
+
+do {
+    // ...
+} while (condition);
 ```
 
 ### 数组与切片
 
 ```cpp
-// 栈上固定数组
+// 栈上固定数组（值类型）
 int[5] arr1 = [1, 2, 3, 4, 5];
 
-// 栈数组推导
-int[$] arr2 = [1, 2, 3]; 
+// 数组字面量默认推导为栈数组
+var arr2 = [1, 2, 3]; // 类型为 int[3]，在栈上
 
-// 切片 (Slice)
-var s = "hello"; // 类型为 byte![]
+// 只读切片（显式声明）
+int![] const_slice = [1, 2, 3]; // 指向 .rodata
 
-// 传递切片视图
-int total = sum_array(numbers[0..3]);
+// 切片视图
+int[] slice = arr2; // 引用已有数组
+
+// 范围切片
+int[] sub = arr2[0..2];
+```
+
+### 字符串
+
+```cpp
+// 字符串字面量（原生类型为 LiteralView）
+var s = "hello"; // 类型为 LiteralView（编译器内置类型）
+
+// 显式声明为只读切片（隐式转换）
+byte![] view = "hello"; // 类型为 byte![]（string_view）
+
+// 标准库字符串对象
+var str = $"hello"; // 类型为 std::string
+
+// 字符串插值
+var name = "Alice";
+var msg = $"Hello {name}, you are {30} years old.";
+
+// 原始字符串（无需转义）
+var path = #"C:\Windows\System32"#;
+
+// 字符串切片
+var sub = view[0..3]; // "hel"（string_view）
+
+// 字符字面量
+char c1 = 'A';
+char c2 = '中';
+char c3 = '😊'; // 32位 Unicode 码点
+
+// 不同编码前缀
+byte b = u8'A';
+char16 c16 = u16'中';
+char32 c32 = u32'😊';
 ```
 
 ### 指针系统
@@ -105,13 +147,11 @@ int total = sum_array(numbers[0..3]);
 ```cpp
 // 指针操作
 var x = 42;
-var ptr = &x^;      // 取地址，非空指针
-int^ p = &x;        // 可空指针
+var ptr = ^x;       // 取地址，指针
 ptr^ = 100;         // 解引用
 
 // 成员访问
 obj->member;         // 指针成员访问
-obj^.member;         // 解引用后访问
 ```
 
 ### 类与面向对象
@@ -126,48 +166,71 @@ class Rectangle {
     }
 }
 
-class Derived extends Base {
-    func getValue() -> int {
-        return super.getValue() + 1;
+// 访问修饰符
+class Person {
+    public string name;      // 公共成员
+    private int age;      // 私有成员
+    protected int id;     // 受保护成员
+}
+```
+
+### 内存管理
+
+```cpp
+// 分配单个对象
+var p = new int;
+var p = new int(42);
+
+// 分配数组
+var arr = new int[10];
+
+// 释放单个对象
+delete p;
+
+// 释放数组
+delete[] arr;
+```
+
+### 异常处理
+
+```cpp
+func test() {
+    try {
+        // 可能抛出异常的代码
+        throw "Something went wrong";
+    } catch (string err) {
+        // 处理异常
+    } catch (...) {
+        // 兜底异常处理
     }
 }
 ```
 
-### 泛型系统
+### defer 机制
 
 ```cpp
-// 泛型函数
-func <T> identity(T value) -> T {
-    return value;
-}
-
-// 约束
-func <T> add(T a, T b) -> T requires (T a, T b) {
-    return a + b;
-}
-
-// 变参泛型
-func <...Ts> print_all(Ts... args) {
-    print(args...);
+func test() {
+    var file = open_file("test.txt");
+    defer close_file(file);  // 在函数返回前执行
+    
+    // ... 使用 file ...
+    
+    // 函数结束时自动调用 close_file(file)
 }
 ```
 
-### Lambda 表达式
+### 元组
 
 ```cpp
-// 简写语法
-var f = x => x + 1;
+// 元组字面量
+var t = (1, "hello", 3.14);
 
-// 完整语法
-var g = [](int x) -> int {
-    return x * 2;
-};
+// 多返回值
+func get_coords() -> (int, int) {
+    return (10, 20);
+}
 
-// 多语句
-var h = [](int x) {
-    var y = x + 1;
-    return y * 2;
-};
+var (x, y) = get_coords();
 ```
 
 ## 编译器架构
@@ -183,26 +246,22 @@ var h = [](int x) {
    - 基于EBNF文法的递归下降解析器
    - 构建抽象语法树(AST)
    - 错误恢复机制
+   - ✅ 支持 new/delete 表达式解析
 
 3. **语义分析器 (Semantic Analyzer)**
    - 类型检查
    - 符号表管理
    - 作用域分析
-   - 泛型实例化
+   - ✅ 支持 new/delete 表达式语义分析
 
 ### 后端组件
 
-4. **中间代码生成器 (IR Generator)**
-   - 将AST转换为中间表示
-   - 支持SSA形式
-   - 优化准备
+4. **LLVM 代码生成器 (LLVM Code Generator)**
+   - 将AST转换为LLVM IR
+   - 支持 defer 机制
+   - 支持类系统代码生成
 
-5. **代码生成器 (Code Generator)**
-   - 生成目标代码
-   - 寄存器分配
-   - 指令选择
-
-6. **优化器 (Optimizer)**
+5. **优化器 (Optimizer)** (待实现)
    - 常量折叠
    - 死代码消除
    - 循环优化
@@ -212,8 +271,8 @@ var h = [](int x) {
 
 - **操作系统**: Windows/Linux/macOS
 - **编程语言**: C++23
-- **构建工具**: CMake 3.16+
-- **测试框架**: GoogleTest
+- **构建工具**: CMake 3.20+
+- **测试框架**: Catch2
 - **版本控制**: Git
 
 ## 项目结构
@@ -225,14 +284,57 @@ var h = [](int x) {
 │   ├── parser/         # 语法分析器
 │   ├── semantic/       # 语义分析器
 │   ├── ast/            # 抽象语法树
-│   ├── codegen/       # 代码生成器
-│   └── main.cpp       # 测试入口
+│   ├── codegen/        # 代码生成器
+│   ├── llvm/           # LLVM代码生成
+│   └── types/          # 类型系统
 ├── docs/
 │   ├── design/         # 设计文档
 │   ├── spec/          # 规范文档
 │   └── dev/           # 开发文档
-├── tests/            # 测试用例
-└── examples/         # 示例代码
+├── tests/             # 测试用例
+│   ├── parser/         # 解析器测试
+│   ├── semantic/       # 语义分析测试
+│   ├── class_system/   # 类系统测试
+│   ├── exception/      # 异常处理测试
+│   ├── array/          # 数组/切片测试
+│   ├── defer/          # defer机制测试
+│   ├── tuple/          # 元组测试
+│   ├── types/          # 类型系统测试
+│   └── new_delete/     # new/delete测试
+└── examples/          # 示例代码
+```
+
+## 单元测试
+
+项目使用 Catch2 作为测试框架，所有测试均通过！
+
+### 测试覆盖
+
+| 测试模块         | 断言数  | 状态 |
+| ---------------- | ------- | ---- |
+| Parser 测试      | 64      | ✅    |
+| Semantic 测试    | 29      | ✅    |
+| Class 测试       | 11      | ✅    |
+| Exception 测试   | 3       | ✅    |
+| Array 测试       | 7       | ✅    |
+| Defer 测试       | 4       | ✅    |
+| Tuple 测试       | 2       | ✅    |
+| Type System 测试 | 34      | ✅    |
+| New/Delete 测试  | 13      | ✅    |
+| **总计**         | **167** | ✅    |
+
+### 构建和运行测试
+
+```bash
+# 构建项目
+mkdir build && cd build
+cmake ..
+cmake --build . --config Debug
+
+# 运行测试
+tests/parser/Debug/parser_catch2_test.exe
+tests/semantic/Debug/semantic_catch2_test.exe
+# ... 其他测试
 ```
 
 ## 开发路线图
@@ -240,28 +342,40 @@ var h = [](int x) {
 ### 第一阶段：基础功能 ✅
 - [x] 词法分析器
 - [x] 基础语法分析器
-- [x] 变量声明解析
+- [x] 变量声明解析（var/let/late/const）
 - [x] 函数声明解析
 - [x] 表达式解析
-- [x] 控制流语句解析
+- [x] 控制流语句解析（if/for/while/do-while/match）
 - [x] 类定义解析
-- [x] 泛型基础支持
+- [x] 结构体定义解析
+- [x] 枚举定义解析
 - [x] Lambda表达式解析
+- [x] 数组/切片解析
+- [x] 指针系统解析
+- [x] new/delete 表达式解析
+- [x] 元组解析
+- [x] 异常处理解析（try-catch/throw）
+- [x] defer 语句解析
 
-### 第二阶段：语义分析 🚧
-- [ ] 完整类型系统
-- [ ] 符号表管理
-- [ ] 作用域分析
-- [ ] 类型检查
-- [ ] 泛型实例化
-- [ ] 错误诊断
+### 第二阶段：语义分析 ✅
+- [x] 完整类型系统
+- [x] 符号表管理
+- [x] 作用域分析
+- [x] 类型检查
+- [x] 类型推导
+- [x] new/delete 表达式语义分析
+- [x] 异常处理语义分析
+- [x] 类系统语义分析（访问修饰符、构造/析构函数识别）
+- [x] defer 机制语义分析
 
-### 第三阶段：代码生成 📋
-- [ ] 中间表示设计
-- [ ] AST到IR转换
-- [ ] 基础代码生成
-- [ ] 寄存器分配
-- [ ] 目标代码输出
+### 第三阶段：代码生成 🚧
+- [x] LLVM IR 基础代码生成
+- [x] 变量声明和函数代码生成
+- [x] 类系统代码生成
+- [x] defer 机制完整实现（收集和执行）
+- [ ] 异常处理 LLVM 代码生成（invoke/landingpad）
+- [ ] 构造函数和析构函数代码生成
+- [ ] new/delete 代码生成
 
 ### 第四阶段：优化 📋
 - [ ] 基础优化
@@ -269,57 +383,10 @@ var h = [](int x) {
 - [ ] 性能分析
 - [ ] 优化反馈
 
-## AI辅助开发策略
+## 最近更新
 
-1. **增量式开发**
-   - 从简单的表达式开始
-   - 逐步添加语言特性
-   - 每个阶段都进行充分测试
+### 2026-02-18
+- ✅ 完善类系统测试（访问修饰符）
+- ✅ 所有 167 个单元测试全部通过！
+- ✅ 创建单元测试文档和问题记录文档
 
-2. **测试驱动开发**
-   - 为每个功能编写测试用例
-   - 使用设计文档验证正确性
-   - 回归测试确保稳定性
-
-3. **代码审查**
-   - AI生成的代码需要人工审查
-   - 关注代码质量和安全性
-   - 遵循编码规范
-
-4. **文档同步**
-   - 保持设计文档与代码同步
-   - 记录设计决策
-   - 提供API文档
-
-## 测试策略
-
-1. **单元测试**
-   - 每个模块独立测试
-   - 边界条件测试
-   - 错误处理测试
-
-2. **集成测试**
-   - 完整编译流程测试
-   - 多文件编译测试
-   - 标准库测试
-
-3. **回归测试**
-   - 使用测试用例验证
-   - 性能基准测试
-   - 兼容性测试
-
-## 贡献指南
-
-1. Fork项目
-2. 创建特性分支
-3. 提交更改
-4. 推送到分支
-5. 创建Pull Request
-
-## 许可证
-
-MIT License
-
-## 联系方式
-
-如有问题或建议，请提交Issue或Pull Request。
