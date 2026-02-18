@@ -89,7 +89,6 @@ base_type_specifier ::= 'void'
                    | base_type_specifier '!'      // 不可变类型 (const view)
                    | base_type_specifier '~'      // 右值引用类型 (rvalue ref)
                    | base_type_specifier '[' comma_list? ']' // 切片/多维数组类型 (int[,] / int[])
-                   | base_type_specifier '[' '$' ']' // 栈数组自动推导 (int[$])
                    | base_type_specifier '[' expression ']'
                    | base_type_specifier '^'
                    | base_type_specifier '&'      // 引用类型

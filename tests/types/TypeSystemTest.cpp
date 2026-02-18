@@ -95,35 +95,25 @@ TEST_CASE("Slice types", "[types]") {
 TEST_CASE("Pointer types", "[types]") {
   SECTION("Pointer type creation") {
     auto intType = TypeFactory::getPrimitiveType(PrimitiveType::Kind::Int);
-    auto pointerType = TypeFactory::getPointerType(intType, false);
-    auto nullablePointerType = TypeFactory::getPointerType(intType, true);
+    auto pointerType = TypeFactory::getPointerType(intType);
 
     REQUIRE(pointerType != nullptr);
-    REQUIRE(nullablePointerType != nullptr);
     REQUIRE(pointerType->toString() == "int^");
-    REQUIRE(nullablePointerType->toString() == "int?^");
   }
 
   SECTION("Pointer type compatibility") {
     auto intType = TypeFactory::getPrimitiveType(PrimitiveType::Kind::Int);
-    auto pointerType = TypeFactory::getPointerType(intType, false);
-    auto samePointerType = TypeFactory::getPointerType(intType, false);
-    auto differentNullablePointerType =
-        TypeFactory::getPointerType(intType, true);
+    auto pointerType = TypeFactory::getPointerType(intType);
+    auto samePointerType = TypeFactory::getPointerType(intType);
 
     REQUIRE(pointerType->isCompatibleWith(*samePointerType) == true);
-    REQUIRE(pointerType->isCompatibleWith(*differentNullablePointerType) ==
-            false);
   }
 
   SECTION("Pointer type hierarchy") {
     auto intType = TypeFactory::getPrimitiveType(PrimitiveType::Kind::Int);
-    auto pointerType = TypeFactory::getPointerType(intType, false);
-    auto nullablePointerType = TypeFactory::getPointerType(intType, true);
+    auto pointerType = TypeFactory::getPointerType(intType);
 
     REQUIRE(pointerType->isSubtypeOf(*pointerType) == true);
-    REQUIRE(nullablePointerType->isSubtypeOf(*pointerType) == false);
-    REQUIRE(pointerType->isSubtypeOf(*nullablePointerType) == true);
   }
 }
 
@@ -136,7 +126,7 @@ TEST_CASE("Function types", "[types]") {
     auto funcType = TypeFactory::getFunctionType(intType, paramTypes);
 
     REQUIRE(funcType != nullptr);
-    REQUIRE(funcType->toString() == "(int, double) -> int");
+    REQUIRE(funcType->toString() == "func(int, double) -> int");
   }
 
   SECTION("Function type compatibility") {

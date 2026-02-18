@@ -61,6 +61,7 @@
 #include "statements/YieldStmt.h"
 #include "statements/exception/CatchStmt.h"
 #include "statements/exception/DeferStmt.h"
+#include "statements/exception/ThrowStmt.h"
 #include "statements/exception/TryStmt.h"
 #include "statements/match/MatchArm.h"
 #include "statements/match/MatchStmt.h"

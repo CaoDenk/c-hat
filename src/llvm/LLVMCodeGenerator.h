@@ -56,6 +56,10 @@ private:
   llvm::Value *generateClassDecl(std::unique_ptr<ast::ClassDecl> classDecl);
   llvm::Value *generateStructDecl(std::unique_ptr<ast::StructDecl> structDecl);
   llvm::Value *
+  generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
+                              const std::string &className, bool isConstructor,
+                              bool isDestructor);
+  llvm::Value *
   generateTypeAliasDecl(std::unique_ptr<ast::TypeAliasDecl> typeAliasDecl);
   llvm::Value *generateGetterDecl(std::unique_ptr<ast::GetterDecl> getterDecl);
   llvm::Value *generateSetterDecl(std::unique_ptr<ast::SetterDecl> setterDecl);
@@ -77,6 +81,8 @@ private:
   generateContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
   llvm::Value *generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);
   llvm::Value *generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
+  llvm::Value *generateThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
+  llvm::Value *generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
 
   llvm::Value *generateExpression(std::unique_ptr<ast::Expression> expr);
   llvm::Value *getExpressionLValue(std::unique_ptr<ast::Expression> expr);
@@ -93,6 +99,7 @@ private:
   llvm::Value *
   generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr);
   llvm::Value *generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr);
+  llvm::Value *generateDeleteExpr(std::unique_ptr<ast::DeleteExpr> deleteExpr);
   llvm::Value *generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr);
   llvm::Value *generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
   llvm::Value *generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
@@ -123,6 +130,9 @@ private:
   llvm::Function *currentFunction_ = nullptr;
   llvm::BasicBlock *continueBlock_ = nullptr;
   llvm::BasicBlock *breakBlock_ = nullptr;
+
+  // defer 语句收集
+  std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
 };
 
 } // namespace llvm_codegen

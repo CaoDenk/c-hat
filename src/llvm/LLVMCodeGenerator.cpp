@@ -187,6 +187,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
     currentFunction_ = function;
 
     namedValues_.clear();
+    deferExpressions_.clear();
 
     size_t paramIndex = 0;
     auto argIt = function->args().begin();
@@ -211,6 +212,13 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
       llvm::BasicBlock *lastBlock = &function->back();
       if (!lastBlock->getTerminator()) {
+        // 执行 defer 语句（按相反顺序）
+        while (!deferExpressions_.empty()) {
+          auto deferExpr = std::move(deferExpressions_.back());
+          deferExpressions_.pop_back();
+          generateExpression(std::move(deferExpr));
+        }
+
         if (returnType->isVoidTy()) {
           builder()->SetInsertPoint(lastBlock);
           builder()->CreateRetVoid();
@@ -222,6 +230,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
     }
 
     currentFunction_ = prevFunction;
+    deferExpressions_.clear();
   }
 
   functions_[funcDecl->name] = function;
@@ -230,6 +239,45 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
 llvm::Value *LLVMCodeGenerator::generateClassDecl(
     std::unique_ptr<ast::ClassDecl> classDecl) {
+  std::vector<llvm::Type *> memberTypes;
+  std::unordered_map<std::string, unsigned> memberIndices;
+  std::vector<std::unique_ptr<ast::Node>> functions;
+
+  for (size_t i = 0; i < classDecl->members.size(); ++i) {
+    auto &member = classDecl->members[i];
+    if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
+      if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
+        llvm::Type *memberType = generateType(typeNode);
+        memberTypes.push_back(memberType);
+        memberIndices[varDecl->name] =
+            static_cast<unsigned>(memberTypes.size() - 1);
+      }
+    } else if (auto *funcDecl =
+                   dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      functions.push_back(std::move(member));
+    }
+  }
+
+  if (memberTypes.empty()) {
+    memberTypes.push_back(llvm::Type::getInt8Ty(context()));
+  }
+
+  llvm::StructType *classType =
+      llvm::StructType::create(context(), memberTypes, classDecl->name);
+  structTypes_[classDecl->name] = classType;
+  structInfo_[classDecl->name] = memberIndices;
+
+  for (auto &funcNode : functions) {
+    auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
+        static_cast<ast::FunctionDecl *>(funcNode.release()));
+
+    bool isConstructor = (funcDecl->name == classDecl->name);
+    bool isDestructor = (!funcDecl->name.empty() && funcDecl->name[0] == '~');
+
+    generateClassMemberFunction(std::move(funcDecl), classDecl->name,
+                                isConstructor, isDestructor);
+  }
+
   return nullptr;
 }
 
@@ -259,6 +307,101 @@ llvm::Value *LLVMCodeGenerator::generateStructDecl(
   structInfo_[structDecl->name] = memberIndices;
 
   return nullptr;
+}
+
+llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
+    std::unique_ptr<ast::FunctionDecl> funcDecl, const std::string &className,
+    bool isConstructor, bool isDestructor) {
+  llvm::StructType *classType = structTypes_[className];
+  llvm::PointerType *thisType = classType->getPointerTo();
+
+  std::vector<llvm::Type *> paramTypes;
+  paramTypes.push_back(thisType);
+
+  for (auto &paramNode : funcDecl->params) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
+      if (param->type) {
+        llvm::Type *paramType = generateType(param->type.get());
+        paramTypes.push_back(paramType);
+      }
+    }
+  }
+
+  llvm::Type *returnType;
+  if (isConstructor || isDestructor) {
+    returnType = llvm::Type::getVoidTy(context());
+  } else if (funcDecl->returnType) {
+    if (auto *returnTypeNode =
+            dynamic_cast<ast::Type *>(funcDecl->returnType.get())) {
+      returnType = generateType(returnTypeNode);
+    } else {
+      returnType = llvm::Type::getVoidTy(context());
+    }
+  } else {
+    returnType = llvm::Type::getVoidTy(context());
+  }
+
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(returnType, paramTypes, false);
+
+  std::string mangledName = className + "_" + funcDecl->name;
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage, mangledName, module());
+
+  llvm::Function::arg_iterator args = function->arg_begin();
+  llvm::Argument *selfArg = &*args++;
+  selfArg->setName("self");
+
+  int paramIndex = 0;
+  for (; args != function->arg_end(); ++args, ++paramIndex) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(
+            funcDecl->params[paramIndex].get())) {
+      args->setName(param->name);
+    }
+  }
+
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+
+  llvm::Function *prevFunction = currentFunction_;
+  currentFunction_ = function;
+  namedValues_["self"] = selfArg;
+
+  for (size_t i = 0; i < funcDecl->params.size(); ++i) {
+    if (auto *param =
+            dynamic_cast<ast::Parameter *>(funcDecl->params[i].get())) {
+      namedValues_[param->name] = function->getArg(i + 1);
+    }
+  }
+
+  if (funcDecl->body) {
+    generateStatement(std::unique_ptr<ast::Statement>(
+        static_cast<ast::Statement *>(funcDecl->body.release())));
+
+    llvm::BasicBlock *lastBlock = &function->back();
+    if (!lastBlock->getTerminator()) {
+      while (!deferExpressions_.empty()) {
+        auto deferExpr = std::move(deferExpressions_.back());
+        deferExpressions_.pop_back();
+        generateExpression(std::move(deferExpr));
+      }
+
+      if (returnType->isVoidTy()) {
+        builder()->SetInsertPoint(lastBlock);
+        builder()->CreateRetVoid();
+      } else {
+        builder()->SetInsertPoint(lastBlock);
+        builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  deferExpressions_.clear();
+  functions_[mangledName] = function;
+
+  return function;
 }
 
 llvm::Value *LLVMCodeGenerator::generateTypeAliasDecl(
@@ -299,6 +442,12 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
   case ast::NodeType::TryStmt:
     return generateTryStmt(std::unique_ptr<ast::TryStmt>(
         static_cast<ast::TryStmt *>(stmt.release())));
+  case ast::NodeType::ThrowStmt:
+    return generateThrowStmt(std::unique_ptr<ast::ThrowStmt>(
+        static_cast<ast::ThrowStmt *>(stmt.release())));
+  case ast::NodeType::DeferStmt:
+    return generateDeferStmt(std::unique_ptr<ast::DeferStmt>(
+        static_cast<ast::DeferStmt *>(stmt.release())));
   case ast::NodeType::VariableDecl: {
     auto *varStmt = static_cast<ast::VariableStmt *>(stmt.get());
     stmt.release();
@@ -332,6 +481,13 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
 
 llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     std::unique_ptr<ast::ReturnStmt> returnStmt) {
+  // 先执行 defer 语句（按相反顺序）
+  while (!deferExpressions_.empty()) {
+    auto deferExpr = std::move(deferExpressions_.back());
+    deferExpressions_.pop_back();
+    generateExpression(std::move(deferExpr));
+  }
+
   if (returnStmt->expr) {
     llvm::Value *returnValue = generateExpression(std::move(returnStmt->expr));
     return builder()->CreateRet(returnValue);
@@ -531,6 +687,22 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   return nullptr;
 }
 
+llvm::Value *LLVMCodeGenerator::generateThrowStmt(
+    std::unique_ptr<ast::ThrowStmt> throwStmt) {
+  if (throwStmt->expr) {
+    generateExpression(std::move(throwStmt->expr));
+  }
+  return nullptr;
+}
+
+llvm::Value *LLVMCodeGenerator::generateDeferStmt(
+    std::unique_ptr<ast::DeferStmt> deferStmt) {
+  if (deferStmt->expr) {
+    deferExpressions_.push_back(std::move(deferStmt->expr));
+  }
+  return nullptr;
+}
+
 llvm::Value *
 LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   switch (expr->getType()) {
@@ -584,15 +756,18 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::NewExpr:
     return generateNewExpr(std::unique_ptr<ast::NewExpr>(
         static_cast<ast::NewExpr *>(expr.release())));
+  case ast::NodeType::DeleteExpr:
+    return generateDeleteExpr(std::unique_ptr<ast::DeleteExpr>(
+        static_cast<ast::DeleteExpr *>(expr.release())));
   case ast::NodeType::ThisExpr:
     return generateThisExpr(std::unique_ptr<ast::ThisExpr>(
         static_cast<ast::ThisExpr *>(expr.release())));
-  case ast::NodeType::SuperExpr:
-    return generateSuperExpr(std::unique_ptr<ast::SuperExpr>(
-        static_cast<ast::SuperExpr *>(expr.release())));
   case ast::NodeType::SelfExpr:
     return generateSelfExpr(std::unique_ptr<ast::SelfExpr>(
         static_cast<ast::SelfExpr *>(expr.release())));
+  case ast::NodeType::SuperExpr:
+    return generateSuperExpr(std::unique_ptr<ast::SuperExpr>(
+        static_cast<ast::SuperExpr *>(expr.release())));
   case ast::NodeType::ExpansionExpr:
     return generateExpansionExpr(std::unique_ptr<ast::ExpansionExpr>(
         static_cast<ast::ExpansionExpr *>(expr.release())));
@@ -894,19 +1069,48 @@ LLVMCodeGenerator::generateLiteralExpr(std::unique_ptr<ast::Literal> literal) {
 llvm::Value *
 LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   std::vector<llvm::Value *> args;
+  std::string funcName;
+  llvm::Value *objectPtr = nullptr;
+
+  // Check if callee is a MemberExpr (method call)
+  if (auto *memberExpr =
+          dynamic_cast<ast::MemberExpr *>(callExpr->callee.get())) {
+    objectPtr = getExpressionLValue(
+        std::unique_ptr<ast::Expression>(memberExpr->object.release()));
+
+    // Get struct name
+    std::string structName;
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objectPtr)) {
+      if (auto *structType =
+              llvm::dyn_cast<llvm::StructType>(alloca->getAllocatedType())) {
+        structName = structType->getName().str();
+      }
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objectPtr)) {
+      if (auto *structType =
+              llvm::dyn_cast<llvm::StructType>(gep->getResultElementType())) {
+        structName = structType->getName().str();
+      }
+    }
+
+    if (!structName.empty()) {
+      funcName = structName + "_" + memberExpr->member;
+      args.push_back(objectPtr);
+    }
+  } else if (auto *ident =
+                 dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+    funcName = ident->name;
+  }
+
   for (auto &arg : callExpr->args) {
     args.push_back(generateExpression(std::move(arg)));
   }
 
-  // Check if callee is an identifier (direct function call)
-  if (auto *ident = dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
-    if (functions_.find(ident->name) != functions_.end()) {
-      llvm::Function *func = functions_[ident->name];
-      return builder()->CreateCall(func, args, "calltmp");
-    }
+  if (!funcName.empty() && functions_.find(funcName) != functions_.end()) {
+    llvm::Function *func = functions_[funcName];
+    return builder()->CreateCall(func, args, "calltmp");
   }
 
-  throw std::runtime_error("Function pointer call not implemented yet");
+  throw std::runtime_error("Function not found: " + funcName);
 }
 
 llvm::Value *LLVMCodeGenerator::generateMemberExpr(
@@ -916,11 +1120,12 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
   std::string structName;
   unsigned idx = 0;
   bool isLiteralView = false;
+  llvm::Type *structType = nullptr;
 
   if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objectPtr)) {
-    if (auto *structType =
-            llvm::dyn_cast<llvm::StructType>(alloca->getAllocatedType())) {
-      structName = structType->getName().str();
+    structType = alloca->getAllocatedType();
+    if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
+      structName = structTypeNode->getName().str();
       if (structName == "LiteralView") {
         isLiteralView = true;
         if (memberExpr->member == "ptr") {
@@ -931,9 +1136,9 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
       }
     }
   } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objectPtr)) {
-    if (auto *structType =
-            llvm::dyn_cast<llvm::StructType>(gep->getResultElementType())) {
-      structName = structType->getName().str();
+    structType = gep->getResultElementType();
+    if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
+      structName = structTypeNode->getName().str();
       if (structName == "LiteralView") {
         isLiteralView = true;
         if (memberExpr->member == "ptr") {
@@ -960,13 +1165,6 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
       llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0));
   indices.push_back(
       llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), idx));
-
-  llvm::Type *structType = nullptr;
-  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objectPtr)) {
-    structType = alloca->getAllocatedType();
-  } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objectPtr)) {
-    structType = gep->getResultElementType();
-  }
 
   llvm::Value *gep =
       builder()->CreateGEP(structType, objectPtr, indices, "membertmp");
@@ -1003,21 +1201,85 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
 
 llvm::Value *
 LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
+  llvm::Type *type = nullptr;
+  if (auto *typeNode = dynamic_cast<ast::Type *>(newExpr->type.get())) {
+    type = generateType(typeNode);
+  }
+
+  if (!type) {
+    throw std::runtime_error("Cannot generate type for new expression");
+  }
+
+  llvm::Type *i8Type = llvm::Type::getInt8Ty(context());
+  llvm::Type *sizeType = llvm::Type::getInt64Ty(context());
+
+  llvm::FunctionType *mallocType =
+      llvm::FunctionType::get(i8Type->getPointerTo(), {sizeType}, false);
+  llvm::FunctionCallee mallocFunc =
+      module()->getOrInsertFunction("malloc", mallocType);
+
+  llvm::DataLayout dataLayout(module());
+  uint64_t size = dataLayout.getTypeAllocSize(type);
+
+  llvm::Value *sizeVal = llvm::ConstantInt::get(sizeType, size);
+  llvm::Value *allocPtr =
+      builder()->CreateCall(mallocFunc, {sizeVal}, "newtmp");
+
+  llvm::Value *typedPtr =
+      builder()->CreateBitCast(allocPtr, type->getPointerTo(), "typedtmp");
+
+  std::string typeName;
+  if (auto *namedType = dynamic_cast<ast::NamedType *>(newExpr->type.get())) {
+    typeName = namedType->name;
+  }
+
+  if (!typeName.empty() && structTypes_.find(typeName) != structTypes_.end()) {
+    std::string ctorName = typeName + "_" + typeName;
+    if (functions_.find(ctorName) != functions_.end()) {
+      llvm::Function *ctor = functions_[ctorName];
+
+      std::vector<llvm::Value *> args;
+      args.push_back(typedPtr);
+      for (auto &arg : newExpr->args) {
+        args.push_back(generateExpression(std::move(arg)));
+      }
+
+      builder()->CreateCall(ctor, args);
+    }
+  }
+
+  return typedPtr;
+}
+
+llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
+    std::unique_ptr<ast::DeleteExpr> deleteExpr) {
+  llvm::Value *ptr = generateExpression(std::move(deleteExpr->expr));
+
+  llvm::Type *i8Type = llvm::Type::getInt8Ty(context());
+  llvm::FunctionType *freeType = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context()), {i8Type->getPointerTo()}, false);
+  llvm::FunctionCallee freeFunc =
+      module()->getOrInsertFunction("free", freeType);
+
+  llvm::Value *i8Ptr =
+      builder()->CreateBitCast(ptr, i8Type->getPointerTo(), "freetmp");
+  builder()->CreateCall(freeFunc, {i8Ptr});
+
   return nullptr;
 }
 
 llvm::Value *
 LLVMCodeGenerator::generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr) {
-  return nullptr;
-}
-
-llvm::Value *LLVMCodeGenerator::generateSuperExpr(
-    std::unique_ptr<ast::SuperExpr> superExpr) {
-  return nullptr;
+  return namedValues_["self"];
 }
 
 llvm::Value *
 LLVMCodeGenerator::generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr) {
+  return namedValues_["self"];
+}
+
+llvm::Value *LLVMCodeGenerator::generateSuperExpr(
+    std::unique_ptr<ast::SuperExpr> superExpr) {
   return nullptr;
 }
 

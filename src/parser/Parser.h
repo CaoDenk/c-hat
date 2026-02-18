@@ -127,6 +127,12 @@ private:
   // 解析try语句
   std::unique_ptr<ast::Statement> parseTryStmt();
 
+  // 解析catch语句
+  std::unique_ptr<ast::CatchStmt> parseCatchStmt();
+
+  // 解析throw语句
+  std::unique_ptr<ast::Statement> parseThrowStmt();
+
   // 解析defer语句
   std::unique_ptr<ast::Statement> parseDeferStmt();
 
@@ -217,6 +223,12 @@ private:
 
   // 解析结构体初始化
   std::unique_ptr<ast::Expression> parseStructInit();
+
+  // 解析new表达式
+  std::unique_ptr<ast::Expression> parseNewExpr();
+
+  // 解析delete表达式
+  std::unique_ptr<ast::Expression> parseDeleteExpr();
 
   // 解析Lambda表达式
   std::unique_ptr<ast::Expression> parseLambdaExpr();

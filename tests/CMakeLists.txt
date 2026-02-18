@@ -1,9 +1,11 @@
 find_package(Catch2 3 REQUIRED)
 
-add_executable(parser_test parser_test.cpp)
-target_include_directories(parser_test PRIVATE ../src)
-target_link_libraries(parser_test PRIVATE Catch2::Catch2WithMain lexer ast parser types)
-
-add_executable(semantic_test semantic_test.cpp)
-target_include_directories(semantic_test PRIVATE ../src)
-target_link_libraries(semantic_test PRIVATE lexer ast parser semantic types)
+add_subdirectory(parser)
+add_subdirectory(semantic)
+add_subdirectory(class_system)
+add_subdirectory(exception)
+add_subdirectory(array)
+add_subdirectory(defer)
+add_subdirectory(new_delete)
+add_subdirectory(tuple)
+add_subdirectory(types)

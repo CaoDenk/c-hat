@@ -853,6 +853,12 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     advance();
     expect(lexer::TokenType::Semicolon, "Expected ';' after goto label");
     return std::make_unique<ast::GotoStmt>(std::move(label));
+  } else if (match(lexer::TokenType::Try)) {
+    return parseTryStmt();
+  } else if (match(lexer::TokenType::Throw)) {
+    return parseThrowStmt();
+  } else if (match(lexer::TokenType::Defer)) {
+    return parseDeferStmt();
   } else if (check(lexer::TokenType::Identifier)) {
     // 检查是否是标签（后面跟着冒号）
     auto state = saveState();
@@ -1347,6 +1353,10 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
     }
   } else if (match(lexer::TokenType::LBrace)) {
     expr = parseStructInit();
+  } else if (match(lexer::TokenType::New)) {
+    expr = parseNewExpr();
+  } else if (match(lexer::TokenType::Delete)) {
+    expr = parseDeleteExpr();
   } else {
     error("Expected expression");
     return nullptr;
@@ -1753,22 +1763,14 @@ Parser::parseTypeSuffix(std::unique_ptr<ast::Type> type) {
         // 可能有一个或多个大小，可能带逗号
         std::vector<std::unique_ptr<ast::Expression>> sizes;
 
-        // 先解析第一个大小或 $
-        if (match(lexer::TokenType::Dollar)) {
-          sizes.push_back(nullptr);
-        } else {
-          sizes.push_back(parseExpression());
-        }
+        // 解析第一个大小
+        sizes.push_back(parseExpression());
 
         // 检查是否有逗号，表示多维数组
         bool isRectangular = false;
         while (match(lexer::TokenType::Comma)) {
           isRectangular = true;
-          if (match(lexer::TokenType::Dollar)) {
-            sizes.push_back(nullptr);
-          } else {
-            sizes.push_back(parseExpression());
-          }
+          sizes.push_back(parseExpression());
         }
 
         expect(lexer::TokenType::RBracket, "Expected ']' after array sizes");
@@ -2094,9 +2096,60 @@ std::unique_ptr<ast::Pattern> Parser::parsePattern() {
   return nullptr;
 }
 
-std::unique_ptr<ast::Statement> Parser::parseTryStmt() { return nullptr; }
+std::unique_ptr<ast::Statement> Parser::parseThrowStmt() {
+  std::unique_ptr<ast::Expression> expr;
+  if (!check(lexer::TokenType::Semicolon)) {
+    expr = parseExpression();
+  }
+  expect(lexer::TokenType::Semicolon, "Expected ';' after throw");
+  return std::make_unique<ast::ThrowStmt>(std::move(expr));
+}
 
-std::unique_ptr<ast::Statement> Parser::parseDeferStmt() { return nullptr; }
+std::unique_ptr<ast::Statement> Parser::parseTryStmt() {
+  auto tryBlock = parseStatement();
+
+  std::vector<std::unique_ptr<ast::CatchStmt>> catchStmts;
+  while (match(lexer::TokenType::Catch)) {
+    catchStmts.push_back(parseCatchStmt());
+  }
+
+  return std::make_unique<ast::TryStmt>(std::move(tryBlock),
+                                        std::move(catchStmts));
+}
+
+std::unique_ptr<ast::CatchStmt> Parser::parseCatchStmt() {
+  expect(lexer::TokenType::LParen, "Expected '(' after catch");
+
+  std::unique_ptr<ast::Parameter> param;
+
+  // 检查是否是 catch(...)
+  if (check(lexer::TokenType::Ellipsis)) {
+    advance();
+    param = std::make_unique<ast::Parameter>("...", nullptr, nullptr);
+  } else {
+    // 正常的 catch(Type var)
+    auto paramNode = parseParameter();
+    if (paramNode->getType() == ast::NodeType::Parameter) {
+      param = std::unique_ptr<ast::Parameter>(
+          static_cast<ast::Parameter *>(paramNode.release()));
+    } else {
+      error("Expected parameter in catch");
+      return nullptr;
+    }
+  }
+
+  expect(lexer::TokenType::RParen, "Expected ')' after catch parameter");
+
+  auto body = parseStatement();
+
+  return std::make_unique<ast::CatchStmt>(std::move(param), std::move(body));
+}
+
+std::unique_ptr<ast::Statement> Parser::parseDeferStmt() {
+  auto expr = parseExpression();
+  expect(lexer::TokenType::Semicolon, "Expected ';' after defer expression");
+  return std::make_unique<ast::DeferStmt>(std::move(expr));
+}
 
 std::unique_ptr<ast::ComptimeStmt> Parser::parseComptimeStmt() {
   // 解析 comptime 后面的语句
@@ -2142,6 +2195,33 @@ std::unique_ptr<ast::Declaration> Parser::parseExternDecl() {
 
   return std::make_unique<ast::ExternDecl>(std::move(abi),
                                            std::move(declarations));
+}
+
+// 解析new表达式
+std::unique_ptr<ast::Expression> Parser::parseNewExpr() {
+  auto type = parseType();
+  std::vector<std::unique_ptr<ast::Expression>> args;
+
+  if (match(lexer::TokenType::LParen)) {
+    if (!check(lexer::TokenType::RParen)) {
+      do {
+        args.push_back(parseExpression());
+      } while (match(lexer::TokenType::Comma));
+    }
+    expect(lexer::TokenType::RParen, "Expected ')' after new arguments");
+  }
+
+  return std::make_unique<ast::NewExpr>(std::move(type), std::move(args));
+}
+
+// 解析delete表达式
+std::unique_ptr<ast::Expression> Parser::parseDeleteExpr() {
+  bool isArray = match(lexer::TokenType::LBracket);
+  if (isArray) {
+    expect(lexer::TokenType::RBracket, "Expected ']' after delete[]");
+  }
+  auto expr = parseExpression();
+  return std::make_unique<ast::DeleteExpr>(std::move(expr), isArray);
 }
 
 // 恢复解析器状态

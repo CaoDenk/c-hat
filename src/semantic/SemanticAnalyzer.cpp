@@ -383,10 +383,17 @@ void SemanticAnalyzer::analyzeClassDecl(
       analyzeVariableDecl(std::unique_ptr<ast::VariableDecl>(
           static_cast<ast::VariableDecl *>(member.release())));
       break;
-    case ast::NodeType::FunctionDecl:
-      analyzeFunctionDecl(std::unique_ptr<ast::FunctionDecl>(
-          static_cast<ast::FunctionDecl *>(member.release())));
+    case ast::NodeType::FunctionDecl: {
+      auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
+          static_cast<ast::FunctionDecl *>(member.release()));
+      // 检查是否是构造函数（与类名相同）
+      bool isConstructor = (funcDecl->name == classDecl->name);
+      // 检查是否是析构函数（以 ~ 开头）
+      bool isDestructor = (!funcDecl->name.empty() && funcDecl->name[0] == '~');
+      // 分析函数声明
+      analyzeFunctionDecl(std::move(funcDecl));
       break;
+    }
     default:
       // 其他类型的成员，暂不处理
       break;
@@ -449,6 +456,10 @@ void SemanticAnalyzer::analyzeStatement(
   case ast::NodeType::TryStmt:
     analyzeTryStmt(std::unique_ptr<ast::TryStmt>(
         static_cast<ast::TryStmt *>(statement.release())));
+    break;
+  case ast::NodeType::ThrowStmt:
+    analyzeThrowStmt(std::unique_ptr<ast::ThrowStmt>(
+        static_cast<ast::ThrowStmt *>(statement.release())));
     break;
   case ast::NodeType::DeferStmt:
     analyzeDeferStmt(std::unique_ptr<ast::DeferStmt>(
@@ -658,21 +669,20 @@ void SemanticAnalyzer::analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 
     // 分析catch参数
     if (catchStmt->param) {
-      // 分析参数类型
-      std::shared_ptr<types::Type> paramType;
-      auto parameter = catchStmt->param.get();
-      if (parameter->type) {
-        paramType =
-            analyzeType(static_cast<const ast::Type *>(parameter->type.get()));
-      } else {
-        paramType = types::TypeFactory::getPrimitiveType(
-            types::PrimitiveType::Kind::Int);
-      }
+      // 检查是否是 catch(...)
+      if (catchStmt->param->name != "...") {
+        // 正常的 catch(Type var)
+        auto parameter = catchStmt->param.get();
+        if (parameter->type) {
+          auto paramType = analyzeType(
+              static_cast<const ast::Type *>(parameter->type.get()));
 
-      // 创建参数符号
-      auto paramSymbol =
-          std::make_shared<VariableSymbol>(parameter->name, paramType, false);
-      symbolTable.addSymbol(paramSymbol);
+          // 创建参数符号
+          auto paramSymbol = std::make_shared<VariableSymbol>(parameter->name,
+                                                              paramType, false);
+          symbolTable.addSymbol(paramSymbol);
+        }
+      }
     }
 
     // 分析catch块
@@ -682,6 +692,15 @@ void SemanticAnalyzer::analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 
     // 退出catch作用域
     symbolTable.exitScope();
+  }
+}
+
+// 分析throw语句
+void SemanticAnalyzer::analyzeThrowStmt(
+    std::unique_ptr<ast::ThrowStmt> throwStmt) {
+  // 分析throw表达式（如果有）
+  if (throwStmt->expr) {
+    analyzeExpression(std::move(throwStmt->expr));
   }
 }
 
@@ -798,7 +817,7 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeExpression(
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
   // 分析类型
-  // TODO: 分析类型
+  auto type = analyzeType(static_cast<const ast::Type *>(newExpr->type.get()));
 
   // 分析参数
   for (auto &arg : newExpr->args) {
@@ -806,9 +825,7 @@ SemanticAnalyzer::analyzeNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
   }
 
   // 返回指针类型
-  // TODO: 根据类型创建正确的指针类型
-  return types::TypeFactory::getPointerType(
-      types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int));
+  return types::TypeFactory::getPointerType(type);
 }
 
 // 分析delete表达式

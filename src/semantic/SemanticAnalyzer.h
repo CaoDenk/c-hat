@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "../ast/AstNodes.h"
@@ -105,6 +104,9 @@ private:
 
   // 分析try语句
   void analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
+
+  // 分析throw语句
+  void analyzeThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
 
   // 分析defer语句
   void analyzeDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
