@@ -933,13 +933,13 @@ bool SemanticAnalyzer::isBaseObjectReadonly(const ast::Expression *expr) {
     return isBaseObjectReadonly(memberExpr->object.get());
   }
 
-  // 如果是 Identifier，检查其类型
+  // 如果是 Identifier，检查其类型或变量是否是const
   if (expr->getType() == ast::NodeType::Identifier) {
     auto identifier = static_cast<const ast::Identifier *>(expr);
     auto symbol = symbolTable.lookupSymbol(identifier->name);
     if (symbol && symbol->getType() == SymbolType::Variable) {
       auto varSymbol = std::static_pointer_cast<VariableSymbol>(symbol);
-      return varSymbol->getType()->isReadonly();
+      return varSymbol->getType()->isReadonly() || varSymbol->isConst();
     }
   }
 

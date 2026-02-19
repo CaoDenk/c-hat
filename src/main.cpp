@@ -11,6 +11,18 @@
 #include <string>
 #include <vector>
 
+// LLD headers
+#include <lld/Common/Driver.h>
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/Support/raw_ostream.h>
+
+// Declare that we use the COFF driver
+LLD_HAS_DRIVER(coff);
+LLD_HAS_DRIVER(elf);
+LLD_HAS_DRIVER(mingw);
+LLD_HAS_DRIVER(macho);
+LLD_HAS_DRIVER(wasm);
+
 namespace fs = std::filesystem;
 
 fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
@@ -26,19 +38,10 @@ fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
     basePath /= part;
   }
 
-  auto filePath1 = basePath;
-  filePath1 += ".ch";
+  auto filePath = basePath;
+  filePath += ".ch";
 
-  auto filePath2 = basePath / "mod.ch";
-
-  if (fs::exists(filePath1)) {
-    return filePath1;
-  }
-  if (fs::exists(filePath2)) {
-    return filePath2;
-  }
-
-  return filePath1;
+  return filePath;
 }
 
 int main(int argc, char *argv[]) {
@@ -157,6 +160,11 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputPath(inputFile);
     std::string baseName = inputPath.stem().string();
 
+    // 确定输出文件名
+    std::string objOutputFile = baseName + ".obj";
+    std::string exeOutputFile =
+        outputFile.empty() ? (baseName + ".exe") : outputFile;
+
     // 生成输出文件
     if (emitLLVM) {
       std::string llvmOutputFile =
@@ -167,8 +175,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (emitObj) {
-      std::string objOutputFile =
-          outputFile.empty() ? (baseName + ".obj") : outputFile;
+      if (outputFile.empty()) {
+        objOutputFile = baseName + ".obj";
+      } else {
+        objOutputFile = outputFile;
+      }
       if (codeGen.emitObjectFile(objOutputFile)) {
         std::println("\n✓ Object file written to: {}", objOutputFile);
       }
@@ -179,6 +190,51 @@ int main(int argc, char *argv[]) {
           outputFile.empty() ? (baseName + ".s") : outputFile;
       if (codeGen.emitAssemblyFile(asmOutputFile)) {
         std::println("\n✓ Assembly file written to: {}", asmOutputFile);
+      }
+    }
+
+    // 默认：如果没有指定 --emit-llvm/--emit-obj/--emit-asm，则生成可执行文件
+    if (!emitLLVM && !emitObj && !emitAsm) {
+      // 1. 先生成目标文件
+      if (codeGen.emitObjectFile(objOutputFile)) {
+        std::println("\n✓ Object file written to: {}", objOutputFile);
+
+        // 2. 准备链接器参数 - 注意：字符串必须保持在作用域内
+        std::string outArg = std::format("/OUT:{}", exeOutputFile);
+
+        std::vector<std::string> argsStr;
+        argsStr.push_back("lld-link");
+        argsStr.push_back("/SUBSYSTEM:CONSOLE");
+        argsStr.push_back("/ENTRY:main");
+        argsStr.push_back(objOutputFile);
+        argsStr.push_back("ucrt.lib");
+        argsStr.push_back("vcruntime.lib");
+        argsStr.push_back("msvcrt.lib");
+        argsStr.push_back("kernel32.lib");
+        argsStr.push_back("user32.lib");
+        argsStr.push_back(outArg);
+
+        std::vector<const char *> args;
+        for (const auto &s : argsStr) {
+          args.push_back(s.c_str());
+        }
+
+        // 3. 使用 LLD 库进行链接
+        std::println("\nLinking with LLD (library)...");
+
+        // 定义驱动程序
+        std::vector<lld::DriverDef> drivers = LLD_ALL_DRIVERS;
+
+        // 调用 LLD main
+        lld::Result result =
+            lld::lldMain(llvm::ArrayRef<const char *>(args.data(), args.size()),
+                         llvm::outs(), llvm::errs(), drivers);
+
+        if (result.retCode == 0) {
+          std::println("\n✓ Executable generated: {}", exeOutputFile);
+        } else {
+          std::println("\n✗ Linking failed with code: {}", result.retCode);
+        }
       }
     }
 

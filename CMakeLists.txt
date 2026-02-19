@@ -27,6 +27,43 @@ if(LLVM_FOUND)
         transformutils
         bitreader
         bitwriter
+        x86asmparser
+        x86codegen
+        x86desc
+        x86info
+        lto
+        option
+        objcopy
+        object
+        windowsdriver
+        windowsmanifest
+        libdriver
+    )
+    
+    # LLD 库 - 添加 vcpkg 的 lib 路径
+    if(WIN32 AND VCPKG_INSTALLED_DIR)
+        # vcpkg toolchain 应该定义了 VCPKG_INSTALLED_DIR
+        message(STATUS "VCPKG installed directory: ${VCPKG_INSTALLED_DIR}")
+        
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            link_directories("${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib")
+        else()
+            link_directories("${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
+        endif()
+    elseif(WIN32)
+        # 备用路径，如果 VCPKG_INSTALLED_DIR 未定义
+        message(STATUS "VCPKG_INSTALLED_DIR not defined, using fallback paths")
+        link_directories("D:/vcpkg/installed/x64-windows/lib")
+        link_directories("D:/vcpkg/installed/x64-windows/debug/lib")
+    endif()
+    
+    set(LLD_LIBS
+        lldCOFF
+        lldCommon
+        lldELF
+        lldMachO
+        lldMinGW
+        lldWasm
     )
 else()
     message(FATAL_ERROR "LLVM not found. Please install LLVM.")

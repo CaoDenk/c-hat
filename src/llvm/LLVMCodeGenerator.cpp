@@ -1212,7 +1212,18 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   }
 
   for (auto &arg : callExpr->args) {
-    args.push_back(generateExpression(std::move(arg)));
+    llvm::Value *argVal = generateExpression(std::move(arg));
+
+    // 检查是否是 LiteralView 类型
+    if (argVal->getType()->isStructTy()) {
+      auto *structType = llvm::dyn_cast<llvm::StructType>(argVal->getType());
+      if (structType && structType->getName() == "LiteralView") {
+        // 提取 ptr 字段
+        argVal = builder()->CreateExtractValue(argVal, 0, "literalview_ptr");
+      }
+    }
+
+    args.push_back(argVal);
   }
 
   if (!funcName.empty() && functions_.find(funcName) != functions_.end()) {

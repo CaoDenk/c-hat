@@ -10,4 +10,4 @@ target_include_directories(llvm_codegen PUBLIC
 
 target_compile_definitions(llvm_codegen PUBLIC ${LLVM_DEFINITIONS})
 
-target_link_libraries(llvm_codegen PUBLIC ast semantic ${LLVM_LIBS})
+target_link_libraries(llvm_codegen PUBLIC ast semantic ${LLVM_LIBS} ${LLD_LIBS})

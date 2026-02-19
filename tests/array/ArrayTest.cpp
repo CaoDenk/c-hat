@@ -93,4 +93,23 @@ TEST_CASE("Array: const array", "[array][const]") {
     REQUIRE(analyzeSource("func test() { const int[3] arr = [1, 2, 3]; }") ==
             true);
   }
+
+  SECTION("const array cannot modify elements") {
+    REQUIRE(analyzeSource(
+                "func test() { const int[3] arr = [1, 2, 3]; arr[0] = 99; }") ==
+            false);
+  }
+}
+
+TEST_CASE("Array: Error path tests", "[array][errors]") {
+  SECTION("Array reassign with wrong size") {
+    REQUIRE(analyzeSource(
+                "func test() { var arr = [1, 2, 3]; arr = [1, 2]; }") == false);
+  }
+
+  SECTION("Let variable reassignment") {
+    REQUIRE(analyzeSource(
+                "func test() { let arr = [1, 2, 3]; arr = [4, 5, 6]; }") ==
+            false);
+  }
 }

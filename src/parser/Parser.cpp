@@ -488,18 +488,46 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
     specifiers = "internal";
   }
 
-  // 检查并消费 Func 关键字
-  if (!match(lexer::TokenType::Func)) {
-    return nullptr; // 不是函数声明，返回 nullptr
-  }
+  std::string name;
+  bool hasFunc = false;
 
-  if (!check(lexer::TokenType::Identifier)) {
-    error("Expected function name");
+  // 情况1: 带 func 关键字的函数
+  if (match(lexer::TokenType::Func)) {
+    hasFunc = true;
+    if (!check(lexer::TokenType::Identifier)) {
+      error("Expected function name");
+      return nullptr;
+    }
+    name = currentToken->getValue();
+    advance();
+  }
+  // 情况2: 析构函数 ~Name
+  else if (check(lexer::TokenType::Tilde)) {
+    advance();
+    if (!check(lexer::TokenType::Identifier)) {
+      error("Expected identifier after '~' for destructor");
+      return nullptr;
+    }
+    name = "~" + currentToken->getValue();
+    advance();
+  }
+  // 情况3: 构造函数 Name（无 func，无 ~，但跟着 (）
+  else if (check(lexer::TokenType::Identifier)) {
+    // 我们需要前瞻一个 token 看看是不是 '('，如果是，那就是构造函数
+    ParserState state = saveState();
+    name = currentToken->getValue();
+    advance();
+    if (check(lexer::TokenType::LParen)) {
+      // 是构造函数
+    } else {
+      // 不是，恢复状态
+      restoreState(state);
+      return nullptr;
+    }
+  } else {
+    // 都不是
     return nullptr;
   }
-
-  std::string name = currentToken->getValue();
-  advance();
 
   std::vector<std::unique_ptr<ast::Node>> templateParams;
   if (match(lexer::TokenType::Lt)) {
@@ -1456,14 +1484,30 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
     expr = parseTupleOrGrouping();
   } else if (match(lexer::TokenType::LBracket)) {
     // 先判断是数组初始化还是 lambda
-    // 如果下一个 token 是 [、字面量或 ]，则是数组初始化
-    if (check(lexer::TokenType::LBracket) ||
-        check(lexer::TokenType::IntegerLiteral) ||
-        check(lexer::TokenType::FloatingLiteral) ||
-        check(lexer::TokenType::StringLiteral) ||
-        check(lexer::TokenType::BooleanLiteral) ||
-        check(lexer::TokenType::CharacterLiteral) ||
-        check(lexer::TokenType::Null) || check(lexer::TokenType::RBracket)) {
+    bool isEmptyRBracket = check(lexer::TokenType::RBracket);
+    bool shouldParseLambda = false;
+
+    if (isEmptyRBracket) {
+      // 如果是空的 []，需要 lookahead 看看 ] 后面是什么
+      ParserState state = saveState();
+      advance(); // 消费 ]
+
+      // 如果后面是 LParen ( 或者 FatArrow =>，那么是 Lambda
+      if (check(lexer::TokenType::LParen) ||
+          check(lexer::TokenType::FatArrow)) {
+        shouldParseLambda = true;
+      }
+
+      restoreState(state); // 回退
+    }
+
+    if (!shouldParseLambda && (check(lexer::TokenType::LBracket) ||
+                               check(lexer::TokenType::IntegerLiteral) ||
+                               check(lexer::TokenType::FloatingLiteral) ||
+                               check(lexer::TokenType::StringLiteral) ||
+                               check(lexer::TokenType::BooleanLiteral) ||
+                               check(lexer::TokenType::CharacterLiteral) ||
+                               check(lexer::TokenType::Null))) {
       expr = parseArrayInit();
     } else {
       expr = parseLambdaOrArrayInit();
