@@ -5,6 +5,9 @@ namespace ast {
 
 std::string StructInitExpr::toString() const {
   std::string result = "StructInitExpr{";
+  if (type) {
+    result += type->toString() + " ";
+  }
   for (size_t i = 0; i < fields.size(); ++i) {
     result += fields[i].first + ": " + fields[i].second->toString();
     if (i < fields.size() - 1) {

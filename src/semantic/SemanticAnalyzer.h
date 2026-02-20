@@ -33,6 +33,12 @@ private:
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
 
+  // 隐式转换运算符：源类型名称 -> 目标类型名称 -> 函数符号
+  std::unordered_map<
+      std::string,
+      std::unordered_map<std::string, std::shared_ptr<FunctionSymbol>>>
+      implicitOperators_;
+
   // 作用域类型栈，用于跟踪当前是否在循环或switch语句中
   std::vector<std::string> scopeStack;
 
@@ -202,6 +208,11 @@ private:
   // 检查类型兼容性
   bool checkTypeCompatibility(const types::Type &type1,
                               const types::Type &type2);
+
+  // 查找适用的隐式转换函数
+  std::shared_ptr<FunctionSymbol>
+  findImplicitOperator(const std::shared_ptr<types::Type> &sourceType,
+                       const std::shared_ptr<types::Type> &targetType);
 
   // 辅助函数：检查表达式的基对象是否为只读类型
   bool isBaseObjectReadonly(const ast::Expression *expr);

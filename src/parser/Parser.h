@@ -227,7 +227,8 @@ private:
   std::unique_ptr<ast::Expression> parseTupleExpr();
 
   // 解析结构体初始化
-  std::unique_ptr<ast::Expression> parseStructInit();
+  std::unique_ptr<ast::Expression>
+  parseStructInit(std::unique_ptr<ast::Type> type = nullptr);
 
   // 解析new表达式
   std::unique_ptr<ast::Expression> parseNewExpr();

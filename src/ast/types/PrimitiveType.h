@@ -30,6 +30,9 @@ public:
 
   NodeType getType() const override { return NodeType::PrimitiveType; }
   std::string toString() const override;
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<PrimitiveType>(kind);
+  }
 
   Kind kind;
 };

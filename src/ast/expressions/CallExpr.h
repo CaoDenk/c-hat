@@ -2,7 +2,6 @@
 
 #include "Expression.h"
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace c_hat {

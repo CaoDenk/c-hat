@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../types/Type.h"
 #include "Expression.h"
 #include <memory>
 #include <string>
@@ -16,9 +17,15 @@ public:
       std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields)
       : fields(std::move(fields)) {}
 
+  StructInitExpr(
+      std::unique_ptr<ast::Type> type,
+      std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields)
+      : type(std::move(type)), fields(std::move(fields)) {}
+
   NodeType getType() const override { return NodeType::StructInitExpr; }
   std::string toString() const override;
 
+  std::unique_ptr<ast::Type> type;
   std::vector<std::pair<std::string, std::unique_ptr<Expression>>> fields;
 };
 

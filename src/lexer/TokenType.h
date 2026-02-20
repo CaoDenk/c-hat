@@ -78,6 +78,7 @@ enum class TokenType {
   Where,
   Requires,
   Concept,
+  Implicit,
   Operator,
   Mutable,
   Sizeof,

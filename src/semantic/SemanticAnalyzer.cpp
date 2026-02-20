@@ -285,6 +285,10 @@ void SemanticAnalyzer::analyzeVariableDecl(
   std::shared_ptr<types::Type> varType;
   if (varDecl->type) {
     varType = analyzeType(static_cast<const ast::Type *>(varDecl->type.get()));
+    // 如果有初始值，分析初始值
+    if (varDecl->initializer) {
+      analyzeExpression(std::move(varDecl->initializer));
+    }
   } else if (varDecl->initializer) {
     varType = analyzeExpression(std::move(varDecl->initializer));
   } else {
@@ -352,6 +356,18 @@ void SemanticAnalyzer::analyzeFunctionDecl(
 
   // 添加到符号表
   symbolTable.addSymbol(funcSymbol);
+
+  // 收集隐式转换运算符
+  if (funcDecl->name.starts_with("implicit_operator_")) {
+    if (funcType->getParameterTypes().size() == 1) {
+      auto sourceType = funcType->getParameterTypes()[0];
+      auto targetType = funcType->getReturnType();
+      std::println(std::cerr, "DEBUG: Collected implicit operator: {} -> {}",
+                   sourceType->toString(), targetType->toString());
+      implicitOperators_[sourceType->toString()][targetType->toString()] =
+          funcSymbol;
+    }
+  }
 
   // 分析函数体
   if (funcDecl->body) {
@@ -1170,8 +1186,18 @@ SemanticAnalyzer::analyzeCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   }
 
   for (size_t i = 0; i < std::min(argTypes.size(), paramTypes.size()); ++i) {
+    std::println(std::cerr,
+                 "DEBUG: Checking argument {} type: {} -> param type: {}",
+                 i + 1, argTypes[i]->toString(), paramTypes[i]->toString());
     if (!argTypes[i]->isCompatibleWith(*paramTypes[i])) {
-      error(std::format("Argument {} type mismatch", i + 1), *callExpr);
+      // 尝试查找隐式转换
+      auto implicitOp = findImplicitOperator(argTypes[i], paramTypes[i]);
+      if (!implicitOp) {
+        error(std::format("Argument {} type mismatch", i + 1), *callExpr);
+      } else {
+        std::println(std::cerr, "DEBUG: Found implicit operator: {} -> {}",
+                     argTypes[i]->toString(), paramTypes[i]->toString());
+      }
     }
   }
 
@@ -1389,6 +1415,8 @@ SemanticAnalyzer::analyzeType(const ast::Type *type) {
     if (symbol) {
       if (symbol->getType() == SymbolType::Class) {
         return std::static_pointer_cast<ClassSymbol>(symbol)->getType();
+      } else if (symbol->getType() == SymbolType::Struct) {
+        return std::static_pointer_cast<StructSymbol>(symbol)->getType();
       } else if (symbol->getType() == SymbolType::TypeAlias) {
         return std::static_pointer_cast<TypeAliasSymbol>(symbol)->getType();
       }
@@ -1429,6 +1457,22 @@ SemanticAnalyzer::analyzeType(const ast::Type *type) {
 }
 
 // 检查类型兼容性
+std::shared_ptr<FunctionSymbol> SemanticAnalyzer::findImplicitOperator(
+    const std::shared_ptr<types::Type> &sourceType,
+    const std::shared_ptr<types::Type> &targetType) {
+  std::string sourceStr = sourceType->toString();
+  std::string targetStr = targetType->toString();
+
+  auto itSource = implicitOperators_.find(sourceStr);
+  if (itSource != implicitOperators_.end()) {
+    auto itTarget = itSource->second.find(targetStr);
+    if (itTarget != itSource->second.end()) {
+      return itTarget->second;
+    }
+  }
+  return nullptr;
+}
+
 bool SemanticAnalyzer::checkTypeCompatibility(const types::Type &type1,
                                               const types::Type &type2) {
   return type1.isCompatibleWith(type2);
@@ -1633,7 +1677,13 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStructInitExpr(
     analyzeExpression(std::move(field.second));
   }
 
-  // TODO: 根据结构体类型返回正确的类型
+  // 如果有显式类型，分析类型并返回
+  if (structInitExpr->type) {
+    return analyzeType(
+        static_cast<const ast::Type *>(structInitExpr->type.get()));
+  }
+
+  // TODO: 如果没有显式类型，可能需要上下文推断（如变量声明等）
   // 暂时返回void类型
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }

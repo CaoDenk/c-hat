@@ -14,6 +14,9 @@ public:
 
   NodeType getType() const override { return NodeType::PointerType; }
   std::string toString() const override;
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<PointerType>(baseType->clone(), isNullable);
+  }
 
   std::unique_ptr<Type> baseType;
   bool isNullable;

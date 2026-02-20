@@ -13,6 +13,9 @@ public:
 
   NodeType getType() const override { return NodeType::ReadonlyType; }
   std::string toString() const override;
+  std::unique_ptr<Type> clone() const override {
+    return std::make_unique<ReadonlyType>(baseType->clone());
+  }
 
   std::unique_ptr<Type> baseType;
 };
