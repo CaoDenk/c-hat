@@ -135,16 +135,14 @@ int main(int argc, char *argv[]) {
 
     // 语义分析
     c_hat::semantic::SemanticAnalyzer semanticAnalyzer(stdlibPath);
-    semanticAnalyzer.analyze(std::move(program));
+    semanticAnalyzer.analyze(*program);
 
     std::println("\n✓ Parsing and semantic analysis successful!");
 
-    // 重新解析程序用于代码生成
-    c_hat::parser::Parser parser2(source);
-    auto program2 = parser2.parseProgram();
-
+    std::println("\nStarting code generation...");
     c_hat::llvm_codegen::LLVMCodeGenerator codeGen("c_hat_module");
-    codeGen.generate(std::move(program2));
+    codeGen.generate(std::move(program));
+    std::println("\nCode generation complete!");
 
     if (!codeGen.verifyIR()) {
       std::println("\n✗ IR verification failed!");

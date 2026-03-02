@@ -831,8 +831,7 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
   return nullptr;
 }
 
-llvm::Value *
-LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
+llvm::Value *LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   switch (expr->getType()) {
   case ast::NodeType::BinaryExpr:
     return generateBinaryExpr(std::unique_ptr<ast::BinaryExpr>(
@@ -1073,7 +1072,7 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                      bool isLValue) {
   llvm::Value *operand = nullptr;
 
-  if (unaryExpr->op == ast::UnaryExpr::Op::AddressOf) {
+  if (unaryExpr->op == ast::UnaryExpr::Op::AddressOf || unaryExpr->op == ast::UnaryExpr::Op::Ref) {
     operand = getExpressionLValue(std::move(unaryExpr->expr));
   } else {
     operand = generateExpression(std::move(unaryExpr->expr));
@@ -1096,13 +1095,24 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
   case ast::UnaryExpr::Op::BitNot:
     return builder()->CreateNot(operand, "bwnottmp");
   case ast::UnaryExpr::Op::AddressOf:
+  case ast::UnaryExpr::Op::Ref:
     return operand;
-  case ast::UnaryExpr::Op::Dereference:
+  case ast::UnaryExpr::Op::Dereference: {
     if (isLValue) {
       return operand;
     }
-    return builder()->CreateLoad(llvm::Type::getInt32Ty(context()), operand,
-                                 "deref");
+    // 从指针类型中获取元素类型
+    llvm::Type *pointeeType = nullptr;
+    if (operand->getType()->isPointerTy()) {
+      // 对于 LLVM 不透明指针，我们无法直接获取 pointee 类型
+      // 这里暂时还是用 int32，或者需要从语义分析获取类型信息
+      // 不过目前先使用 int32 作为临时方案
+      pointeeType = llvm::Type::getInt32Ty(context());
+    } else {
+      pointeeType = llvm::Type::getInt32Ty(context());
+    }
+    return builder()->CreateLoad(pointeeType, operand, "deref");
+  }
   default:
     return nullptr;
   }
@@ -1116,8 +1126,7 @@ llvm::Value *LLVMCodeGenerator::generateIdentifierExpr(
       if (isLValue) {
         return alloca;
       }
-      return builder()->CreateLoad(alloca->getAllocatedType(), alloca,
-                                   identifier->name);
+      return builder()->CreateLoad(alloca->getAllocatedType(), alloca, identifier->name);
     }
     return it->second;
   }
@@ -1143,8 +1152,7 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   }
   case ast::NodeType::Identifier: {
     auto *ident = static_cast<ast::Identifier *>(expr.release());
-    return generateIdentifierExpr(std::unique_ptr<ast::Identifier>(ident),
-                                  true);
+    return generateIdentifierExpr(std::unique_ptr<ast::Identifier>(ident), true);
   }
   case ast::NodeType::SubscriptExpr: {
     auto *subscript = static_cast<ast::SubscriptExpr *>(expr.release());
@@ -1279,7 +1287,11 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   }
 
   if (targetFunc) {
-    return builder()->CreateCall(targetFunc, args, "calltmp");
+    if (targetFunc->getReturnType()->isVoidTy()) {
+      return builder()->CreateCall(targetFunc, args);
+    } else {
+      return builder()->CreateCall(targetFunc, args, "calltmp");
+    }
   }
 
   throw std::runtime_error("Function not found: " + funcName);
@@ -1609,6 +1621,13 @@ llvm::Type *LLVMCodeGenerator::generateType(const ast::Type *type) {
   } else if (auto *pointerType = dynamic_cast<const ast::PointerType *>(type)) {
     auto baseType = generateType(pointerType->baseType.get());
     return getPointerType(baseType, pointerType->isNullable);
+  } else if (auto *referenceType = dynamic_cast<const ast::ReferenceType *>(type)) {
+    auto baseType = generateType(referenceType->baseType.get());
+    if (!baseType) {
+      return nullptr;
+    }
+    // 引用类型在 LLVM 中作为指针处理
+    return getPointerType(baseType, false);
   } else if (auto *arrayType = dynamic_cast<const ast::ArrayType *>(type)) {
     auto elementType = generateType(arrayType->baseType.get());
     if (arrayType->size) {

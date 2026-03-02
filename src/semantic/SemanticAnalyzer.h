@@ -17,7 +17,7 @@ public:
   SemanticAnalyzer(const std::string &stdlibPath = "");
 
   // 分析整个程序
-  void analyze(std::unique_ptr<ast::Program> program);
+  void analyze(ast::Program &program);
 
   // 获取符号表
   SymbolTable &getSymbolTable() { return symbolTable; }

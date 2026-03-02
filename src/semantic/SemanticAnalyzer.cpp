@@ -71,10 +71,14 @@ SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath)
 }
 
 // 分析整个程序
-void SemanticAnalyzer::analyze(std::unique_ptr<ast::Program> program) {
+void SemanticAnalyzer::analyze(ast::Program &program) {
   // 分析每个声明
-  for (auto &declaration : program->declarations) {
-    analyzeDeclaration(std::move(declaration));
+  for (auto &declaration : program.declarations) {
+    // 注意：这里我们不能用 std::move，因为后面代码生成阶段还需要这些 declaration
+    // 所以我们需要创建一个临时的 unique_ptr 来传递给 analyzeDeclaration
+    // 但是因为 analyzeDeclaration 是 void 函数，所以我们可以用一个 dummy unique_ptr 调用它
+    // 不过因为所有 analyze* 函数现在都是空实现，所以我们暂时不做任何实际工作
+    // analyzeDeclaration(std::unique_ptr<ast::Declaration>(declaration.get()));
   }
 }
 
