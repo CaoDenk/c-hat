@@ -10,14 +10,19 @@ namespace ast {
 // 成员访问
 class MemberExpr : public Expression {
 public:
-  MemberExpr(std::unique_ptr<Expression> object, const std::string &member)
-      : object(std::move(object)), member(member) {}
+  MemberExpr(std::unique_ptr<Expression> object, const std::string &member,
+             bool isPointerMember = false)
+      : object(std::move(object)), member(member),
+        isPointerMember(isPointerMember) {}
 
   NodeType getType() const override { return NodeType::MemberExpr; }
   std::string toString() const override;
 
   std::unique_ptr<Expression> object;
   std::string member;
+  bool isPointerMember;
+  std::string structName;
+  unsigned memberIndex = 0;
 };
 
 } // namespace ast

@@ -1,15 +1,17 @@
 #pragma once
 
 #include "../ast/AstNodes.h"
+#include "../types/Type.h"
 #include "ModuleLoader.h"
 #include "SymbolTable.h"
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace c_hat {
 namespace semantic {
 
-// 语义分析器类
 class SemanticAnalyzer {
 public:
   SemanticAnalyzer(const std::string &stdlibPath = "");
@@ -26,9 +28,6 @@ public:
 private:
   // 符号表
   SymbolTable symbolTable;
-
-  // 错误标志
-  bool hasError_ = false;
 
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
@@ -76,59 +75,66 @@ private:
   // 分析扩展声明
   void analyzeExtensionDecl(std::unique_ptr<ast::ExtensionDecl> extensionDecl);
 
-  // 分析 Getter 声明
+  // 分析getter声明
   void analyzeGetterDecl(std::unique_ptr<ast::GetterDecl> getterDecl);
 
-  // 分析 Setter 声明
+  // 分析setter声明
   void analyzeSetterDecl(std::unique_ptr<ast::SetterDecl> setterDecl);
 
   // 分析外部声明块
   void analyzeExternDecl(std::unique_ptr<ast::ExternDecl> externDecl);
 
   // 分析语句
-  void analyzeStatement(std::unique_ptr<ast::Statement> statement);
+  std::shared_ptr<types::Type>
+  analyzeStatement(std::unique_ptr<ast::Statement> stmt);
 
   // 分析表达式语句
-  void analyzeExprStmt(std::unique_ptr<ast::ExprStmt> exprStmt);
+  std::shared_ptr<types::Type>
+  analyzeExprStmt(std::unique_ptr<ast::ExprStmt> exprStmt);
 
   // 分析复合语句
-  void analyzeCompoundStmt(std::unique_ptr<ast::CompoundStmt> compoundStmt);
+  std::shared_ptr<types::Type>
+  analyzeCompoundStmt(std::unique_ptr<ast::CompoundStmt> compoundStmt);
 
   // 分析返回语句
-  void analyzeReturnStmt(std::unique_ptr<ast::ReturnStmt> returnStmt);
+  std::shared_ptr<types::Type>
+  analyzeReturnStmt(std::unique_ptr<ast::ReturnStmt> returnStmt);
 
   // 分析if语句
-  void analyzeIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
-
-  // 分析match语句
-  void analyzeMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);
-
-  // 分析for语句
-  void analyzeForStmt(std::unique_ptr<ast::ForStmt> forStmt);
+  std::shared_ptr<types::Type>
+  analyzeIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
 
   // 分析while语句
-  void analyzeWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
+  std::shared_ptr<types::Type>
+  analyzeWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
 
-  // 分析do-while语句
-  void analyzeDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
+  // 分析for语句
+  std::shared_ptr<types::Type>
+  analyzeForStmt(std::unique_ptr<ast::ForStmt> forStmt);
 
   // 分析break语句
-  void analyzeBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
+  std::shared_ptr<types::Type>
+  analyzeBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
 
   // 分析continue语句
-  void analyzeContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
+  std::shared_ptr<types::Type>
+  analyzeContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
+
+  // 分析match语句
+  std::shared_ptr<types::Type>
+  analyzeMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);
 
   // 分析try语句
-  void analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
+  std::shared_ptr<types::Type>
+  analyzeTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
 
   // 分析throw语句
-  void analyzeThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
+  std::shared_ptr<types::Type>
+  analyzeThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
 
   // 分析defer语句
-  void analyzeDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
-
-  // 分析comptime语句
-  void analyzeComptimeStmt(std::unique_ptr<ast::ComptimeStmt> comptimeStmt);
+  std::shared_ptr<types::Type>
+  analyzeDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
 
   // 分析表达式
   std::shared_ptr<types::Type>
@@ -174,19 +180,19 @@ private:
   std::shared_ptr<types::Type>
   analyzeThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr);
 
-  // 分析self表达式
-  std::shared_ptr<types::Type>
-  analyzeSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
-
   // 分析super表达式
   std::shared_ptr<types::Type>
   analyzeSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
 
-  // 分析可变参数展开表达式
+  // 分析self表达式
+  std::shared_ptr<types::Type>
+  analyzeSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
+
+  // 分析展开表达式
   std::shared_ptr<types::Type>
   analyzeExpansionExpr(std::unique_ptr<ast::ExpansionExpr> expansionExpr);
 
-  // 分析Lambda表达式
+  // 分析lambda表达式
   std::shared_ptr<types::Type>
   analyzeLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
 
@@ -205,20 +211,67 @@ private:
   // 分析类型
   std::shared_ptr<types::Type> analyzeType(const ast::Type *type);
 
-  // 检查类型兼容性
-  bool checkTypeCompatibility(const types::Type &type1,
-                              const types::Type &type2);
+  // 分析基本类型
+  std::shared_ptr<types::Type>
+  analyzePrimitiveType(const ast::PrimitiveType *primitiveType);
 
-  // 查找适用的隐式转换函数
-  std::shared_ptr<FunctionSymbol>
-  findImplicitOperator(const std::shared_ptr<types::Type> &sourceType,
-                       const std::shared_ptr<types::Type> &targetType);
+  // 分析指针类型
+  std::shared_ptr<types::Type>
+  analyzePointerType(const ast::PointerType *pointerType);
 
-  // 辅助函数：检查表达式的基对象是否为只读类型
-  bool isBaseObjectReadonly(const ast::Expression *expr);
+  // 分析数组类型
+  std::shared_ptr<types::Type>
+  analyzeArrayType(const ast::ArrayType *arrayType);
+
+  // 分析切片类型
+  std::shared_ptr<types::Type>
+  analyzeSliceType(const ast::SliceType *sliceType);
+
+  // 分析引用类型
+  std::shared_ptr<types::Type>
+  analyzeReferenceType(const ast::ReferenceType *referenceType);
+
+  // 分析函数类型
+  std::shared_ptr<types::Type>
+  analyzeFunctionType(const ast::FunctionType *functionType);
+
+  // 分析命名类型
+  std::shared_ptr<types::Type>
+  analyzeNamedType(const ast::NamedType *namedType);
+
+  // 分析元组类型
+  std::shared_ptr<types::Type>
+  analyzeTupleType(const ast::TupleType *tupleType);
+
+  // 检查表达式是否为左值
+  bool isLValue(const ast::Expression &expr) const;
+
+  // 检查类型是否兼容
+  bool isTypeCompatible(const std::shared_ptr<types::Type> &expected,
+                        const std::shared_ptr<types::Type> &actual);
+
+  // 尝试进行隐式类型转换
+  std::shared_ptr<types::Type>
+  tryImplicitConversion(const std::shared_ptr<types::Type> &expected,
+                        const std::shared_ptr<types::Type> &actual);
+
+  // 解析可见性修饰符
+  Visibility parseVisibility(const std::vector<std::string> &specifiers);
 
   // 报告错误
   void error(const std::string &message, const ast::Node &node);
+
+  // 是否有错误
+  bool hasError_ = false;
+
+  // 当前函数的返回类型
+  std::shared_ptr<types::Type> currentFunctionReturnType_;
+
+  // 当前类名
+  std::string currentClassName_;
+
+  // 初始化内置符号
+  void initializeBuiltinSymbols();
 };
 
 } // namespace semantic

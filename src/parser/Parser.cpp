@@ -1642,7 +1642,7 @@ Parser::parseMemberExpr(std::unique_ptr<ast::Expression> object) {
   }
   std::string member = currentToken->getValue();
   advance();
-  return std::make_unique<ast::MemberExpr>(std::move(object), member);
+  return std::make_unique<ast::MemberExpr>(std::move(object), member, false);
 }
 
 // 解析指针成员访问
@@ -1654,7 +1654,7 @@ Parser::parsePointerMemberExpr(std::unique_ptr<ast::Expression> object) {
   }
   std::string member = currentToken->getValue();
   advance();
-  return std::make_unique<ast::MemberExpr>(std::move(object), member);
+  return std::make_unique<ast::MemberExpr>(std::move(object), member, true);
 }
 
 // 解析范围表达式

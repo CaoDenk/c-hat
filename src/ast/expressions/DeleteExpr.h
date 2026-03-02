@@ -18,6 +18,7 @@ public:
 
   std::unique_ptr<Expression> expr;
   bool isArray;
+  std::string typeName;  // 类型名（用于查找析构函数）
 };
 
 } // namespace ast

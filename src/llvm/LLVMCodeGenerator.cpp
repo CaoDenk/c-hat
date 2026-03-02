@@ -1300,52 +1300,81 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     }
   }
 
-  llvm::Value *objectPtr = getExpressionLValue(std::move(memberExpr->object));
+  llvm::Value *objectPtr = nullptr;
+  if (memberExpr->isPointerMember) {
+    objectPtr = generateExpression(std::move(memberExpr->object));
+  } else {
+    objectPtr = getExpressionLValue(std::move(memberExpr->object));
+  }
 
   std::string structName;
   unsigned idx = 0;
   bool isLiteralView = false;
   llvm::Type *structType = nullptr;
 
-  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objectPtr)) {
-    structType = alloca->getAllocatedType();
-    if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
-      structName = structTypeNode->getName().str();
-      if (structName == "LiteralView") {
-        isLiteralView = true;
-        if (memberExpr->member == "ptr") {
-          idx = 0;
-        } else if (memberExpr->member == "len") {
-          idx = 1;
-        }
-      }
-    }
-  } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objectPtr)) {
-    structType = gep->getResultElementType();
-    if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
-      structName = structTypeNode->getName().str();
-      if (structName == "LiteralView") {
-        isLiteralView = true;
-        if (memberExpr->member == "ptr") {
-          idx = 0;
-        } else if (memberExpr->member == "len") {
-          idx = 1;
-        }
-      }
-    }
-  }
+  if (memberExpr->isPointerMember) {
+    // 指针成员访问：遍历所有可能的结构体类型，查找包含该成员的类型
+    // 这种方法在小型项目中可行，因为结构体数量不多
+    for (const auto &pair : structTypes_) {
+      const std::string &name = pair.first;
+      llvm::StructType *type = pair.second;
 
-  if (!isLiteralView) {
-    auto it = structInfo_.find(structName);
-    if (it != structInfo_.end()) {
-      auto idxIt = it->second.find(memberExpr->member);
-      if (idxIt != it->second.end()) {
-        idx = idxIt->second;
+      auto infoIt = structInfo_.find(name);
+      if (infoIt != structInfo_.end()) {
+        auto memberIt = infoIt->second.find(memberExpr->member);
+        if (memberIt != infoIt->second.end()) {
+          structName = name;
+          structType = type;
+          idx = memberIt->second;
+          break;
+        }
+      }
+    }
+  } else {
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(objectPtr)) {
+      structType = alloca->getAllocatedType();
+      if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
+        structName = structTypeNode->getName().str();
+        if (structName == "LiteralView") {
+          isLiteralView = true;
+          if (memberExpr->member == "ptr") {
+            idx = 0;
+          } else if (memberExpr->member == "len") {
+            idx = 1;
+          }
+        }
+      }
+    } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(objectPtr)) {
+      structType = gep->getResultElementType();
+      if (auto *structTypeNode = llvm::dyn_cast<llvm::StructType>(structType)) {
+        structName = structTypeNode->getName().str();
+        if (structName == "LiteralView") {
+          isLiteralView = true;
+          if (memberExpr->member == "ptr") {
+            idx = 0;
+          } else if (memberExpr->member == "len") {
+            idx = 1;
+          }
+        }
+      }
+    }
+
+    if (!isLiteralView) {
+      auto it = structInfo_.find(structName);
+      if (it != structInfo_.end()) {
+        auto idxIt = it->second.find(memberExpr->member);
+        if (idxIt != it->second.end()) {
+          idx = idxIt->second;
+        }
       }
     }
   }
 
   std::vector<llvm::Value *> indices;
+  // 无论是否是指针成员访问，访问结构体成员都需要两个索引：[0, idx]
+  // - 对于非指针访问：objectPtr 是 alloca %Point（指向结构体的指针），需要 [0,
+  // idx] 访问成员
+  // - 对于指针访问：objectPtr 是指向结构体的指针，也需要 [0, idx] 访问成员
   indices.push_back(
       llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0));
   indices.push_back(
@@ -1359,8 +1388,8 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
   } else {
     llvm::Type *memberType = nullptr;
     if (structType && structType->isStructTy()) {
-      auto *llvmStructType = llvm::cast<llvm::StructType>(structType);
-      if (idx < llvmStructType->getNumElements()) {
+      auto *llvmStructType = llvm::dyn_cast<llvm::StructType>(structType);
+      if (llvmStructType && idx < llvmStructType->getNumElements()) {
         memberType = llvmStructType->getElementType(idx);
       }
     }
@@ -1440,6 +1469,40 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     std::unique_ptr<ast::DeleteExpr> deleteExpr) {
   llvm::Value *ptr = generateExpression(std::move(deleteExpr->expr));
 
+  // 如果有类型名，先调用析构函数
+  if (!deleteExpr->typeName.empty()) {
+    // 析构函数的名称是 typeName + "_~" + typeName
+    // 或者我们直接遍历所有可能的函数名，查找析构函数
+    // 首先检查 typeName_~typeName
+    std::string dtorName1 = deleteExpr->typeName + "_~" + deleteExpr->typeName;
+    // 另外，也可能是 typeName + "_" + 直接包含 ~ 的函数名
+    // 我们遍历所有函数，查找匹配的析构函数
+    llvm::Function *dtor = nullptr;
+
+    // 方法 1: 直接按 dtorName1 查找
+    if (functions_.find(dtorName1) != functions_.end()) {
+      dtor = functions_[dtorName1];
+    } else {
+      // 方法 2: 遍历所有函数，查找以 typeName_~ 开头的函数
+      for (const auto &pair : functions_) {
+        const std::string &name = pair.first;
+        if (name.size() > deleteExpr->typeName.size() + 1 &&
+            name.substr(0, deleteExpr->typeName.size()) ==
+                deleteExpr->typeName &&
+            name[deleteExpr->typeName.size()] == '_' &&
+            name[deleteExpr->typeName.size() + 1] == '~') {
+          dtor = pair.second;
+          break;
+        }
+      }
+    }
+
+    if (dtor) {
+      builder()->CreateCall(dtor, {ptr});
+    }
+  }
+
+  // 调用 free 释放内存
   llvm::Type *i8Type = llvm::Type::getInt8Ty(context());
   llvm::FunctionType *freeType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context()), {i8Type->getPointerTo()}, false);
