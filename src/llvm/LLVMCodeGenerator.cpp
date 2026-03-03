@@ -246,8 +246,12 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     }
   }
 
-  // 正常初始化路径
-  if (varDecl->initializer) {
+  // 处理 late 变量
+  if (varDecl->isLate) {
+    // 记录 late 变量信息
+    lateVariables_[varDecl->name] = {alloca, varType, false};
+  } else if (varDecl->initializer) {
+    // 正常初始化路径
     llvm::Value *initValue =
         generateExpression(std::move(varDecl->initializer));
     builder()->CreateStore(initValue, alloca);
@@ -329,6 +333,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
     namedValues_.clear();
     deferExpressions_.clear();
+    lateVariables_.clear();
 
     size_t paramIndex = 0;
     auto argIt = function->args().begin();
@@ -353,6 +358,14 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
       llvm::BasicBlock *lastBlock = &function->back();
       if (!lastBlock->getTerminator()) {
+        // 为已初始化的 late 变量调用析构函数
+        for (const auto &[varName, info] : lateVariables_) {
+          if (info.isInitialized) {
+            // 这里需要添加析构函数调用的代码
+            // 目前暂时跳过，因为析构函数的实现还未完成
+          }
+        }
+
         // 执行 defer 语句（按相反顺序）
         while (!deferExpressions_.empty()) {
           auto deferExpr = std::move(deferExpressions_.back());
@@ -1168,6 +1181,16 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
   case ast::BinaryExpr::Op::Shr:
     return builder()->CreateAShr(left, right, "shrtmp");
   case ast::BinaryExpr::Op::Assign:
+    // 检查是否是 late 变量的赋值
+    if (auto *identifier =
+            dynamic_cast<ast::Identifier *>(binaryExpr->left.get())) {
+      const std::string &varName = identifier->name;
+      auto it = lateVariables_.find(varName);
+      if (it != lateVariables_.end()) {
+        // 标记为已初始化
+        it->second.isInitialized = true;
+      }
+    }
     return builder()->CreateStore(right, leftAddr);
   case ast::BinaryExpr::Op::AddAssign:
     result = isFloat ? builder()->CreateFAdd(left, right, "addtmp")

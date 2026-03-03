@@ -23,6 +23,7 @@
 #include "expressions/SuperExpr.h"
 #include "expressions/ThisExpr.h"
 #include "expressions/TupleExpr.h"
+#include "expressions/ReflectionExpr.h"
 #include "expressions/UnaryExpr.h"
 
 // 声明

@@ -1559,9 +1559,28 @@ std::unique_ptr<ast::Expression> Parser::parseUnaryExpr() {
     return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::Await,
                                             std::move(expr));
   } else if (match(lexer::TokenType::At)) {
-    auto expr = parseUnaryExpr();
-    return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::At,
-                                            std::move(expr));
+    // 解析反射表达式: @Type 或 @typeof(expr)
+    if (check(lexer::TokenType::Typeof)) {
+      // @typeof(expr) 形式
+      advance(); // 消费 'typeof'
+      expect(lexer::TokenType::LParen, "Expected '(' after 'typeof'");
+      auto expr = parseExpression();
+      if (!expr) {
+        error("Expected expression in typeof expression");
+        return nullptr;
+      }
+      expect(lexer::TokenType::RParen,
+             "Expected ')' after expression in typeof expression");
+      return std::make_unique<ast::ReflectionExpr>(std::move(expr));
+    } else {
+      // @Type 形式
+      auto type = parseType();
+      if (!type) {
+        error("Expected type after '@'");
+        return nullptr;
+      }
+      return std::make_unique<ast::ReflectionExpr>(std::move(type));
+    }
   } else if (match(lexer::TokenType::Sizeof)) {
     expect(lexer::TokenType::LParen, "Expected '(' after 'sizeof'");
     auto type = parseType();

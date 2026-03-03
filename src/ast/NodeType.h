@@ -25,6 +25,7 @@ enum class NodeType {
   StructInitExpr,
   TupleExpr,
   LambdaExpr,
+  ReflectionExpr,
 
   // 声明
   Declaration,

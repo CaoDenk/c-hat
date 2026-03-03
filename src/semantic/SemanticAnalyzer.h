@@ -273,6 +273,13 @@ private:
   // 当前类名
   std::string currentClassName_;
 
+  // late 变量的初始化状态跟踪
+  struct LateVariableStatus {
+    bool isInitialized;
+    const ast::VariableDecl *decl;
+  };
+  std::unordered_map<std::string, LateVariableStatus> lateVariables_;
+
   // 初始化内置符号
   void initializeBuiltinSymbols();
 };

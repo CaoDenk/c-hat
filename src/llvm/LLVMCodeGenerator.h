@@ -140,6 +140,14 @@ private:
 
   // defer 语句收集
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
+
+  // late 变量的初始化状态跟踪
+  struct LateVariableInfo {
+    llvm::Value *alloca;
+    llvm::Type *type;
+    bool isInitialized;
+  };
+  std::unordered_map<std::string, LateVariableInfo> lateVariables_;
 };
 
 } // namespace llvm_codegen

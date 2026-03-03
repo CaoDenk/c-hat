@@ -149,13 +149,47 @@ void SemanticAnalyzer::analyzeDeclaration(
   }
 }
 
-// 空实现的函数
 void SemanticAnalyzer::analyzeVariableDecl(
-    std::unique_ptr<ast::VariableDecl> varDecl) {}
+    std::unique_ptr<ast::VariableDecl> varDecl) {
+  // 分析变量类型
+  std::shared_ptr<types::Type> varType = nullptr;
+  if (varDecl->type) {
+    if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
+      varType = analyzeType(typeNode);
+    }
+  }
+
+  // 检查 late 变量
+  if (varDecl->isLate) {
+    // late 变量不能有初始化器
+    if (varDecl->initializer) {
+      error("late variable cannot have initializer", *varDecl);
+    }
+
+    // 记录 late 变量的状态
+    lateVariables_[varDecl->name] = {false, varDecl.get()};
+  }
+
+  // 添加到符号表
+  auto varSymbol = std::make_shared<VariableSymbol>(
+      varDecl->name, varType, ast::VariableKind::Explicit, varDecl->isConst);
+  symbolTable.addSymbol(varSymbol);
+}
 void SemanticAnalyzer::analyzeTupleDestructuringDecl(
     std::unique_ptr<ast::TupleDestructuringDecl> decl) {}
 void SemanticAnalyzer::analyzeFunctionDecl(
-    std::unique_ptr<ast::FunctionDecl> funcDecl) {}
+    std::unique_ptr<ast::FunctionDecl> funcDecl) {
+  // 清空 late 变量表，因为它们的作用域是函数级别的
+  lateVariables_.clear();
+
+  // 分析函数体
+  if (funcDecl->body) {
+    if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+      analyzeStatement(std::unique_ptr<ast::Statement>(
+          static_cast<ast::Statement *>(funcDecl->body.release())));
+    }
+  }
+}
 void SemanticAnalyzer::analyzeClassDecl(
     std::unique_ptr<ast::ClassDecl> classDecl) {}
 void SemanticAnalyzer::analyzeStructDecl(
@@ -252,7 +286,38 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeExpression(
 }
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeBinaryExpr(
     std::unique_ptr<ast::BinaryExpr> binaryExpr) {
-  return nullptr;
+  // 分析左操作数
+  std::shared_ptr<types::Type> leftType =
+      analyzeExpression(std::move(binaryExpr->left));
+
+  // 分析右操作数
+  std::shared_ptr<types::Type> rightType =
+      analyzeExpression(std::move(binaryExpr->right));
+
+  // 处理赋值操作
+  if (binaryExpr->op == ast::BinaryExpr::Op::Assign) {
+    // 检查左操作数是否是标识符（变量）
+    if (auto *identifier =
+            dynamic_cast<ast::Identifier *>(binaryExpr->left.get())) {
+      const std::string &varName = identifier->name;
+
+      // 检查是否是 late 变量
+      auto it = lateVariables_.find(varName);
+      if (it != lateVariables_.end()) {
+        // 标记为已初始化
+        it->second.isInitialized = true;
+      }
+    }
+  }
+
+  // 检查类型兼容性
+  if (leftType && rightType) {
+    if (!isTypeCompatible(leftType, rightType)) {
+      error("type mismatch in binary expression", *binaryExpr);
+    }
+  }
+
+  return leftType;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr) {
@@ -260,6 +325,22 @@ SemanticAnalyzer::analyzeUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr) {
 }
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeIdentifierExpr(
     std::unique_ptr<ast::Identifier> identifier) {
+  const std::string &name = identifier->name;
+
+  // 检查是否是 late 变量
+  auto it = lateVariables_.find(name);
+  if (it != lateVariables_.end()) {
+    const LateVariableStatus &status = it->second;
+    if (!status.isInitialized) {
+      error("use of uninitialized late variable '" + name + "'", *identifier);
+    }
+  }
+
+  // 从符号表获取类型
+  auto symbol = symbolTable.lookupSymbol(name);
+  if (auto varSymbol = std::dynamic_pointer_cast<VariableSymbol>(symbol)) {
+    return varSymbol->getType();
+  }
   return nullptr;
 }
 std::shared_ptr<types::Type>
@@ -272,7 +353,25 @@ SemanticAnalyzer::analyzeCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
 }
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeMemberExpr(
     std::unique_ptr<ast::MemberExpr> memberExpr) {
-  return nullptr;
+  // 分析对象表达式
+  std::shared_ptr<types::Type> objType =
+      analyzeExpression(std::move(memberExpr->object));
+
+  // 检查对象是否是 late 变量
+  if (auto *identifier =
+          dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+    const std::string &varName = identifier->name;
+    auto it = lateVariables_.find(varName);
+    if (it != lateVariables_.end()) {
+      const LateVariableStatus &status = it->second;
+      if (!status.isInitialized) {
+        error("use of uninitialized late variable '" + varName + "'",
+              *memberExpr);
+      }
+    }
+  }
+
+  return objType;
 }
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeSubscriptExpr(
     std::unique_ptr<ast::SubscriptExpr> subscriptExpr) {
