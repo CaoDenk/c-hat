@@ -70,6 +70,9 @@ private:
 
   llvm::Value *generateExternDecl(std::unique_ptr<ast::ExternDecl> externDecl);
 
+  llvm::Value *
+  generateNamespaceDecl(std::unique_ptr<ast::NamespaceDecl> namespaceDecl);
+
   llvm::Value *generateStatement(std::unique_ptr<ast::Statement> stmt);
   llvm::Value *generateExprStmt(std::unique_ptr<ast::ExprStmt> exprStmt);
   llvm::Value *
@@ -128,6 +131,7 @@ private:
   std::unordered_map<std::string, llvm::Value *> namedValues_;
   std::unordered_map<std::string, llvm::Function *> functions_;
   std::unordered_map<std::string, llvm::StructType *> structTypes_;
+  std::unordered_map<std::string, llvm::Type *> typeAliases_; // 类型别名
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
   llvm::Function *currentFunction_ = nullptr;

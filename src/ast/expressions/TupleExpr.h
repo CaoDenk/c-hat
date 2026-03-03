@@ -16,6 +16,14 @@ public:
 
   NodeType getType() const override { return NodeType::TupleExpr; }
 
+  std::unique_ptr<Expression> clone() const override {
+    std::vector<std::unique_ptr<Expression>> clonedElements;
+    for (const auto &element : elements) {
+      clonedElements.push_back(element->clone());
+    }
+    return std::make_unique<TupleExpr>(std::move(clonedElements));
+  }
+
   std::string toString() const override {
     std::string result = "(";
     for (size_t i = 0; i < elements.size(); ++i) {

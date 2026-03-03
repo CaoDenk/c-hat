@@ -19,6 +19,9 @@ public:
 
   NodeType getType() const override { return NodeType::FoldExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<FoldExpr>(foldType, expr->clone(), op, right ? right->clone() : nullptr);
+  }
 
   FoldType foldType;
   std::unique_ptr<Expression> expr;

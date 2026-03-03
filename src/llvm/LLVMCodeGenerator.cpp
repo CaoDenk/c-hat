@@ -53,6 +53,9 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
   case ast::NodeType::ExternDecl:
     return generateExternDecl(std::unique_ptr<ast::ExternDecl>(
         static_cast<ast::ExternDecl *>(decl.release())));
+  case ast::NodeType::NamespaceDecl:
+    return generateNamespaceDecl(std::unique_ptr<ast::NamespaceDecl>(
+        static_cast<ast::NamespaceDecl *>(decl.release())));
   default:
     return nullptr;
   }
@@ -97,9 +100,45 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
         throw std::runtime_error(
             "Cannot infer type from literal for variable: " + varDecl->name);
       }
+    } else if (auto *callExpr =
+                   dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
+      // 对于函数调用表达式，尝试从函数名获取函数类型
+      if (auto *identifier =
+              dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+        const std::string &funcName = identifier->name;
+        // 检查是否是已定义的函数
+        auto it = functions_.find(funcName);
+        if (it != functions_.end()) {
+          llvm::Function *func = it->second;
+          varType = func->getReturnType();
+        } else {
+          // 如果函数未定义，暂时使用 int 作为默认类型
+          varType = llvm::Type::getInt32Ty(context());
+        }
+      } else {
+        // 对于非标识符调用，暂时使用 int 作为默认类型
+        varType = llvm::Type::getInt32Ty(context());
+      }
+    } else if (auto *identifier = dynamic_cast<ast::Identifier *>(
+                   varDecl->initializer.get())) {
+      // 对于标识符表达式，尝试从变量名获取变量类型
+      const std::string &varName = identifier->name;
+      // 检查是否是已定义的变量
+      auto it = namedValues_.find(varName);
+      if (it != namedValues_.end()) {
+        llvm::Value *varValue = it->second;
+        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(varValue)) {
+          varType = alloca->getAllocatedType();
+        } else {
+          // 如果变量不是 AllocaInst，暂时使用 int 作为默认类型
+          varType = llvm::Type::getInt32Ty(context());
+        }
+      } else {
+        // 如果变量未定义，暂时使用 int 作为默认类型
+        varType = llvm::Type::getInt32Ty(context());
+      }
     } else {
-      // 对于非字面量初始化器，我们暂时使用 int 作为默认类型
-      // 这是一个临时解决方案，后续需要从语义分析阶段获取类型信息
+      // 对于其他非字面量初始化器，暂时使用 int 作为默认类型
       varType = llvm::Type::getInt32Ty(context());
     }
   }
@@ -524,11 +563,13 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
 llvm::Value *LLVMCodeGenerator::generateTypeAliasDecl(
     std::unique_ptr<ast::TypeAliasDecl> typeAliasDecl) {
-  // 类型别名在 LLVM 中不需要特殊处理，因为它们只是类型的别名
-  // 我们只需要确保类型本身被正确生成
+  // 生成类型并保存类型别名信息
   if (typeAliasDecl->type) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(typeAliasDecl->type.get())) {
-      generateType(typeNode);
+      llvm::Type *type = generateType(typeNode);
+      if (type) {
+        typeAliases_[typeAliasDecl->name] = type;
+      }
     }
   }
   return nullptr;
@@ -868,14 +909,67 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
 
 llvm::Value *
 LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
+  // 保存当前的插入点
+  llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
+  llvm::Function *currentFunction = currentBlock->getParent();
+
+  // 创建基本块
+  llvm::BasicBlock *tryBlock =
+      llvm::BasicBlock::Create(context(), "try", currentFunction);
+  llvm::BasicBlock *catchBlock =
+      llvm::BasicBlock::Create(context(), "catch", currentFunction);
+  llvm::BasicBlock *endBlock =
+      llvm::BasicBlock::Create(context(), "try.end", currentFunction);
+
+  // 跳转到 try 块
+  builder()->CreateBr(tryBlock);
+
+  // 生成 try 块的代码
+  builder()->SetInsertPoint(tryBlock);
+  generateStatement(std::move(tryStmt->tryBlock));
+  builder()->CreateBr(endBlock);
+
+  // 生成 catch 块的代码
+  builder()->SetInsertPoint(catchBlock);
+
+  // 创建 landingpad 指令
+  llvm::Value *landingpad = builder()->CreateLandingPad(
+      llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0), 1,
+      "landingpad");
+  if (auto *lpInst = llvm::dyn_cast<llvm::LandingPadInst>(landingpad)) {
+    lpInst->addClause(llvm::ConstantPointerNull::get(
+        llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)));
+  }
+
+  // 生成 catch 块的代码
+  for (auto &catchStmt : tryStmt->catchStmts) {
+    generateStatement(std::move(catchStmt));
+  }
+  builder()->CreateBr(endBlock);
+
+  // 设置插入点到 end 块
+  builder()->SetInsertPoint(endBlock);
+
   return nullptr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateThrowStmt(
     std::unique_ptr<ast::ThrowStmt> throwStmt) {
+  // 生成表达式的值
+  llvm::Value *exprValue = nullptr;
   if (throwStmt->expr) {
-    generateExpression(std::move(throwStmt->expr));
+    exprValue = generateExpression(std::move(throwStmt->expr));
   }
+
+  // 创建 throw 指令
+  // 在 LLVM 中，throw 是通过调用 __cxa_throw 函数实现的
+  // 暂时使用一个简单的实现
+  if (exprValue) {
+    // 这里应该调用 __cxa_throw，暂时使用一个空实现
+  } else {
+    // 如果没有表达式，使用 null 指针
+  }
+
   return nullptr;
 }
 
@@ -1350,10 +1444,47 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   }
 
   if (targetFunc) {
-    if (targetFunc->getReturnType()->isVoidTy()) {
-      return builder()->CreateCall(targetFunc, args);
+    // 检查函数是否可能抛出异常
+    // 暂时假设所有函数都可能抛出异常
+    bool mayThrow = true;
+
+    if (mayThrow) {
+      // 使用 invoke 指令调用可能抛出异常的函数
+      llvm::BasicBlock *normalBlock =
+          llvm::BasicBlock::Create(context(), "invoke.cont", currentFunction_);
+      llvm::BasicBlock *unwindBlock = llvm::BasicBlock::Create(
+          context(), "invoke.unwind", currentFunction_);
+
+      llvm::InvokeInst *invokeInst = builder()->CreateInvoke(
+          targetFunc, normalBlock, unwindBlock, args, "calltmp");
+
+      // 设置插入点到正常块
+      builder()->SetInsertPoint(normalBlock);
+
+      // 生成 landingpad 指令到 unwind 块
+      builder()->SetInsertPoint(unwindBlock);
+      llvm::Value *landingpad = builder()->CreateLandingPad(
+          llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0), 1,
+          "landingpad");
+      if (auto *lpInst = llvm::dyn_cast<llvm::LandingPadInst>(landingpad)) {
+        lpInst->addClause(llvm::ConstantPointerNull::get(
+            llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)));
+      }
+
+      // 重新抛出异常
+      builder()->CreateResume(landingpad);
+
+      // 设置插入点回到正常块
+      builder()->SetInsertPoint(normalBlock);
+
+      return invokeInst;
     } else {
-      return builder()->CreateCall(targetFunc, args, "calltmp");
+      // 使用普通的 call 指令
+      if (targetFunc->getReturnType()->isVoidTy()) {
+        return builder()->CreateCall(targetFunc, args);
+      } else {
+        return builder()->CreateCall(targetFunc, args, "calltmp");
+      }
     }
   } else {
     // 处理函数指针调用的情况
@@ -1363,30 +1494,34 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     if (calleeValue) {
       // 直接使用函数指针进行调用
       if (calleeValue->getType()->isPointerTy()) {
-        // 对于测试用例，我们使用一个更简单的方法
-        // 直接创建一个函数类型并调用，不进行类型转换
-        auto funcType =
-            llvm::FunctionType::get(llvm::Type::getInt32Ty(context()),
-                                    {llvm::Type::getInt32Ty(context()),
-                                     llvm::Type::getInt32Ty(context())},
-                                    false);
+        // 尝试从变量的类型信息中获取函数类型
+        // 注意：由于 LLVM 18+
+        // 使用不透明指针，我们无法直接从指针类型中获取函数类型
+        // 这里我们暂时使用一个通用的函数类型，后续需要从语义分析阶段获取类型信息
+        std::vector<llvm::Type *> paramTypes;
+        for (size_t i = 0; i < args.size(); ++i) {
+          // 暂时假设所有参数都是 int32 类型
+          paramTypes.push_back(llvm::Type::getInt32Ty(context()));
+        }
+        // 暂时假设返回类型是 int32
+        auto funcType = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(context()), paramTypes, false);
 
         // 确保我们有正确数量的参数
         std::vector<llvm::Value *> adjustedArgs;
-        for (size_t i = 0; i < 2; ++i) {
+        for (size_t i = 0; i < paramTypes.size(); ++i) {
           if (i < args.size()) {
-            // 确保参数类型是 int32
-            if (args[i]->getType() != llvm::Type::getInt32Ty(context())) {
-              adjustedArgs.push_back(builder()->CreateCast(
-                  llvm::Instruction::CastOps::SExt, args[i],
-                  llvm::Type::getInt32Ty(context()), "argcast"));
+            // 确保参数类型匹配
+            if (args[i]->getType() != paramTypes[i]) {
+              adjustedArgs.push_back(
+                  builder()->CreateCast(llvm::Instruction::CastOps::SExt,
+                                        args[i], paramTypes[i], "argcast"));
             } else {
               adjustedArgs.push_back(args[i]);
             }
           } else {
             // 如果参数不足，添加默认值 0
-            adjustedArgs.push_back(
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0));
+            adjustedArgs.push_back(llvm::ConstantInt::get(paramTypes[i], 0));
           }
         }
 
@@ -1545,14 +1680,90 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
 
 llvm::Value *
 LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
-  // 暂时返回一个空指针
-  return llvm::ConstantPointerNull::get(
-      llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0));
+  // 获取类名
+  std::string className;
+  if (auto *identifier = dynamic_cast<ast::Identifier *>(newExpr->type.get())) {
+    className = identifier->name;
+  } else {
+    // 不是有效的类型，返回空指针
+    return llvm::ConstantPointerNull::get(
+        llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0));
+  }
+
+  // 查找类类型
+  auto it = structTypes_.find(className);
+  if (it == structTypes_.end()) {
+    // 类未找到，返回空指针
+    return llvm::ConstantPointerNull::get(
+        llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0));
+  }
+  llvm::StructType *classType = it->second;
+
+  // 分配内存
+  llvm::Value *size = llvm::ConstantInt::get(
+      llvm::Type::getInt64Ty(context()),
+      module()->getDataLayout().getTypeAllocSize(classType));
+  llvm::Function *mallocFunc = module()->getFunction("malloc");
+  if (!mallocFunc) {
+    // 声明 malloc 函数
+    llvm::FunctionType *mallocType = llvm::FunctionType::get(
+        llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
+        {llvm::Type::getInt64Ty(context())}, false);
+    mallocFunc = llvm::Function::Create(
+        mallocType, llvm::Function::ExternalLinkage, "malloc", module());
+  }
+  llvm::Value *ptr = builder()->CreateCall(mallocFunc, {size}, "malloctmp");
+  llvm::Value *objPtr =
+      builder()->CreateBitCast(ptr, classType->getPointerTo(), "objtmp");
+
+  // 生成构造函数调用
+  std::string constructorName = className + "_" + className;
+  llvm::Function *constructor = module()->getFunction(constructorName);
+  if (constructor) {
+    std::vector<llvm::Value *> args;
+    args.push_back(objPtr);
+
+    // 添加构造函数参数
+    for (auto &arg : newExpr->args) {
+      llvm::Value *argValue = generateExpression(std::move(arg));
+      args.push_back(argValue);
+    }
+
+    builder()->CreateCall(constructor, args, "constructortmp");
+  }
+
+  return objPtr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     std::unique_ptr<ast::DeleteExpr> deleteExpr) {
-  // 暂时不做任何操作
+  // 生成表达式的值
+  llvm::Value *exprValue = generateExpression(std::move(deleteExpr->expr));
+  if (!exprValue) {
+    return nullptr;
+  }
+
+  // 尝试获取对象的类型
+  // 注意：由于 LLVM 18+ 使用不透明指针，我们无法直接从指针类型中获取对象类型
+  // 这里我们暂时假设对象是一个类实例，并尝试调用其析构函数
+
+  // 查找 free 函数
+  llvm::Function *freeFunc = module()->getFunction("free");
+  if (!freeFunc) {
+    // 声明 free 函数
+    llvm::FunctionType *freeType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context()),
+        {llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)}, false);
+    freeFunc = llvm::Function::Create(freeType, llvm::Function::ExternalLinkage,
+                                      "free", module());
+  }
+
+  // 调用 free 函数释放内存
+  llvm::Value *ptr = builder()->CreateBitCast(
+      exprValue, llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
+      "freetmp");
+  builder()->CreateCall(freeFunc, {ptr});
+
   return nullptr;
 }
 
@@ -1640,7 +1851,16 @@ llvm::Type *LLVMCodeGenerator::generateType(const ast::Type *type) {
     return getSliceType(generateType(sliceType->baseType.get()));
   } else if (auto *arrayType = dynamic_cast<const ast::ArrayType *>(type)) {
     llvm::Type *elemType = generateType(arrayType->baseType.get());
-    // 暂时使用 1 作为数组大小，实际应该从表达式中获取
+    // 尝试从表达式中获取数组大小
+    if (arrayType->size) {
+      if (auto *literal = dynamic_cast<ast::Literal *>(arrayType->size.get())) {
+        if (literal->type == ast::Literal::Type::Integer) {
+          int64_t size = std::stoll(literal->value);
+          return llvm::ArrayType::get(elemType, size);
+        }
+      }
+    }
+    // 如果无法从表达式中获取大小，使用 1 作为默认值
     return llvm::ArrayType::get(elemType, 1);
   } else if (auto *tupleType = dynamic_cast<const ast::TupleType *>(type)) {
     std::vector<llvm::Type *> elementTypes;
@@ -1654,14 +1874,12 @@ llvm::Type *LLVMCodeGenerator::generateType(const ast::Type *type) {
       return it->second;
     }
     // 检查是否是类型别名
-    // 暂时返回一个通用的函数指针类型，实际应该从类型别名中获取
-    // 这里我们返回一个指向 int(int, int) 的函数指针类型
-    return llvm::PointerType::get(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context()),
-                                {llvm::Type::getInt32Ty(context()),
-                                 llvm::Type::getInt32Ty(context())},
-                                false),
-        0);
+    auto aliasIt = typeAliases_.find(namedType->name);
+    if (aliasIt != typeAliases_.end()) {
+      return aliasIt->second;
+    }
+    // 如果既不是结构体也不是类型别名，返回默认类型
+    return llvm::Type::getInt32Ty(context());
   } else if (auto *functionType =
                  dynamic_cast<const ast::FunctionType *>(type)) {
     std::vector<llvm::Type *> paramTypes;
@@ -1713,6 +1931,22 @@ llvm::Value *LLVMCodeGenerator::createStringLiteral(const std::string &value) {
   literalView = builder()->CreateInsertValue(literalView, length, 1, "len");
 
   return literalView;
+}
+
+llvm::Value *LLVMCodeGenerator::generateNamespaceDecl(
+    std::unique_ptr<ast::NamespaceDecl> namespaceDecl) {
+  // 生成命名空间中的成员
+  // 注意：我们需要移动成员，因为 generateDeclaration 需要 unique_ptr
+  std::vector<std::unique_ptr<ast::Node>> members;
+  members.swap(namespaceDecl->members);
+
+  for (auto &member : members) {
+    if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
+      member.release();
+      generateDeclaration(std::unique_ptr<ast::Declaration>(decl));
+    }
+  }
+  return nullptr;
 }
 
 } // namespace llvm_codegen

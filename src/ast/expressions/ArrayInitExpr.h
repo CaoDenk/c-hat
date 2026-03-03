@@ -16,6 +16,13 @@ public:
 
   NodeType getType() const override { return NodeType::ArrayInitExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    std::vector<std::unique_ptr<Expression>> clonedElements;
+    for (const auto &element : elements) {
+      clonedElements.push_back(element->clone());
+    }
+    return std::make_unique<ArrayInitExpr>(std::move(clonedElements));
+  }
 
   std::vector<std::unique_ptr<Expression>> elements;
 };

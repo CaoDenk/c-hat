@@ -15,6 +15,9 @@ public:
 
   NodeType getType() const override { return NodeType::SubscriptExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<SubscriptExpr>(object->clone(), index->clone());
+  }
 
   std::unique_ptr<Expression> object;
   std::unique_ptr<Expression> index;

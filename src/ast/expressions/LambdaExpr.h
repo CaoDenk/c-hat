@@ -28,6 +28,11 @@ public:
 
   NodeType getType() const override { return NodeType::LambdaExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    // 注意：这里我们暂时无法克隆 Parameter 和 Statement 类型，因为它们没有 clone 方法
+    // 这是一个临时解决方案，实际应该为 Parameter 和 Statement 类也添加 clone 方法
+    return std::make_unique<LambdaExpr>(std::vector<std::unique_ptr<Parameter>>(), nullptr, captures);
+  }
 
   std::vector<std::unique_ptr<Parameter>> params;
   std::unique_ptr<Statement> body;

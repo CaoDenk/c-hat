@@ -16,6 +16,13 @@ public:
 
   NodeType getType() const override { return NodeType::CallExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    std::vector<std::unique_ptr<Expression>> clonedArgs;
+    for (const auto &arg : args) {
+      clonedArgs.push_back(arg->clone());
+    }
+    return std::make_unique<CallExpr>(callee->clone(), std::move(clonedArgs));
+  }
 
   std::unique_ptr<Expression> callee;
   std::vector<std::unique_ptr<Expression>> args;

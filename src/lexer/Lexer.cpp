@@ -89,7 +89,8 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"sizeof", TokenType::Sizeof},
     {"typeof", TokenType::Typeof},
     {"extern", TokenType::Extern},
-    {"literalview", TokenType::LiteralView}};
+    {"literalview", TokenType::LiteralView},
+    {"namespace", TokenType::Namespace}};
 
 // Token 转字符串
 std::string Token::toString() const {
@@ -325,6 +326,9 @@ std::string Token::toString() const {
     break;
   case TokenType::LiteralView:
     typeStr = "LiteralView";
+    break;
+  case TokenType::Namespace:
+    typeStr = "Namespace";
     break;
   case TokenType::Identifier:
     typeStr = "Identifier";

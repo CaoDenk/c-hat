@@ -17,6 +17,12 @@ public:
 
   NodeType getType() const override { return NodeType::MemberExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    auto cloned = std::make_unique<MemberExpr>(object->clone(), member, isPointerMember);
+    cloned->structName = structName;
+    cloned->memberIndex = memberIndex;
+    return cloned;
+  }
 
   std::unique_ptr<Expression> object;
   std::string member;

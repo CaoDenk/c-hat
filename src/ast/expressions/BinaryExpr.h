@@ -49,6 +49,9 @@ public:
 
   NodeType getType() const override { return NodeType::BinaryExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<BinaryExpr>(left->clone(), op, right->clone());
+  }
 
   std::unique_ptr<Expression> left;
   Op op;

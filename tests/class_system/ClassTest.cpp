@@ -13,7 +13,7 @@ bool analyzeSource(const std::string &source) {
       return false;
 
     semantic::SemanticAnalyzer analyzer;
-    analyzer.analyze(std::move(program));
+    analyzer.analyze(*program);
     return !analyzer.hasError();
   } catch (const std::exception &e) {
     std::cerr << "Exception: " << e.what() << std::endl;

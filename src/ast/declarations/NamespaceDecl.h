@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Declaration.h"
+#include <string>
+#include <vector>
+#include <memory>
 
 namespace c_hat {
 namespace ast {

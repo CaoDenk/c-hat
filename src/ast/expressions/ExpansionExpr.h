@@ -14,6 +14,9 @@ public:
 
   NodeType getType() const override { return NodeType::ExpansionExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<ExpansionExpr>(expr->clone());
+  }
 
   std::unique_ptr<Expression> expr;
 };

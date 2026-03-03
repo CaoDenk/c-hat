@@ -56,6 +56,9 @@ private:
   // 尝试解析变量声明（失败时返回 nullptr，不抛异常）
   std::unique_ptr<ast::VariableDecl> tryParseVariableDecl();
 
+  // 解析命名空间声明
+  std::unique_ptr<ast::NamespaceDecl> parseNamespaceDecl();
+
   // 解析函数声明
   std::unique_ptr<ast::FunctionDecl> parseFunctionDecl();
 
@@ -205,6 +208,10 @@ private:
   // 解析指针成员访问
   std::unique_ptr<ast::Expression>
   parsePointerMemberExpr(std::unique_ptr<ast::Expression> object);
+
+  // 解析命名空间访问
+  std::unique_ptr<ast::Expression>
+  parseNamespaceAccessExpr(std::unique_ptr<ast::Expression> object);
 
   // 解析范围表达式
   std::unique_ptr<ast::Expression>

@@ -13,6 +13,9 @@ public:
 
   NodeType getType() const override { return NodeType::Identifier; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<Identifier>(name);
+  }
 
   std::string name;
 };

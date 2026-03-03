@@ -86,6 +86,7 @@ enum class TokenType {
   TypeAlias,
   Extern,
   LiteralView,
+  Namespace,
 
   // 标识符
   Identifier,

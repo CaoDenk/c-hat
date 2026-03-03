@@ -15,6 +15,9 @@ public:
 
   NodeType getType() const override { return NodeType::Literal; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<Literal>(type, value);
+  }
 
   Type type;
   std::string value;

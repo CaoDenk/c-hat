@@ -131,6 +131,14 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   }
   restoreState(tryState);
 
+  // 2. 尝试解析命名空间声明
+  tryState = saveState();
+  auto namespaceDecl = parseNamespaceDecl();
+  if (namespaceDecl) {
+    return namespaceDecl;
+  }
+  restoreState(tryState);
+
   // 3. 尝试解析类声明
   tryState = saveState();
   auto classDecl = parseClassDecl();
@@ -490,6 +498,43 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
   }
 }
 
+// 解析命名空间声明
+std::unique_ptr<ast::NamespaceDecl> Parser::parseNamespaceDecl() {
+  if (!match(lexer::TokenType::Namespace)) {
+    return nullptr;
+  }
+
+  if (!check(lexer::TokenType::Identifier)) {
+    error("Expected namespace name");
+    return nullptr;
+  }
+  std::string name = currentToken->getValue();
+  advance();
+
+  if (!match(lexer::TokenType::LBrace)) {
+    error("Expected '{' after namespace name");
+    return nullptr;
+  }
+
+  std::vector<std::unique_ptr<ast::Node>> members;
+
+  while (!check(lexer::TokenType::RBrace) &&
+         !check(lexer::TokenType::EndOfFile)) {
+    if (auto decl = parseDeclaration()) {
+      members.push_back(std::move(decl));
+    } else {
+      advance();
+    }
+  }
+
+  if (!match(lexer::TokenType::RBrace)) {
+    error("Expected '}' to close namespace");
+    return nullptr;
+  }
+
+  return std::make_unique<ast::NamespaceDecl>(name, std::move(members));
+}
+
 // 解析函数声明
 std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
   std::string specifiers = "";
@@ -555,12 +600,65 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
     // 情况1: 带 func 关键字的函数
     if (match(lexer::TokenType::Func)) {
       hasFunc = true;
-      if (!check(lexer::TokenType::Identifier)) {
-        error("Expected function name");
-        return nullptr;
+      // 检查是否是运算符重载
+      if (match(lexer::TokenType::Operator)) {
+        // 解析运算符
+        if (check(lexer::TokenType::Plus)) {
+          name = "operator+";
+          advance();
+        } else if (check(lexer::TokenType::Minus)) {
+          name = "operator-";
+          advance();
+        } else if (check(lexer::TokenType::Multiply)) {
+          name = "operator*";
+          advance();
+        } else if (check(lexer::TokenType::Divide)) {
+          name = "operator/";
+          advance();
+        } else if (check(lexer::TokenType::Modulus)) {
+          name = "operator%";
+          advance();
+        } else if (check(lexer::TokenType::Eq)) {
+          name = "operator==";
+          advance();
+        } else if (check(lexer::TokenType::Ne)) {
+          name = "operator!=";
+          advance();
+        } else if (check(lexer::TokenType::Lt)) {
+          name = "operator<";
+          advance();
+        } else if (check(lexer::TokenType::Le)) {
+          name = "operator<=";
+          advance();
+        } else if (check(lexer::TokenType::Gt)) {
+          name = "operator>";
+          advance();
+        } else if (check(lexer::TokenType::Ge)) {
+          name = "operator>=";
+          advance();
+        } else if (check(lexer::TokenType::LBracket)) {
+          name = "operator[]";
+          advance();
+          expect(lexer::TokenType::RBracket,
+                 "Expected ']' after '[' in operator[]");
+        } else if (check(lexer::TokenType::LParen)) {
+          name = "operator()";
+          advance();
+          expect(lexer::TokenType::RParen,
+                 "Expected ')' after '(' in operator()");
+        } else {
+          error("Expected operator symbol after 'operator'");
+          return nullptr;
+        }
+      } else {
+        // 普通函数
+        if (!check(lexer::TokenType::Identifier)) {
+          error("Expected function name");
+          return nullptr;
+        }
+        name = currentToken->getValue();
+        advance();
       }
-      name = currentToken->getValue();
-      advance();
     }
     // 情况2: 析构函数 ~Name
     else if (check(lexer::TokenType::Tilde)) {
@@ -1464,6 +1562,32 @@ std::unique_ptr<ast::Expression> Parser::parseUnaryExpr() {
     auto expr = parseUnaryExpr();
     return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::At,
                                             std::move(expr));
+  } else if (match(lexer::TokenType::Sizeof)) {
+    expect(lexer::TokenType::LParen, "Expected '(' after 'sizeof'");
+    auto type = parseType();
+    if (!type) {
+      error("Expected type in sizeof expression");
+      return nullptr;
+    }
+    expect(lexer::TokenType::RParen,
+           "Expected ')' after type in sizeof expression");
+    // 创建一个 SizeofExpr 表达式
+    return std::make_unique<ast::CallExpr>(
+        std::make_unique<ast::Identifier>("sizeof"),
+        std::vector<std::unique_ptr<ast::Expression>>());
+  } else if (match(lexer::TokenType::Typeof)) {
+    expect(lexer::TokenType::LParen, "Expected '(' after 'typeof'");
+    auto expr = parseExpression();
+    if (!expr) {
+      error("Expected expression in typeof expression");
+      return nullptr;
+    }
+    expect(lexer::TokenType::RParen,
+           "Expected ')' after expression in typeof expression");
+    // 创建一个 TypeofExpr 表达式
+    return std::make_unique<ast::CallExpr>(
+        std::make_unique<ast::Identifier>("typeof"),
+        std::vector<std::unique_ptr<ast::Expression>>());
   }
 
   return parsePrimaryExpr();
@@ -1602,6 +1726,8 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
                                               std::move(expr));
     } else if (match(lexer::TokenType::Range)) {
       expr = parseRangeExpr(std::move(expr));
+    } else if (match(lexer::TokenType::DoubleColon)) {
+      expr = parseNamespaceAccessExpr(std::move(expr));
     } else {
       break;
     }
@@ -1655,6 +1781,18 @@ Parser::parsePointerMemberExpr(std::unique_ptr<ast::Expression> object) {
   std::string member = currentToken->getValue();
   advance();
   return std::make_unique<ast::MemberExpr>(std::move(object), member, true);
+}
+
+// 解析命名空间访问
+std::unique_ptr<ast::Expression>
+Parser::parseNamespaceAccessExpr(std::unique_ptr<ast::Expression> object) {
+  if (!check(lexer::TokenType::Identifier)) {
+    error("Expected identifier after '::'");
+    return nullptr;
+  }
+  std::string member = currentToken->getValue();
+  advance();
+  return std::make_unique<ast::MemberExpr>(std::move(object), member, false);
 }
 
 // 解析范围表达式
@@ -2049,11 +2187,23 @@ Parser::parseTypeSuffix(std::unique_ptr<ast::Type> type) {
                                                   std::move(sizes[0]));
         }
       }
-    } else if (match(lexer::TokenType::Lt)) {
+    } else if (check(lexer::TokenType::Lt)) {
+      // 尝试解析模板参数列表，但需要先检查是否是有效的模板参数
+      ParserState state = saveState();
+      advance(); // 消费 '<'
+
+      // 尝试解析模板实参
       auto args = parseTemplateArguments();
-      expect(lexer::TokenType::Gt, "Expected '>' after template arguments");
-      type =
-          std::make_unique<ast::GenericType>(type->toString(), std::move(args));
+
+      if (check(lexer::TokenType::Gt)) {
+        advance(); // 消费 '>'
+        type = std::make_unique<ast::GenericType>(type->toString(),
+                                                  std::move(args));
+      } else {
+        // 不是有效的模板参数列表，恢复状态
+        restoreState(state);
+        break;
+      }
     } else {
       break;
     }

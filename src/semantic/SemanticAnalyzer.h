@@ -84,6 +84,9 @@ private:
   // 分析外部声明块
   void analyzeExternDecl(std::unique_ptr<ast::ExternDecl> externDecl);
 
+  // 分析命名空间声明
+  void analyzeNamespaceDecl(std::unique_ptr<ast::NamespaceDecl> namespaceDecl);
+
   // 分析语句
   std::shared_ptr<types::Type>
   analyzeStatement(std::unique_ptr<ast::Statement> stmt);

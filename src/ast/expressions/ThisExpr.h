@@ -10,6 +10,9 @@ class ThisExpr : public Expression {
 public:
   NodeType getType() const override { return NodeType::ThisExpr; }
   std::string toString() const override { return "this"; }
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<ThisExpr>();
+  }
 };
 
 } // namespace ast

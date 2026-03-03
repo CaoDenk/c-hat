@@ -74,10 +74,11 @@ SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath)
 void SemanticAnalyzer::analyze(ast::Program &program) {
   // 分析每个声明
   for (auto &declaration : program.declarations) {
-    // 注意：这里我们不能用 std::move，因为后面代码生成阶段还需要这些 declaration
-    // 所以我们需要创建一个临时的 unique_ptr 来传递给 analyzeDeclaration
-    // 但是因为 analyzeDeclaration 是 void 函数，所以我们可以用一个 dummy unique_ptr 调用它
-    // 不过因为所有 analyze* 函数现在都是空实现，所以我们暂时不做任何实际工作
+    // 注意：这里我们不能用 std::move，因为后面代码生成阶段还需要这些
+    // declaration 所以我们需要创建一个临时的 unique_ptr 来传递给
+    // analyzeDeclaration 但是因为 analyzeDeclaration 是 void
+    // 函数，所以我们可以用一个 dummy unique_ptr 调用它 不过因为所有 analyze*
+    // 函数现在都是空实现，所以我们暂时不做任何实际工作
     // analyzeDeclaration(std::unique_ptr<ast::Declaration>(declaration.get()));
   }
 }
@@ -138,8 +139,12 @@ void SemanticAnalyzer::analyzeDeclaration(
     analyzeExternDecl(std::unique_ptr<ast::ExternDecl>(
         static_cast<ast::ExternDecl *>(declaration.release())));
     break;
+  case ast::NodeType::NamespaceDecl:
+    analyzeNamespaceDecl(std::unique_ptr<ast::NamespaceDecl>(
+        static_cast<ast::NamespaceDecl *>(declaration.release())));
+    break;
   default:
-    // 其他类型的声明，暂不处理
+    // 未知的声明类型
     break;
   }
 }
@@ -171,6 +176,22 @@ void SemanticAnalyzer::analyzeSetterDecl(
     std::unique_ptr<ast::SetterDecl> setterDecl) {}
 void SemanticAnalyzer::analyzeExternDecl(
     std::unique_ptr<ast::ExternDecl> externDecl) {}
+
+void SemanticAnalyzer::analyzeNamespaceDecl(
+    std::unique_ptr<ast::NamespaceDecl> namespaceDecl) {
+  // 进入命名空间作用域
+  scopeStack.push_back(namespaceDecl->name);
+
+  // 分析命名空间中的成员
+  for (auto &member : namespaceDecl->members) {
+    if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
+      analyzeDeclaration(std::unique_ptr<ast::Declaration>(decl));
+    }
+  }
+
+  // 退出命名空间作用域
+  scopeStack.pop_back();
+}
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeStatement(std::unique_ptr<ast::Statement> stmt) {

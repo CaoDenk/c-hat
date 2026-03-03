@@ -15,6 +15,11 @@ public:
 
   NodeType getType() const override { return NodeType::DeleteExpr; }
   std::string toString() const override;
+  std::unique_ptr<Expression> clone() const override {
+    auto cloned = std::make_unique<DeleteExpr>(expr->clone(), isArray);
+    cloned->typeName = typeName;
+    return cloned;
+  }
 
   std::unique_ptr<Expression> expr;
   bool isArray;

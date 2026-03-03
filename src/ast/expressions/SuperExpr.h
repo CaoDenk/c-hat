@@ -10,6 +10,9 @@ class SuperExpr : public Expression {
 public:
   NodeType getType() const override { return NodeType::SuperExpr; }
   std::string toString() const override { return "super"; }
+  std::unique_ptr<Expression> clone() const override {
+    return std::make_unique<SuperExpr>();
+  }
 };
 
 } // namespace ast
