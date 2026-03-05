@@ -14,9 +14,10 @@ namespace ast {
 class Parameter : public Node {
 public:
   Parameter(const std::string &name, std::unique_ptr<Type> type,
-            std::unique_ptr<Expression> defaultValue = nullptr)
+            std::unique_ptr<Expression> defaultValue = nullptr,
+            bool isVariadic = false)
       : name(name), type(std::move(type)),
-        defaultValue(std::move(defaultValue)) {}
+        defaultValue(std::move(defaultValue)), isVariadic(isVariadic) {}
 
   NodeType getType() const override { return NodeType::Parameter; }
   std::string toString() const override;
@@ -24,6 +25,7 @@ public:
   std::string name;
   std::unique_ptr<Type> type;
   std::unique_ptr<Expression> defaultValue;
+  bool isVariadic;
 };
 
 } // namespace ast

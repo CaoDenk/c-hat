@@ -45,7 +45,7 @@ fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
 }
 
 int main(int argc, char *argv[]) {
-  argparse::ArgumentParser argParser("C^ Compiler (chc)");
+  argparse::ArgumentParser argParser("C hat Compiler (chc)");
 
   argParser.add_argument("input-file").help("Input source file");
   argParser.add_argument("-o", "--output")
@@ -78,6 +78,16 @@ int main(int argc, char *argv[]) {
   argParser.add_argument("--stdlib-path")
       .help("Path to the standard library")
       .default_value(std::string(""));
+  argParser.add_argument("-l", "--library")
+      .help("Libraries to link")
+      .default_value(std::vector<std::string>())
+      .append();
+  argParser.add_argument("--c-lib-path")
+      .help("Path to the C standard library")
+      .default_value(std::string(""));
+  argParser.add_argument("--c-lib-file")
+      .help("C standard library file to link")
+      .default_value(std::string(""));
 
   try {
     argParser.parse_args(argc, argv);
@@ -96,6 +106,10 @@ int main(int argc, char *argv[]) {
   bool emitObj = argParser.get<bool>("--emit-obj");
   bool emitAsm = argParser.get<bool>("--emit-asm");
   std::string stdlibPath = argParser.get<std::string>("--stdlib-path");
+  std::vector<std::string> libraries =
+      argParser.get<std::vector<std::string>>("--library");
+  std::string cLibPath = argParser.get<std::string>("--c-lib-path");
+  std::string cLibFile = argParser.get<std::string>("--c-lib-file");
 
   std::ifstream file(inputFile);
   if (!file.is_open()) {
@@ -202,23 +216,47 @@ int main(int argc, char *argv[]) {
 
         std::vector<std::string> argsStr;
         argsStr.push_back("lld-link");
-        argsStr.push_back("/SUBSYSTEM:CONSOLE");
-        argsStr.push_back("/ENTRY:main");
-        argsStr.push_back(objOutputFile);
-        argsStr.push_back("ucrt.lib");
-        argsStr.push_back("vcruntime.lib");
-        argsStr.push_back("msvcrt.lib");
-        argsStr.push_back("kernel32.lib");
-        argsStr.push_back("user32.lib");
         argsStr.push_back(outArg);
+        argsStr.push_back("/DEFAULTLIB:libcmt");
+        argsStr.push_back("/DEFAULTLIB:oldnames");
 
-        std::vector<const char *> args;
-        for (const auto &s : argsStr) {
-          args.push_back(s.c_str());
+        // 添加库文件路径 - 使用与 clang 相同的路径
+        std::vector<std::string> libPaths = {
+            "C:/Program Files/Microsoft Visual "
+            "Studio/2022/Community/VC/Tools/MSVC/14.44.35207/lib/x64",
+            "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/ucrt/x64",
+            "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/x64"};
+
+        // 添加用户指定的 C 标准库路径
+        if (!cLibPath.empty()) {
+          libPaths.push_back(cLibPath);
+        }
+
+        for (const auto &path : libPaths) {
+          argsStr.push_back("/LIBPATH:" + path);
+        }
+
+        argsStr.push_back(objOutputFile);
+
+        // 添加用户指定的 C 标准库文件
+        if (!cLibFile.empty()) {
+          argsStr.push_back(cLibFile);
+        }
+
+        // 添加用户指定的库文件
+        for (const auto &lib : libraries) {
+          argsStr.push_back(
+              lib); // 直接使用用户指定的库文件名，不添加 .lib 后缀
         }
 
         // 3. 使用 LLD 库进行链接
         std::println("\nLinking with LLD (library)...");
+
+        // 构建参数数组
+        std::vector<const char *> args;
+        for (const auto &s : argsStr) {
+          args.push_back(s.c_str());
+        }
 
         // 定义驱动程序
         std::vector<lld::DriverDef> drivers = LLD_ALL_DRIVERS;

@@ -5,17 +5,29 @@
 
 using namespace c_hat;
 
+#include <iostream>
+
 bool analyzeSource(const std::string &source) {
   try {
     parser::Parser parser(source);
     auto program = parser.parseProgram();
-    if (!program)
+    if (!program) {
+      std::cout << "Parser failed for: " << source << std::endl;
       return false;
+    }
 
     semantic::SemanticAnalyzer analyzer;
     analyzer.analyze(*program);
-    return !analyzer.hasError();
+    bool result = !analyzer.hasError();
+    if (!result) {
+      std::cout << "Semantic analysis failed for: " << source << std::endl;
+    }
+    return result;
+  } catch (const std::exception &e) {
+    std::cout << "Exception for: " << source << " - " << e.what() << std::endl;
+    return false;
   } catch (...) {
+    std::cout << "Unknown exception for: " << source << std::endl;
     return false;
   }
 }

@@ -327,7 +327,10 @@ Parser::parseImportDecl(const std::string &specifiers) {
 std::unique_ptr<ast::TupleDestructuringDecl>
 Parser::parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
                                     ast::VariableKind kind) {
-  expect(lexer::TokenType::LParen, "Expected '(' for tuple destructuring");
+  if (!match(lexer::TokenType::LParen)) {
+    error("Expected '(' for tuple destructuring");
+    return nullptr;
+  }
   std::vector<std::string> names;
   if (!check(lexer::TokenType::RParen)) {
     do {
@@ -339,8 +342,10 @@ Parser::parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
       advance();
     } while (match(lexer::TokenType::Comma));
   }
-  expect(lexer::TokenType::RParen,
-         "Expected ')' after tuple destructuring names");
+  if (!match(lexer::TokenType::RParen)) {
+    error("Expected ')' after tuple destructuring names");
+    return nullptr;
+  }
 
   if (names.size() < 2) {
     error("Tuple destructuring must have at least 2 names");
@@ -355,8 +360,10 @@ Parser::parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
     return nullptr;
   }
 
-  expect(lexer::TokenType::Semicolon,
-         "Expected ';' after tuple destructuring declaration");
+  if (!match(lexer::TokenType::Semicolon)) {
+    error("Expected ';' after tuple destructuring declaration");
+    return nullptr;
+  }
 
   return std::make_unique<ast::TupleDestructuringDecl>(
       specifiers, isLate, kind, std::move(names), std::move(initializer));
@@ -1173,7 +1180,31 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     return std::make_unique<ast::VariableStmt>(std::move(varDecl));
   } else if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let) ||
              check(lexer::TokenType::Late) || isTypeStart()) {
-    // 先尝试 tryParseVariableDecl，这样失败时可以回滚
+    // 先尝试解析 tuple 解构声明
+    ParserState tempState = saveState();
+    std::string specifiers = "";
+    bool isLate = match(lexer::TokenType::Late);
+
+    ast::VariableKind kind = ast::VariableKind::Explicit;
+    if (match(lexer::TokenType::Var)) {
+      kind = ast::VariableKind::Var;
+    } else if (match(lexer::TokenType::Let)) {
+      kind = ast::VariableKind::Let;
+    }
+
+    // 检查是否是元组解构（接下来是 ( ）
+    if (check(lexer::TokenType::LParen)) {
+      // 尝试解析元组解构声明
+      auto tupleDestructuringDecl =
+          parseTupleDestructuringDecl(specifiers, isLate, kind);
+      if (tupleDestructuringDecl) {
+        return std::make_unique<ast::TupleDestructuringStmt>(
+            std::move(tupleDestructuringDecl));
+      }
+    }
+
+    // 不是元组解构，恢复状态，尝试解析变量声明
+    restoreState(tempState);
     auto varDecl = tryParseVariableDecl();
     if (varDecl) {
       return std::make_unique<ast::VariableStmt>(std::move(varDecl));
@@ -2042,55 +2073,8 @@ Parser::parseStructInit(std::unique_ptr<ast::Type> type) {
 }
 
 // 解析类型
-std::unique_ptr<ast::Type> Parser::parseType() {
-  // 检查是否是 (Type1, Type2, ...) 元组类型
-  if (check(lexer::TokenType::LParen)) {
-    advance(); // 消费 LParen
-
-    std::vector<std::unique_ptr<ast::Type>> elementTypes;
-    if (!check(lexer::TokenType::RParen)) {
-      do {
-        elementTypes.push_back(parseType());
-      } while (match(lexer::TokenType::Comma));
-    }
-
-    expect(lexer::TokenType::RParen, "Expected ')' after tuple type elements");
-
-    if (elementTypes.size() < 2) {
-      error("Tuple type must have at least 2 elements");
-      return nullptr;
-    }
-
-    // 检查是否是只读类型
-    std::unique_ptr<ast::Type> tupleType =
-        std::make_unique<ast::TupleType>(std::move(elementTypes));
-    if (match(lexer::TokenType::Not)) {
-      tupleType = std::make_unique<ast::ReadonlyType>(std::move(tupleType));
-    }
-
-    return parseTypeSuffix(std::move(tupleType));
-  }
-
-  // 检查是否是 func(...) -> ... 函数类型
-  if (check(lexer::TokenType::Func)) {
-    advance();
-    expect(lexer::TokenType::LParen, "Expected '(' after func");
-
-    std::vector<std::unique_ptr<ast::Type>> parameterTypes;
-    if (!check(lexer::TokenType::RParen)) {
-      do {
-        parameterTypes.push_back(parseType());
-      } while (match(lexer::TokenType::Comma));
-    }
-    expect(lexer::TokenType::RParen, "Expected ')' after function parameters");
-
-    expect(lexer::TokenType::Arrow, "Expected '->' after function parameters");
-
-    auto returnType = parseType();
-    return std::make_unique<ast::FunctionType>(std::move(parameterTypes),
-                                               std::move(returnType));
-  }
-
+// 解析基本类型（不包括类型后缀）
+std::unique_ptr<ast::Type> Parser::parseBasicType() {
   if (!check(lexer::TokenType::Identifier) && !isTypeKeyword()) {
     error("Expected type name");
     return nullptr;
@@ -2146,6 +2130,64 @@ std::unique_ptr<ast::Type> Parser::parseType() {
   // 检查是否是只读类型
   if (match(lexer::TokenType::Not)) {
     type = std::make_unique<ast::ReadonlyType>(std::move(type));
+  }
+
+  return type;
+}
+
+std::unique_ptr<ast::Type> Parser::parseType() {
+  // 检查是否是 (Type1, Type2, ...) 元组类型
+  if (check(lexer::TokenType::LParen)) {
+    advance(); // 消费 LParen
+
+    std::vector<std::unique_ptr<ast::Type>> elementTypes;
+    if (!check(lexer::TokenType::RParen)) {
+      do {
+        // 使用 parseBasicType 而不是 parseType，避免消耗逗号
+        elementTypes.push_back(parseBasicType());
+      } while (match(lexer::TokenType::Comma));
+    }
+
+    expect(lexer::TokenType::RParen, "Expected ')' after tuple type elements");
+
+    if (elementTypes.size() < 2) {
+      error("Tuple type must have at least 2 elements");
+      return nullptr;
+    }
+
+    // 检查是否是只读类型
+    std::unique_ptr<ast::Type> tupleType =
+        std::make_unique<ast::TupleType>(std::move(elementTypes));
+    if (match(lexer::TokenType::Not)) {
+      tupleType = std::make_unique<ast::ReadonlyType>(std::move(tupleType));
+    }
+
+    return parseTypeSuffix(std::move(tupleType));
+  }
+
+  // 检查是否是 func(...) -> ... 函数类型
+  if (check(lexer::TokenType::Func)) {
+    advance();
+    expect(lexer::TokenType::LParen, "Expected '(' after func");
+
+    std::vector<std::unique_ptr<ast::Type>> parameterTypes;
+    if (!check(lexer::TokenType::RParen)) {
+      do {
+        parameterTypes.push_back(parseType());
+      } while (match(lexer::TokenType::Comma));
+    }
+    expect(lexer::TokenType::RParen, "Expected ')' after function parameters");
+
+    expect(lexer::TokenType::Arrow, "Expected '->' after function parameters");
+
+    auto returnType = parseType();
+    return std::make_unique<ast::FunctionType>(std::move(parameterTypes),
+                                               std::move(returnType));
+  }
+
+  auto type = parseBasicType();
+  if (!type) {
+    return nullptr;
   }
 
   return parseTypeSuffix(std::move(type));
@@ -2236,7 +2278,11 @@ std::vector<std::unique_ptr<ast::Node>> Parser::parseParameterList() {
 
   if (!check(lexer::TokenType::RParen)) {
     do {
-      params.push_back(parseParameter());
+      auto param = parseParameter();
+      if (!param) {
+        return {};
+      }
+      params.push_back(std::move(param));
     } while (match(lexer::TokenType::Comma));
   }
 
@@ -2247,8 +2293,10 @@ std::vector<std::unique_ptr<ast::Node>> Parser::parseParameterList() {
 std::unique_ptr<ast::Node> Parser::parseParameter() {
   bool isVariadic = false;
 
+  // 检查是否是变参（... 在参数开头）
   if (match(lexer::TokenType::Ellipsis)) {
     isVariadic = true;
+    return std::make_unique<ast::Parameter>("", nullptr, nullptr, true);
   }
 
   if (!check(lexer::TokenType::Identifier) && !isTypeKeyword() &&
@@ -2259,13 +2307,16 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
 
   auto type = parseType();
 
-  if (!check(lexer::TokenType::Identifier)) {
-    error("Expected parameter name");
-    return nullptr;
+  // 检查是否是变参（... 在类型之后）
+  if (match(lexer::TokenType::Ellipsis)) {
+    isVariadic = true;
   }
 
-  std::string name = currentToken->getValue();
-  advance();
+  std::string name;
+  if (check(lexer::TokenType::Identifier)) {
+    name = currentToken->getValue();
+    advance();
+  }
 
   std::unique_ptr<ast::Expression> defaultValue;
   if (match(lexer::TokenType::Assign)) {
@@ -2273,7 +2324,7 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
   }
 
   return std::make_unique<ast::Parameter>(name, std::move(type),
-                                          std::move(defaultValue));
+                                          std::move(defaultValue), isVariadic);
 }
 
 // 解析参数包
@@ -2440,8 +2491,7 @@ bool Parser::isTypeKeyword() const {
          type == lexer::TokenType::Float || type == lexer::TokenType::Double ||
          type == lexer::TokenType::Fp16 || type == lexer::TokenType::Bf16 ||
          type == lexer::TokenType::Char || type == lexer::TokenType::Func ||
-         type == lexer::TokenType::LiteralView ||
-         type == lexer::TokenType::LParen;
+         type == lexer::TokenType::LiteralView;
 }
 
 // 其他TODO函数
@@ -2615,22 +2665,36 @@ std::unique_ptr<ast::Declaration> Parser::parseExternDecl() {
     abi = abi.substr(1, abi.size() - 2);
   }
 
-  expect(lexer::TokenType::LBrace, "Expected '{' after extern ABI");
+  // 检查是 extern 块还是单个函数
+  if (match(lexer::TokenType::LBrace)) {
+    // extern 块
+    std::vector<std::unique_ptr<ast::Declaration>> declarations;
+    while (!check(lexer::TokenType::RBrace) &&
+           !check(lexer::TokenType::EndOfFile)) {
+      if (auto decl = parseDeclaration()) {
+        declarations.push_back(std::move(decl));
+      } else {
+        advance();
+      }
+    }
 
-  std::vector<std::unique_ptr<ast::Declaration>> declarations;
-  while (!check(lexer::TokenType::RBrace) &&
-         !check(lexer::TokenType::EndOfFile)) {
-    if (auto decl = parseDeclaration()) {
-      declarations.push_back(std::move(decl));
+    expect(lexer::TokenType::RBrace, "Expected '}' after extern block");
+
+    return std::make_unique<ast::ExternDecl>(std::move(abi),
+                                             std::move(declarations));
+  } else {
+    // 单个 extern 函数
+    if (auto funcDecl = parseFunctionDecl()) {
+      // 创建一个只包含单个函数的 extern 声明
+      std::vector<std::unique_ptr<ast::Declaration>> declarations;
+      declarations.push_back(std::move(funcDecl));
+      return std::make_unique<ast::ExternDecl>(std::move(abi),
+                                               std::move(declarations));
     } else {
-      advance();
+      error("Expected function declaration after extern");
+      return nullptr;
     }
   }
-
-  expect(lexer::TokenType::RBrace, "Expected '}' after extern block");
-
-  return std::make_unique<ast::ExternDecl>(std::move(abi),
-                                           std::move(declarations));
 }
 
 // 解析new表达式

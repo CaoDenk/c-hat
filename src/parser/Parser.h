@@ -255,6 +255,9 @@ private:
   // 解析类型
   std::unique_ptr<ast::Type> parseType();
 
+  // 解析基本类型（不包括类型后缀）
+  std::unique_ptr<ast::Type> parseBasicType();
+
   // 解析类型后缀（指针、数组、切片、泛型）
   std::unique_ptr<ast::Type> parseTypeSuffix(std::unique_ptr<ast::Type> type);
 
