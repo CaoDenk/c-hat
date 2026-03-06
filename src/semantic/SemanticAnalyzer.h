@@ -32,6 +32,9 @@ private:
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
 
+  // 当前分析的程序
+  ast::Program *currentProgram_ = nullptr;
+
   // 隐式转换运算符：源类型名称 -> 目标类型名称 -> 函数符号
   std::unordered_map<
       std::string,
@@ -48,8 +51,7 @@ private:
   void analyzeVariableDecl(ast::VariableDecl *varDecl);
 
   // 分析元组解构声明
-  void analyzeTupleDestructuringDecl(
-      ast::TupleDestructuringDecl *decl);
+  void analyzeTupleDestructuringDecl(ast::TupleDestructuringDecl *decl);
 
   // 分析函数声明
   void analyzeFunctionDecl(ast::FunctionDecl *funcDecl);
@@ -88,116 +90,93 @@ private:
   void analyzeNamespaceDecl(ast::NamespaceDecl *namespaceDecl);
 
   // 分析语句
-  std::shared_ptr<types::Type>
-  analyzeStatement(ast::Statement *stmt);
+  std::shared_ptr<types::Type> analyzeStatement(ast::Statement *stmt);
 
   // 分析表达式语句
-  std::shared_ptr<types::Type>
-  analyzeExprStmt(ast::ExprStmt *exprStmt);
+  std::shared_ptr<types::Type> analyzeExprStmt(ast::ExprStmt *exprStmt);
 
   // 分析复合语句
   std::shared_ptr<types::Type>
   analyzeCompoundStmt(ast::CompoundStmt *compoundStmt);
 
   // 分析返回语句
-  std::shared_ptr<types::Type>
-  analyzeReturnStmt(ast::ReturnStmt *returnStmt);
+  std::shared_ptr<types::Type> analyzeReturnStmt(ast::ReturnStmt *returnStmt);
 
   // 分析if语句
-  std::shared_ptr<types::Type>
-  analyzeIfStmt(ast::IfStmt *ifStmt);
+  std::shared_ptr<types::Type> analyzeIfStmt(ast::IfStmt *ifStmt);
 
   // 分析while语句
-  std::shared_ptr<types::Type>
-  analyzeWhileStmt(ast::WhileStmt *whileStmt);
+  std::shared_ptr<types::Type> analyzeWhileStmt(ast::WhileStmt *whileStmt);
 
   // 分析for语句
-  std::shared_ptr<types::Type>
-  analyzeForStmt(ast::ForStmt *forStmt);
+  std::shared_ptr<types::Type> analyzeForStmt(ast::ForStmt *forStmt);
 
   // 分析break语句
-  std::shared_ptr<types::Type>
-  analyzeBreakStmt(ast::BreakStmt *breakStmt);
+  std::shared_ptr<types::Type> analyzeBreakStmt(ast::BreakStmt *breakStmt);
 
   // 分析continue语句
   std::shared_ptr<types::Type>
   analyzeContinueStmt(ast::ContinueStmt *continueStmt);
 
   // 分析match语句
-  std::shared_ptr<types::Type>
-  analyzeMatchStmt(ast::MatchStmt *matchStmt);
+  std::shared_ptr<types::Type> analyzeMatchStmt(ast::MatchStmt *matchStmt);
 
   // 分析try语句
-  std::shared_ptr<types::Type>
-  analyzeTryStmt(ast::TryStmt *tryStmt);
+  std::shared_ptr<types::Type> analyzeTryStmt(ast::TryStmt *tryStmt);
 
   // 分析throw语句
-  std::shared_ptr<types::Type>
-  analyzeThrowStmt(ast::ThrowStmt *throwStmt);
+  std::shared_ptr<types::Type> analyzeThrowStmt(ast::ThrowStmt *throwStmt);
 
   // 分析defer语句
-  std::shared_ptr<types::Type>
-  analyzeDeferStmt(ast::DeferStmt *deferStmt);
+  std::shared_ptr<types::Type> analyzeDeferStmt(ast::DeferStmt *deferStmt);
 
   // 分析表达式
-  std::shared_ptr<types::Type>
-  analyzeExpression(ast::Expression *expression);
+  std::shared_ptr<types::Type> analyzeExpression(ast::Expression *expression);
 
   // 分析二元表达式
-  std::shared_ptr<types::Type>
-  analyzeBinaryExpr(ast::BinaryExpr *binaryExpr);
+  std::shared_ptr<types::Type> analyzeBinaryExpr(ast::BinaryExpr *binaryExpr);
 
   // 分析一元表达式
-  std::shared_ptr<types::Type>
-  analyzeUnaryExpr(ast::UnaryExpr *unaryExpr);
+  std::shared_ptr<types::Type> analyzeUnaryExpr(ast::UnaryExpr *unaryExpr);
 
   // 分析标识符表达式
   std::shared_ptr<types::Type>
   analyzeIdentifierExpr(ast::Identifier *identifier);
 
   // 分析字面量表达式
-  std::shared_ptr<types::Type>
-  analyzeLiteralExpr(ast::Literal *literal);
+  std::shared_ptr<types::Type> analyzeLiteralExpr(ast::Literal *literal);
 
   // 分析函数调用表达式
-  std::shared_ptr<types::Type>
-  analyzeCallExpr(ast::CallExpr *callExpr);
+  std::shared_ptr<types::Type> analyzeCallExpr(ast::CallExpr *callExpr);
 
   // 分析成员访问表达式
-  std::shared_ptr<types::Type>
-  analyzeMemberExpr(ast::MemberExpr *memberExpr);
+  std::shared_ptr<types::Type> analyzeMemberExpr(ast::MemberExpr *memberExpr);
 
   // 分析下标访问表达式
   std::shared_ptr<types::Type>
   analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr);
 
   // 分析new表达式
-  std::shared_ptr<types::Type>
-  analyzeNewExpr(ast::NewExpr *newExpr);
+  std::shared_ptr<types::Type> analyzeNewExpr(ast::NewExpr *newExpr);
 
   // 分析delete表达式
-  std::shared_ptr<types::Type>
-  analyzeDeleteExpr(ast::DeleteExpr *deleteExpr);
+  std::shared_ptr<types::Type> analyzeDeleteExpr(ast::DeleteExpr *deleteExpr);
 
   // 分析this表达式
-  std::shared_ptr<types::Type>
-  analyzeThisExpr(ast::ThisExpr *thisExpr);
+  std::shared_ptr<types::Type> analyzeThisExpr(ast::ThisExpr *thisExpr);
 
   // 分析super表达式
-  std::shared_ptr<types::Type>
-  analyzeSuperExpr(ast::SuperExpr *superExpr);
+  std::shared_ptr<types::Type> analyzeSuperExpr(ast::SuperExpr *superExpr);
 
   // 分析self表达式
-  std::shared_ptr<types::Type>
-  analyzeSelfExpr(ast::SelfExpr *selfExpr);
+  std::shared_ptr<types::Type> analyzeSelfExpr(ast::SelfExpr *selfExpr);
 
   // 分析展开表达式
   std::shared_ptr<types::Type>
   analyzeExpansionExpr(ast::ExpansionExpr *expansionExpr);
 
   // 分析lambda表达式
-  std::shared_ptr<types::Type>
-  analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr);
+  std::shared_ptr<types::Type> analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr);
 
   // 分析数组初始化表达式
   std::shared_ptr<types::Type>
@@ -208,8 +187,7 @@ private:
   analyzeStructInitExpr(ast::StructInitExpr *structInitExpr);
 
   // 分析元组表达式
-  std::shared_ptr<types::Type>
-  analyzeTupleExpr(ast::TupleExpr *tupleExpr);
+  std::shared_ptr<types::Type> analyzeTupleExpr(ast::TupleExpr *tupleExpr);
 
   // 分析类型
   std::shared_ptr<types::Type> analyzeType(const ast::Type *type);

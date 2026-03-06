@@ -55,12 +55,18 @@ private:
       std::unique_ptr<ast::TupleDestructuringDecl> tupleDecl);
   llvm::Value *
   generateFunctionDecl(std::unique_ptr<ast::FunctionDecl> funcDecl);
+  void createFunctionPrototype(ast::FunctionDecl *funcDecl);
+  llvm::Value *
+  generateFunctionBody(std::unique_ptr<ast::FunctionDecl> funcDecl);
   llvm::Value *generateClassDecl(std::unique_ptr<ast::ClassDecl> classDecl);
   llvm::Value *generateStructDecl(std::unique_ptr<ast::StructDecl> structDecl);
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,
                               bool isDestructor);
+  llvm::Value *
+  generateExtensionMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
+                                  const std::string &structName);
   llvm::Value *
   generateTypeAliasDecl(std::unique_ptr<ast::TypeAliasDecl> typeAliasDecl);
   llvm::Value *generateGetterDecl(std::unique_ptr<ast::GetterDecl> getterDecl);
@@ -94,58 +100,72 @@ private:
   llvm::Value *generateBinaryExpr(std::unique_ptr<ast::BinaryExpr> binaryExpr);
   llvm::Value *generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                  bool isLValue = false);
-  llvm::Value *
-  generateIdentifierExpr(std::unique_ptr<ast::Identifier> identifier,
-                         bool isLValue = false);
-  llvm::Value *generateLiteralExpr(std::unique_ptr<ast::Literal> literal);
   llvm::Value *generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr);
-  llvm::Value *generateMemberExpr(std::unique_ptr<ast::MemberExpr> memberExpr,
-                                  bool isLValue = false);
+  llvm::Value *generateMemberExpr(std::unique_ptr<ast::MemberExpr> memberExpr);
   llvm::Value *
-  generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr);
+  generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr,
+                        bool isLValue = false);
+  llvm::Value *generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr);
+  llvm::Value *generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
+  llvm::Value *generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
   llvm::Value *generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr);
   llvm::Value *generateDeleteExpr(std::unique_ptr<ast::DeleteExpr> deleteExpr);
-  llvm::Value *generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr);
-  llvm::Value *generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
-  llvm::Value *generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
+  llvm::Value *generateFoldExpr(std::unique_ptr<ast::FoldExpr> foldExpr);
   llvm::Value *
   generateExpansionExpr(std::unique_ptr<ast::ExpansionExpr> expansionExpr);
-  llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
   llvm::Value *
   generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
   llvm::Value *
   generateStructInitExpr(std::unique_ptr<ast::StructInitExpr> structInitExpr);
   llvm::Value *generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
+  llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
+  llvm::Value *
+  generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr> reflectionExpr);
+  llvm::Value *generateLiteral(std::unique_ptr<ast::Literal> literal);
+  llvm::Value *generateIdentifier(std::unique_ptr<ast::Identifier> ident);
 
-  llvm::Type *generateType(const ast::Type *type);
+  llvm::Type *generateType(ast::Type *type);
+  llvm::Value *generateTypeExpr(std::unique_ptr<ast::Type> type);
 
-  llvm::Type *generatePrimitiveType(const ast::PrimitiveType *primitiveType);
-  llvm::Type *getPrimitiveType(const std::string &typeName);
-  llvm::Type *getPointerType(llvm::Type *baseType, bool nullable);
-  llvm::Type *getArrayType(llvm::Type *elementType, int64_t size);
-  llvm::Type *getSliceType(llvm::Type *elementType);
+  // 类型辅助函数
+  bool isSliceType(ast::Type *type);
+  bool isArrayType(ast::Type *type);
+  bool isPointerType(ast::Type *type);
+  bool isReferenceType(ast::Type *type);
+  bool isFunctionType(ast::Type *type);
+  bool isClassType(ast::Type *type);
+  bool isStructType(ast::Type *type);
+  bool isEnumType(ast::Type *type);
+  bool isTupleType(ast::Type *type);
+  bool isGenericType(ast::Type *type);
+  bool isReadonlyType(ast::Type *type);
+
+  // 辅助函数
   llvm::Type *getLiteralViewType();
+  std::string getTypeName(ast::Type *type);
+  std::string mangleFunctionName(const std::string &funcName,
+                                 const std::vector<ast::Type *> &paramTypes);
 
-  llvm::Value *createStringLiteral(const std::string &str);
-
+  // 状态管理
+  llvm::Function *currentFunction_ = nullptr;
+  llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
-  std::unordered_map<std::string, llvm::Function *> functions_;
+  std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
+  std::vector<std::string> namespaceStack_;
+  std::unordered_map<ast::FunctionDecl *, std::vector<std::string>>
+      functionNamespaces_;
+  std::vector<std::unique_ptr<ast::Declaration>> *funcDecls_ = nullptr;
+
+  // 类型映射
   std::unordered_map<std::string, llvm::StructType *> structTypes_;
-  std::unordered_map<std::string, llvm::Type *> typeAliases_; // 类型别名
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
-  llvm::Function *currentFunction_ = nullptr;
-  llvm::BasicBlock *continueBlock_ = nullptr;
-  llvm::BasicBlock *breakBlock_ = nullptr;
+  std::unordered_map<std::string, llvm::Function *> functions_;
 
-  // defer 语句收集
-  std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
-
-  // late 变量的初始化状态跟踪
+  // 延迟变量
   struct LateVariableInfo {
-    llvm::Value *alloca;
-    llvm::Type *type;
     bool isInitialized;
+    ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableInfo> lateVariables_;
 };

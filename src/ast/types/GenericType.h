@@ -17,6 +17,8 @@ public:
 
   NodeType getType() const override { return NodeType::GenericType; }
   std::string toString() const override;
+  // 暂时不克隆泛型参数，避免 Node 没有 clone() 的问题
+  std::unique_ptr<Type> clone() const override { return nullptr; }
 
   std::string name;
   std::vector<std::unique_ptr<Node>> arguments;

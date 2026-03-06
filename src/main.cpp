@@ -140,6 +140,14 @@ int main(int argc, char *argv[]) {
     c_hat::parser::Parser parser(source);
     auto program = parser.parseProgram();
 
+    if (!program) {
+      std::println("Error: Failed to parse program");
+      return 1;
+    }
+
+    std::cout << "Debug: Program parsed successfully, declarations count: "
+              << program->declarations.size() << std::endl;
+
     if (dumpAst) {
       std::println("\n=== Abstract Syntax Tree ===");
       for (const auto &decl : program->declarations) {
@@ -149,14 +157,18 @@ int main(int argc, char *argv[]) {
 
     // 语义分析
     c_hat::semantic::SemanticAnalyzer semanticAnalyzer(stdlibPath);
+    std::cout << "Debug: Before semantic analysis" << std::endl;
     semanticAnalyzer.analyze(*program);
+    std::cout << "Debug: After semantic analysis" << std::endl;
 
-    std::println("\n✓ Parsing and semantic analysis successful!");
+    std::cout << "\n✓ Parsing and semantic analysis successful!" << std::endl;
 
-    std::println("\nStarting code generation...");
+    std::cout << "\nStarting code generation..." << std::endl;
     c_hat::llvm_codegen::LLVMCodeGenerator codeGen("c_hat_module");
+    std::cout << "Debug: Before code generation" << std::endl;
     codeGen.generate(std::move(program));
-    std::println("\nCode generation complete!");
+    std::cout << "Debug: After code generation" << std::endl;
+    std::cout << "\nCode generation complete!" << std::endl;
 
     if (!codeGen.verifyIR()) {
       std::println("\n✗ IR verification failed!");

@@ -480,7 +480,11 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
 
     std::unique_ptr<ast::Expression> initializer;
     if (match(lexer::TokenType::Assign)) {
+      std::cerr << "Debug: Parsing initializer for variable: " << name
+                << std::endl;
       initializer = parseExpression();
+      std::cerr << "Debug: Initializer parsed: "
+                << (initializer ? "not null" : "null") << std::endl;
     } else if (check(lexer::TokenType::LBrace)) {
       if (type) {
         auto *typePtr = static_cast<ast::Type *>(type.get());
@@ -496,6 +500,9 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
     }
     advance();
 
+    std::cerr << "Debug: Creating VariableDecl for: " << name
+              << " with initializer: " << (initializer ? "not null" : "null")
+              << std::endl;
     return std::make_unique<ast::VariableDecl>(specifiers, isLate, kind,
                                                std::move(type), name,
                                                std::move(initializer));

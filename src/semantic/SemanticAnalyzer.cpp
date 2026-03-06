@@ -72,30 +72,12 @@ SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath)
 
 // 分析整个程序
 void SemanticAnalyzer::analyze(ast::Program &program) {
+  currentProgram_ = &program;
+
   // 分析每个声明
   for (size_t i = 0; i < program.declarations.size(); ++i) {
     auto &declaration = program.declarations[i];
-    // 直接使用原始指针调用 analyzeDeclaration 函数
-    switch (declaration->getType()) {
-    case ast::NodeType::VariableDecl: {
-      auto *varDecl = static_cast<ast::VariableDecl *>(declaration.get());
-      analyzeVariableDecl(varDecl);
-      break;
-    }
-    case ast::NodeType::TupleDestructuringDecl: {
-      auto *tupleDecl =
-          static_cast<ast::TupleDestructuringDecl *>(declaration.get());
-      analyzeTupleDestructuringDecl(tupleDecl);
-      break;
-    }
-    case ast::NodeType::FunctionDecl: {
-      auto *funcDecl = static_cast<ast::FunctionDecl *>(declaration.get());
-      analyzeFunctionDecl(funcDecl);
-      break;
-    }
-    default:
-      break;
-    }
+    analyzeDeclaration(declaration.get());
   }
 }
 
@@ -189,9 +171,8 @@ void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
 
   // 分析初始化表达式
   if (varDecl->initializer) {
-    auto initializer = std::move(varDecl->initializer);
     std::shared_ptr<types::Type> initType =
-        analyzeExpression(initializer.get());
+        analyzeExpression(varDecl->initializer.get());
 
     // 如果变量没有显式类型，从初始化表达式推导类型
     if (!varType) {
@@ -223,8 +204,8 @@ void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
 void SemanticAnalyzer::analyzeTupleDestructuringDecl(
     ast::TupleDestructuringDecl *decl) {
   // 分析初始化表达式
-  auto initializer = std::move(decl->initializer);
-  std::shared_ptr<types::Type> initType = analyzeExpression(initializer.get());
+  std::shared_ptr<types::Type> initType =
+      analyzeExpression(decl->initializer.get());
 
   // 检查初始化表达式是否是 tuple 类型
   if (!initType || !initType->isTuple()) {
@@ -256,21 +237,25 @@ void SemanticAnalyzer::analyzeFunctionDecl(ast::FunctionDecl *funcDecl) {
   lateVariables_.clear();
 
   // 分析函数返回类型
+  std::shared_ptr<types::Type> returnType =
+      types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
   if (funcDecl->returnType) {
     if (auto *typeNode =
             dynamic_cast<ast::Type *>(funcDecl->returnType.get())) {
-      analyzeType(typeNode);
+      returnType = analyzeType(typeNode);
     }
   }
 
   // 分析函数参数
+  std::vector<std::shared_ptr<types::Type>> paramTypes;
   bool hasVariadicParam = false;
   for (size_t i = 0; i < funcDecl->params.size(); ++i) {
     auto &paramNode = funcDecl->params[i];
     if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
       if (param->type) {
         if (auto *typeNode = dynamic_cast<ast::Type *>(param->type.get())) {
-          analyzeType(typeNode);
+          auto paramType = analyzeType(typeNode);
+          paramTypes.push_back(paramType);
         }
       }
       if (param->isVariadic) {
@@ -285,6 +270,15 @@ void SemanticAnalyzer::analyzeFunctionDecl(ast::FunctionDecl *funcDecl) {
     }
   }
 
+  // 创建函数类型
+  auto functionType =
+      std::make_shared<types::FunctionType>(returnType, paramTypes);
+
+  // 创建函数符号并添加到符号表
+  auto funcSymbol =
+      std::make_shared<FunctionSymbol>(funcDecl->name, functionType);
+  symbolTable.addSymbol(funcSymbol);
+
   // 分析函数体
   if (funcDecl->body) {
     if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
@@ -298,8 +292,39 @@ void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {}
 void SemanticAnalyzer::analyzeTypeAliasDecl(ast::TypeAliasDecl *typeAliasDecl) {
 }
 void SemanticAnalyzer::analyzeModuleDecl(ast::ModuleDecl *moduleDecl) {}
-void SemanticAnalyzer::analyzeImportDecl(ast::ImportDecl *importDecl) {}
+void SemanticAnalyzer::analyzeImportDecl(ast::ImportDecl *importDecl) {
+  if (!currentProgram_) {
+    return;
+  }
+
+  try {
+    // 加载模块
+    auto importedProgram = moduleLoader_->loadModule(importDecl->modulePath);
+
+    if (importedProgram) {
+      // 将导入模块的声明添加到当前程序中
+      for (auto &decl : importedProgram->declarations) {
+        currentProgram_->declarations.push_back(std::move(decl));
+      }
+
+      // 分析新添加的声明
+      size_t startIdx = currentProgram_->declarations.size() -
+                        importedProgram->declarations.size();
+      for (size_t i = startIdx; i < currentProgram_->declarations.size(); ++i) {
+        analyzeDeclaration(currentProgram_->declarations[i].get());
+      }
+    }
+  } catch (const std::exception &e) {
+    error("Failed to import module: " + std::string(e.what()), *importDecl);
+  }
+}
 void SemanticAnalyzer::analyzeExtensionDecl(ast::ExtensionDecl *extensionDecl) {
+  // 分析 extension 中的所有成员
+  for (auto &member : extensionDecl->members) {
+    if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
+      analyzeDeclaration(decl);
+    }
+  }
 }
 void SemanticAnalyzer::analyzeGetterDecl(ast::GetterDecl *getterDecl) {}
 void SemanticAnalyzer::analyzeSetterDecl(ast::SetterDecl *setterDecl) {}
@@ -624,7 +649,109 @@ SemanticAnalyzer::analyzeLiteralExpr(ast::Literal *literal) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
-  return nullptr;
+  // 分析函数名
+  std::string funcName;
+  if (auto *identifier =
+          dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+    funcName = identifier->name;
+  } else {
+    // 暂时只处理直接函数调用
+    error("Only direct function calls are supported", *callExpr);
+    return nullptr;
+  }
+
+  // 分析实参类型
+  std::vector<std::shared_ptr<types::Type>> argTypes;
+  for (auto &arg : callExpr->args) {
+    auto argType = analyzeExpression(arg.get());
+    argTypes.push_back(argType);
+  }
+
+  // 查找所有同名函数符号
+  auto candidateFuncs = symbolTable.lookupFunctionSymbols(funcName);
+  if (candidateFuncs.empty()) {
+    error("Function not found: " + funcName, *callExpr);
+    return nullptr;
+  }
+
+  // 过滤和排序候选函数
+  struct Candidate {
+    std::shared_ptr<FunctionSymbol> func;
+    int score; // 0: 精确匹配, 1: 需要隐式转换, -1: 不匹配
+  };
+
+  std::vector<Candidate> candidates;
+
+  for (auto &func : candidateFuncs) {
+    auto funcType = func->getType();
+    if (!funcType)
+      continue;
+
+    auto &paramTypes = funcType->getParameterTypes();
+
+    // 检查参数数量
+    if (paramTypes.size() != argTypes.size()) {
+      continue;
+    }
+
+    // 检查参数类型匹配
+    int score = 0;
+    bool match = true;
+
+    for (size_t i = 0; i < argTypes.size(); ++i) {
+      if (i >= paramTypes.size()) {
+        // 可变参数，默认匹配
+        continue;
+      }
+
+      auto argType = argTypes[i];
+      auto paramType = paramTypes[i];
+
+      if (!argType || !paramType) {
+        // 如果参数类型或实参类型为 null，不匹配
+        match = false;
+        break;
+      }
+
+      if (argType->toString() == paramType->toString()) {
+        // 精确匹配
+        continue;
+      } else {
+        // 检查是否存在隐式转换
+        // 暂时只支持简单的隐式转换检查
+        score = 1;
+      }
+    }
+
+    if (match) {
+      // 只有匹配的函数才添加到候选列表中
+      candidates.push_back({func, score});
+    }
+  }
+
+  if (candidates.empty()) {
+    error("No matching function found for: " + funcName, *callExpr);
+    return nullptr;
+  }
+
+  // 选择最佳匹配
+  // 首先按分数排序（精确匹配优先）
+  std::sort(
+      candidates.begin(), candidates.end(),
+      [](const Candidate &a, const Candidate &b) { return a.score < b.score; });
+
+  // 检查是否存在歧义
+  if (candidates.size() > 1 && candidates[0].score == candidates[1].score) {
+    error("Ambiguous function call: " + funcName, *callExpr);
+    return nullptr;
+  }
+
+  // 返回最佳匹配函数的返回类型
+  auto bestFunc = candidates[0].func;
+  if (!bestFunc || !bestFunc->getType()) {
+    return nullptr;
+  }
+  return bestFunc->getType()->getReturnType();
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {

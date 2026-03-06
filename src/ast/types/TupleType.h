@@ -15,6 +15,13 @@ public:
     
     NodeType getType() const override { return NodeType::TupleType; }
     std::string toString() const override;
+    std::unique_ptr<Type> clone() const override {
+        std::vector<std::unique_ptr<Type>> clonedElementTypes;
+        for (const auto &elemType : elementTypes) {
+            clonedElementTypes.push_back(elemType->clone());
+        }
+        return std::make_unique<TupleType>(std::move(clonedElementTypes));
+    }
     
     std::vector<std::unique_ptr<Type>> elementTypes;
 };

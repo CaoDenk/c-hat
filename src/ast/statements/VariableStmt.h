@@ -13,7 +13,7 @@ public:
   VariableStmt(std::unique_ptr<VariableDecl> decl)
       : declaration(std::move(decl)) {}
 
-  NodeType getType() const override { return NodeType::VariableDecl; }
+  NodeType getType() const override { return NodeType::Statement; }
 
   std::string toString() const override {
     return declaration->toString();

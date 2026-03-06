@@ -36,6 +36,9 @@ public:
   // 查找符号（从当前作用域开始向上查找）
   std::shared_ptr<Symbol> lookupSymbol(const std::string &name);
 
+  // 查找所有同名函数符号（从当前作用域开始向上查找）
+  std::vector<std::shared_ptr<FunctionSymbol>> lookupFunctionSymbols(const std::string &name);
+
   // 检查当前作用域是否已存在该符号
   bool hasSymbolInCurrentScope(const std::string &name) const;
 
@@ -44,7 +47,7 @@ private:
   int currentScopeLevel;
 
   // 符号表栈，每个作用域对应一个符号表
-  std::vector<std::unordered_map<std::string, std::shared_ptr<Symbol>>> scopes;
+  std::vector<std::unordered_map<std::string, std::vector<std::shared_ptr<Symbol>>>> scopes;
 };
 
 } // namespace semantic

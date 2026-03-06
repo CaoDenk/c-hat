@@ -16,6 +16,13 @@ public:
     
     NodeType getType() const override { return NodeType::RectangularArrayType; }
     std::string toString() const override;
+    std::unique_ptr<Type> clone() const override {
+        std::vector<std::unique_ptr<Expression>> clonedSizes;
+        for (const auto &size : sizes) {
+            clonedSizes.push_back(size->clone());
+        }
+        return std::make_unique<RectangularArrayType>(baseType->clone(), std::move(clonedSizes));
+    }
     
     std::unique_ptr<Type> baseType;
     std::vector<std::unique_ptr<Expression>> sizes;

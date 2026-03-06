@@ -15,6 +15,9 @@ public:
     
     NodeType getType() const override { return NodeType::RectangularSliceType; }
     std::string toString() const override;
+    std::unique_ptr<Type> clone() const override {
+        return std::make_unique<RectangularSliceType>(baseType->clone(), rank);
+    }
     
     std::unique_ptr<Type> baseType;
     int rank; // 维度数量，如 int[,] 是 2 维
