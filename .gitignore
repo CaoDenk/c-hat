@@ -1,4 +1,6 @@
-*.ch
+
+*.exe
+*.obj
 build/
 build_tests/
 .cache/

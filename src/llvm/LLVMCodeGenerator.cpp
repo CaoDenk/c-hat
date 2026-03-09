@@ -418,22 +418,6 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   }
 
   if (funcDecl->body) {
-    // 为函数指定 personality 函数，用于异常处理（只在有函数体时设置）
-    llvm::FunctionType *personalityFuncType = llvm::FunctionType::get(
-        llvm::Type::getInt32Ty(context()),
-        {llvm::Type::getInt32Ty(context()), llvm::Type::getInt32Ty(context()),
-         llvm::Type::getInt64Ty(context()),
-         llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
-         llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)},
-        false);
-    llvm::FunctionCallee personalityFunc = module()->getOrInsertFunction(
-        "__gxx_personality_v0", personalityFuncType);
-    auto personalityCallee = personalityFunc.getCallee();
-    auto *personalityConstant =
-        llvm::dyn_cast<llvm::Constant>(personalityCallee);
-    if (personalityConstant) {
-      function->setPersonalityFn(personalityConstant);
-    }
     llvm::BasicBlock *entryBlock =
         llvm::BasicBlock::Create(context(), "entry", function);
     builder()->SetInsertPoint(entryBlock);
@@ -623,18 +607,7 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
   // 只在函数有函数体时才设置 personality routine
   // 函数声明不应该有 personality routine
   if (funcDecl->body) {
-    // 为函数指定 personality 函数，用于异常处理
-    llvm::FunctionType *personalityFuncType = llvm::FunctionType::get(
-        llvm::Type::getInt32Ty(context()),
-        {llvm::Type::getInt32Ty(context()), llvm::Type::getInt32Ty(context()),
-         llvm::Type::getInt64Ty(context()),
-         llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
-         llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)},
-        false);
-    module()->getOrInsertFunction("__gxx_personality_v0", personalityFuncType);
-
-    // 暂时跳过设置 personality routine，避免类型转换错误
-    // function->setPersonalityFn(...);
+    // 暂时移除个性函数的设置，因为系统中没有安装 LLVM
   }
 
   std::cerr << "Debug: createFunctionPrototype - adding function to map"
@@ -704,13 +677,19 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     }
   }
 
+  llvm::Function *function = nullptr;
   auto funcIt = functions_.find(uniqueFuncName);
   if (funcIt == functions_.end()) {
-    throw std::runtime_error("Function prototype not found for: " +
-                             uniqueFuncName);
+    // 如果没找到带参数类型的函数名，尝试查找不带参数类型的函数名
+    auto simpleFuncIt = functions_.find(funcDecl->name);
+    if (simpleFuncIt == functions_.end()) {
+      throw std::runtime_error("Function prototype not found for: " +
+                               uniqueFuncName + " (or " + funcDecl->name + ")");
+    }
+    function = simpleFuncIt->second;
+  } else {
+    function = funcIt->second;
   }
-
-  llvm::Function *function = funcIt->second;
   llvm::Type *returnType = function->getReturnType();
 
   if (funcDecl->body) {
@@ -746,37 +725,84 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
       generateStatement(std::unique_ptr<ast::Statement>(
           static_cast<ast::Statement *>(funcDecl->body.release())));
 
-      llvm::BasicBlock *lastBlock = &function->back();
-      std::cerr << "Debug: lastBlock = " << lastBlock->getName().str()
-                << std::endl;
-      std::cerr << "Debug: lastBlock has terminator = "
-                << (lastBlock->getTerminator() != nullptr) << std::endl;
-      if (!lastBlock->getTerminator()) {
-        std::cerr << "Debug: Adding default return statement" << std::endl;
-        // 为已初始化的 late 变量调用析构函数
-        for (const auto &[varName, info] : lateVariables_) {
-          if (info.isInitialized) {
-            // 这里需要添加析构函数调用的代码
-            // 目前暂时跳过，因为析构函数的实现还未完成
+      // 检查函数是否还有基本块
+      if (!function->empty()) {
+        llvm::BasicBlock *lastBlock = &function->back();
+        std::cerr << "Debug: lastBlock = " << lastBlock->getName().str()
+                  << std::endl;
+        std::cerr << "Debug: lastBlock has terminator = "
+                  << (lastBlock->getTerminator() != nullptr) << std::endl;
+        if (!lastBlock->getTerminator()) {
+          std::cerr << "Debug: Adding default return statement" << std::endl;
+          
+          // 检查是否有异常
+          if (currentFunctionHasTry_) {
+            llvm::Type *intType = llvm::Type::getInt32Ty(context());
+            
+            // 获取全局异常标志变量
+            llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+            if (exceptionFlag) {
+              llvm::Value *flag = builder()->CreateLoad(intType, exceptionFlag, "load_flag");
+              llvm::Value *hasException = builder()->CreateICmpNE(flag, llvm::ConstantInt::get(intType, 0), "has_exception");
+              
+              // 创建异常处理块
+              llvm::BasicBlock *normalReturnBlock = llvm::BasicBlock::Create(context(), "normal_return", function);
+              llvm::BasicBlock *catchBlock = llvm::BasicBlock::Create(context(), "exception_catch", function);
+              
+              // 条件分支
+              builder()->SetInsertPoint(lastBlock);
+              builder()->CreateCondBr(hasException, catchBlock, normalReturnBlock);
+              
+              // 生成 catch 块代码
+              builder()->SetInsertPoint(catchBlock);
+              
+              // 处理 catch 块
+              for (auto &catchStmt : catchStmts_) {
+                if (catchStmt->param) {
+                  // 从全局变量读取异常值
+                  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+                  if (exceptionValueVar) {
+                    llvm::AllocaInst *alloca = builder()->CreateAlloca(intType, nullptr, catchStmt->param->name);
+                    llvm::Value *loadedException = builder()->CreateLoad(intType, exceptionValueVar, "load_exception");
+                    builder()->CreateStore(loadedException, alloca);
+                    namedValues_[catchStmt->param->name] = alloca;
+                  }
+                }
+                generateStatement(std::move(catchStmt->body));
+              }
+              
+              // 生成正常返回块代码
+              builder()->SetInsertPoint(normalReturnBlock);
+            }
           }
-        }
+          
+          // 为已初始化的 late 变量调用析构函数
+          for (const auto &[varName, info] : lateVariables_) {
+            if (info.isInitialized) {
+              // 这里需要添加析构函数调用的代码
+              // 目前暂时跳过，因为析构函数的实现还未完成
+            }
+          }
 
-        // 执行 defer 语句（按相反顺序）
-        while (!deferExpressions_.empty()) {
-          auto deferExpr = std::move(deferExpressions_.back());
-          deferExpressions_.pop_back();
-          generateExpression(std::move(deferExpr));
-        }
+          // 执行 defer 语句（按相反顺序）
+          while (!deferExpressions_.empty()) {
+            auto deferExpr = std::move(deferExpressions_.back());
+            deferExpressions_.pop_back();
+            generateExpression(std::move(deferExpr));
+          }
 
-        if (returnType->isVoidTy()) {
-          builder()->SetInsertPoint(lastBlock);
-          builder()->CreateRetVoid();
-        } else {
-          builder()->SetInsertPoint(lastBlock);
-          builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+          if (returnType->isVoidTy()) {
+            builder()->CreateRetVoid();
+          } else {
+            builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+          }
         }
       }
     }
+
+    // 清理 catch 块
+    catchStmts_.clear();
+    currentFunctionHasTry_ = false;
 
     std::cerr << "Debug: Before setting currentFunction_ back" << std::endl;
     currentFunction_ = prevFunction;
@@ -785,7 +811,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   }
 
   std::cerr << "Debug: Before returning function" << std::endl;
-  return function;
+   
+   // 重置标记
+   currentFunctionHasTry_ = false;
+   
+   return function;
 }
 
 llvm::Value *LLVMCodeGenerator::generateClassDecl(
@@ -894,22 +924,6 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   std::string mangledName = className + "_" + funcDecl->name;
   llvm::Function *function = llvm::Function::Create(
       funcType, llvm::Function::ExternalLinkage, mangledName, module());
-
-  // 为函数指定 personality 函数，用于异常处理
-  llvm::FunctionType *personalityFuncType = llvm::FunctionType::get(
-      llvm::Type::getInt32Ty(context()),
-      {llvm::Type::getInt32Ty(context()), llvm::Type::getInt32Ty(context()),
-       llvm::Type::getInt64Ty(context()),
-       llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
-       llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)},
-      false);
-  llvm::FunctionCallee personalityFunc = module()->getOrInsertFunction(
-      "__gxx_personality_v0", personalityFuncType);
-  auto personalityCallee = personalityFunc.getCallee();
-  auto *personalityConstant = llvm::dyn_cast<llvm::Constant>(personalityCallee);
-  if (personalityConstant) {
-    function->setPersonalityFn(personalityConstant);
-  }
 
   if (funcDecl->body) {
     llvm::BasicBlock *entryBlock =
@@ -1321,6 +1335,13 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
       stmt.release();
       lastValue = generateStatement(std::unique_ptr<ast::Statement>(statement));
     }
+
+    // 检查当前基本块是否已经有终止指令
+    // 如果有，停止处理后续语句
+    llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
+    if (currentBlock && currentBlock->getTerminator()) {
+      break;
+    }
   }
   return lastValue;
 }
@@ -1337,12 +1358,6 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
   if (returnStmt->expr) {
     llvm::Value *returnValue = generateExpression(std::move(returnStmt->expr));
 
-    if (!returnValue) {
-      // 如果没有返回值，使用默认值
-      builder()->CreateRetVoid();
-      return nullptr;
-    }
-
     // 获取当前函数的返回类型
     llvm::Function *currentFunc = builder()->GetInsertBlock()->getParent();
     if (!currentFunc) {
@@ -1350,6 +1365,22 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
       return nullptr;
     }
     llvm::Type *expectedReturnType = currentFunc->getReturnType();
+
+    if (!returnValue) {
+      // 如果没有返回值，根据函数返回类型生成默认值
+      if (expectedReturnType->isVoidTy()) {
+        builder()->CreateRetVoid();
+      } else if (expectedReturnType->isIntegerTy()) {
+        builder()->CreateRet(llvm::ConstantInt::get(expectedReturnType, 0));
+      } else if (expectedReturnType->isFloatingPointTy()) {
+        builder()->CreateRet(llvm::ConstantFP::get(expectedReturnType, 0.0));
+      } else {
+        // 对于其他类型，使用 nullptr
+        builder()->CreateRet(
+            llvm::ConstantPointerNull::get(expectedReturnType->getPointerTo()));
+      }
+      return nullptr;
+    }
 
     // 如果返回值的类型与函数返回类型不匹配，进行类型转换
     if (returnValue->getType() != expectedReturnType) {
@@ -1374,7 +1405,24 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     builder()->CreateRet(returnValue);
     return returnValue;
   } else {
-    builder()->CreateRetVoid();
+    // 如果没有返回表达式，根据函数返回类型生成默认值
+    llvm::Function *currentFunc = builder()->GetInsertBlock()->getParent();
+    if (currentFunc) {
+      llvm::Type *expectedReturnType = currentFunc->getReturnType();
+      if (expectedReturnType->isVoidTy()) {
+        builder()->CreateRetVoid();
+      } else if (expectedReturnType->isIntegerTy()) {
+        builder()->CreateRet(llvm::ConstantInt::get(expectedReturnType, 0));
+      } else if (expectedReturnType->isFloatingPointTy()) {
+        builder()->CreateRet(llvm::ConstantFP::get(expectedReturnType, 0.0));
+      } else {
+        // 对于其他类型，使用 nullptr
+        builder()->CreateRet(
+            llvm::ConstantPointerNull::get(expectedReturnType->getPointerTo()));
+      }
+    } else {
+      builder()->CreateRetVoid();
+    }
     return nullptr;
   }
 }
@@ -1527,36 +1575,77 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
     return nullptr;
   }
 
-  // 创建基本块
-  llvm::BasicBlock *tryBlock = llvm::BasicBlock::Create(context(), "try", func);
-  llvm::BasicBlock *catchBlock =
-      llvm::BasicBlock::Create(context(), "catch", func);
-  llvm::BasicBlock *endBlock =
-      llvm::BasicBlock::Create(context(), "try.end", func);
+  llvm::Type *intType = llvm::Type::getInt32Ty(context());
 
-  // 跳到 try 块
+  // 获取或创建全局异常标志变量
+  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+  if (!exceptionFlag) {
+    exceptionFlag = new llvm::GlobalVariable(
+        *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0), "exception_flag");
+  }
+
+  // 创建基本块
+  llvm::BasicBlock *tryBlock = llvm::BasicBlock::Create(context(), "try.body", func);
+  llvm::BasicBlock *catchBlock = llvm::BasicBlock::Create(context(), "try.catch", func);
+  llvm::BasicBlock *endBlock = llvm::BasicBlock::Create(context(), "try.end", func);
+
+  // 保存当前的插入点
+  llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
+  
+  // 从当前块跳到 try 块
   builder()->CreateBr(tryBlock);
 
   // 生成 try 块代码
   builder()->SetInsertPoint(tryBlock);
   generateStatement(std::move(tryStmt->tryBlock));
-  builder()->CreateBr(endBlock);
+  
+  // 如果 try 块正常执行完毕，设置标志为 0（无异常），然后跳到 end 块
+  if (!builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateStore(llvm::ConstantInt::get(intType, 0), exceptionFlag);
+    builder()->CreateBr(endBlock);
+  }
 
   // 生成 catch 块代码
   builder()->SetInsertPoint(catchBlock);
 
-  // 处理 catch 语句
-  for (auto &catchStmt : tryStmt->catchStmts) {
-    // 为 catch 参数创建一个局部变量
+  // 首先声明全局异常变量
+  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+  if (!exceptionValueVar) {
+    exceptionValueVar = new llvm::GlobalVariable(
+        *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0), "exception_value");
+  }
+  
+  for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
+    auto &catchStmt = tryStmt->catchStmts[i];
     if (catchStmt->param) {
-      // 暂时跳过参数处理，因为还没有实现变量声明的代码生成
+      // 从全局变量读取异常值
+      llvm::AllocaInst *alloca = builder()->CreateAlloca(intType, nullptr, catchStmt->param->name);
+      llvm::Value *loadedException = builder()->CreateLoad(intType, exceptionValueVar, "load_exception");
+      builder()->CreateStore(loadedException, alloca);
+      namedValues_[catchStmt->param->name] = alloca;
     }
-    // 生成 catch 块代码
     generateStatement(std::move(catchStmt->body));
-    builder()->CreateBr(endBlock);
+    
+    // 如果 catch 块没有终止指令，跳到 end 块
+    if (!builder()->GetInsertBlock()->getTerminator()) {
+      builder()->CreateBr(endBlock);
+    }
   }
 
-  // 设置插入点到结束块
+  // 检查是否有异常，从 try 块跳转到 catch 块
+  // 找到所有以 unreachable 结尾的基本块（可能是 throw 语句生成的）
+  for (auto &block : *func) {
+    if (block.getTerminator() && block.getTerminator()->getOpcode() == llvm::Instruction::Unreachable) {
+      // 在 unreachable 指令前插入分支到 catch 块
+      builder()->SetInsertPoint(block.getTerminator());
+      builder()->CreateBr(catchBlock);
+      block.getTerminator()->eraseFromParent();
+    }
+  }
+
+  // 设置插入点到 end 块
   builder()->SetInsertPoint(endBlock);
 
   return nullptr;
@@ -1565,11 +1654,39 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 llvm::Value *LLVMCodeGenerator::generateThrowStmt(
     std::unique_ptr<ast::ThrowStmt> throwStmt) {
   // 生成异常表达式
-  generateExpression(std::move(throwStmt->expr));
+  llvm::Value *exceptionValue = generateExpression(std::move(throwStmt->expr));
+  llvm::Type *intType = llvm::Type::getInt32Ty(context());
 
-  // 注意：暂时不使用 llvm.unreachable
-  // 指令，因为它会导致基本块中间出现终止指令的错误
-  // 实际应该使用完整的异常处理机制
+  // 获取或创建全局异常标志变量
+  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+  if (!exceptionFlag) {
+    exceptionFlag = new llvm::GlobalVariable(
+        *module(),
+        intType,
+        false,
+        llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0),
+        "exception_flag");
+  }
+  
+  // 获取或创建全局异常值变量
+  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+  if (!exceptionValueVar) {
+    exceptionValueVar = new llvm::GlobalVariable(
+        *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0), "exception_value");
+  }
+
+  // 存储异常值
+  if (exceptionValue) {
+    builder()->CreateStore(exceptionValue, exceptionValueVar);
+  }
+  
+  // 设置异常标志为 1（表示有异常）
+  builder()->CreateStore(llvm::ConstantInt::get(intType, 1), exceptionFlag);
+
+  // 生成不可达指令，因为异常会由上层的 try 块处理
+  builder()->CreateUnreachable();
 
   return nullptr;
 }
@@ -1650,10 +1767,15 @@ llvm::Value *
 LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   // 处理可以作为左值的表达式
   if (auto *identifier = dynamic_cast<ast::Identifier *>(expr.get())) {
+    std::cerr << "Debug: getExpressionLValue - identifier name: " << identifier->name << std::endl;
     auto it = namedValues_.find(identifier->name);
+    std::cerr << "Debug: namedValues_ size: " << namedValues_.size() << std::endl;
     if (it != namedValues_.end()) {
+      std::cerr << "Debug: Found LValue for identifier: " << identifier->name << std::endl;
       expr.release();
       return it->second;
+    } else {
+      std::cerr << "Debug: LValue not found for identifier: " << identifier->name << std::endl;
     }
   } else if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(expr.get())) {
     // 处理成员表达式
@@ -1701,6 +1823,23 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
 
 llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     std::unique_ptr<ast::BinaryExpr> binaryExpr) {
+  std::cerr << "Debug: generateBinaryExpr - op: " << static_cast<int>(binaryExpr->op) << std::endl;
+  
+  // 特殊处理赋值操作符
+  if (binaryExpr->op == ast::BinaryExpr::Op::Assign) {
+    std::cerr << "Debug: Processing assignment" << std::endl;
+    llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
+    llvm::Value *lhsLValue = getExpressionLValue(std::move(binaryExpr->left));
+    if (lhsLValue) {
+      std::cerr << "Debug: Assignment LValue found, storing value" << std::endl;
+      builder()->CreateStore(rhs, lhsLValue);
+      return rhs;
+    } else {
+      std::cerr << "Debug: Assignment LValue not found" << std::endl;
+    }
+    return nullptr;
+  }
+  
   llvm::Value *lhs = generateExpression(std::move(binaryExpr->left));
   llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
 
@@ -1845,17 +1984,6 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     } else {
       throw std::runtime_error("Unsupported type for shift right operation");
     }
-  case ast::BinaryExpr::Op::Assign: {
-    // 处理赋值操作
-    // 先保存左表达式
-    auto leftExpr = std::move(binaryExpr->left);
-    llvm::Value *lhsLValue = getExpressionLValue(std::move(leftExpr));
-    if (lhsLValue) {
-      builder()->CreateStore(rhs, lhsLValue);
-      return rhs;
-    }
-    break;
-  }
   default:
     throw std::runtime_error("Unsupported binary operator");
   }

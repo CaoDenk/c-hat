@@ -42,6 +42,11 @@ public:
 
 private:
   LLVMIRGenerator generator_;
+  
+  bool currentFunctionHasTry_ = false;
+  llvm::GlobalVariable *currentJmpBuf_ = nullptr;
+  llvm::StructType *jmpBufType_ = nullptr;
+  std::vector<std::unique_ptr<ast::CatchStmt>> catchStmts_;
 
   LLVMIRGenerator &generator() { return generator_; }
   llvm::LLVMContext &context() { return *generator_.getContext(); }
