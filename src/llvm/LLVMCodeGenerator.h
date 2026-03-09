@@ -95,11 +95,13 @@ private:
   llvm::Value *generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
   llvm::Value *
   generateContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
-  llvm::Value *generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);
+  llvm::Value *generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);// 异常处理
   llvm::Value *generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
   llvm::Value *generateThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
-  llvm::Value *generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
+  void checkExceptionAfterCall();
 
+  // 其他语句
+  llvm::Value *generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
   llvm::Value *generateExpression(std::unique_ptr<ast::Expression> expr);
   llvm::Value *getExpressionLValue(std::unique_ptr<ast::Expression> expr);
   llvm::Value *generateBinaryExpr(std::unique_ptr<ast::BinaryExpr> binaryExpr);

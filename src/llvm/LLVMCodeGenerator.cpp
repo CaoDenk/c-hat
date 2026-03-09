@@ -1569,15 +1569,14 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
 
 llvm::Value *
 LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
-  // 获取当前函数
   llvm::Function *func = currentFunction_;
   if (!func) {
     return nullptr;
   }
 
   llvm::Type *intType = llvm::Type::getInt32Ty(context());
+  llvm::PointerType *int8PtrType = llvm::PointerType::get(context(), 0);
 
-  // 获取或创建全局异常标志变量
   llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
   if (!exceptionFlag) {
     exceptionFlag = new llvm::GlobalVariable(
@@ -1585,67 +1584,114 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
         llvm::ConstantInt::get(intType, 0), "exception_flag");
   }
 
-  // 创建基本块
-  llvm::BasicBlock *tryBlock = llvm::BasicBlock::Create(context(), "try.body", func);
-  llvm::BasicBlock *catchBlock = llvm::BasicBlock::Create(context(), "try.catch", func);
-  llvm::BasicBlock *endBlock = llvm::BasicBlock::Create(context(), "try.end", func);
-
-  // 保存当前的插入点
-  llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
-  
-  // 从当前块跳到 try 块
-  builder()->CreateBr(tryBlock);
-
-  // 生成 try 块代码
-  builder()->SetInsertPoint(tryBlock);
-  generateStatement(std::move(tryStmt->tryBlock));
-  
-  // 如果 try 块正常执行完毕，设置标志为 0（无异常），然后跳到 end 块
-  if (!builder()->GetInsertBlock()->getTerminator()) {
-    builder()->CreateStore(llvm::ConstantInt::get(intType, 0), exceptionFlag);
-    builder()->CreateBr(endBlock);
-  }
-
-  // 生成 catch 块代码
-  builder()->SetInsertPoint(catchBlock);
-
-  // 首先声明全局异常变量
   llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
   if (!exceptionValueVar) {
     exceptionValueVar = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_value");
   }
+
+  llvm::GlobalVariable *exceptionTypeVar = module()->getNamedGlobal("exception_type");
+  if (!exceptionTypeVar) {
+    exceptionTypeVar = new llvm::GlobalVariable(
+        *module(), int8PtrType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantPointerNull::get(int8PtrType), "exception_type");
+  }
+
+  llvm::BasicBlock *tryBlock = llvm::BasicBlock::Create(context(), "try.body", func);
+  llvm::BasicBlock *endBlock = llvm::BasicBlock::Create(context(), "try.end", func);
+
+  std::vector<llvm::BasicBlock*> catchBlocks;
+  std::vector<llvm::BasicBlock*> typeCheckBlocks;
   
   for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
+    typeCheckBlocks.push_back(llvm::BasicBlock::Create(context(), "catch.check." + std::to_string(i), func));
+    catchBlocks.push_back(llvm::BasicBlock::Create(context(), "catch.body." + std::to_string(i), func));
+  }
+
+  llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
+  builder()->CreateBr(tryBlock);
+
+  builder()->SetInsertPoint(tryBlock);
+  generateStatement(std::move(tryStmt->tryBlock));
+  
+  if (!builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateBr(endBlock);
+  }
+
+  for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
     auto &catchStmt = tryStmt->catchStmts[i];
+    
+    builder()->SetInsertPoint(typeCheckBlocks[i]);
+    
+    bool hasTypeCheck = false;
+    if (catchStmt->param && catchStmt->param->type) {
+      std::string catchTypeName = catchStmt->param->type->toString();
+      llvm::Value *exceptionType = builder()->CreateLoad(int8PtrType, exceptionTypeVar, "load_exception_type");
+      
+      llvm::Constant *catchTypeConst = llvm::ConstantDataArray::getString(context(), catchTypeName, true);
+      llvm::GlobalVariable *catchTypeGlobal = new llvm::GlobalVariable(
+          *module(), catchTypeConst->getType(), true, 
+          llvm::GlobalValue::PrivateLinkage, catchTypeConst, "catch.type." + std::to_string(i));
+      
+      llvm::Value *catchTypePtr = builder()->CreateBitCast(catchTypeGlobal, int8PtrType);
+      
+      llvm::Function *strcmpFunc = module()->getFunction("strcmp");
+      if (!strcmpFunc) {
+        std::vector<llvm::Type*> strcmpArgs = {int8PtrType, int8PtrType};
+        llvm::FunctionType *strcmpType = llvm::FunctionType::get(intType, strcmpArgs, false);
+        strcmpFunc = llvm::Function::Create(strcmpType, llvm::Function::ExternalLinkage, "strcmp", module());
+      }
+      
+      llvm::Value *cmpResult = builder()->CreateCall(strcmpFunc, {exceptionType, catchTypePtr});
+      llvm::Value *typeMatch = builder()->CreateICmpEQ(cmpResult, llvm::ConstantInt::get(intType, 0));
+      
+      llvm::BasicBlock *nextBlock = (i + 1 < tryStmt->catchStmts.size()) 
+                                      ? typeCheckBlocks[i + 1] 
+                                      : endBlock;
+      builder()->CreateCondBr(typeMatch, catchBlocks[i], nextBlock);
+      hasTypeCheck = true;
+    }
+    
+    if (!hasTypeCheck) {
+      builder()->CreateBr(catchBlocks[i]);
+    }
+
+    builder()->SetInsertPoint(catchBlocks[i]);
+    
     if (catchStmt->param) {
-      // 从全局变量读取异常值
-      llvm::AllocaInst *alloca = builder()->CreateAlloca(intType, nullptr, catchStmt->param->name);
-      llvm::Value *loadedException = builder()->CreateLoad(intType, exceptionValueVar, "load_exception");
-      builder()->CreateStore(loadedException, alloca);
+      llvm::Type *paramType = intType;
+      if (catchStmt->param->type) {
+        paramType = generateType(catchStmt->param->type.get());
+      }
+      
+      llvm::AllocaInst *alloca = builder()->CreateAlloca(paramType, nullptr, catchStmt->param->name);
+      
+      llvm::Value *exceptionValue = builder()->CreateLoad(paramType, exceptionValueVar, "load_exception");
+      builder()->CreateStore(exceptionValue, alloca);
       namedValues_[catchStmt->param->name] = alloca;
     }
+    
     generateStatement(std::move(catchStmt->body));
     
-    // 如果 catch 块没有终止指令，跳到 end 块
     if (!builder()->GetInsertBlock()->getTerminator()) {
       builder()->CreateBr(endBlock);
     }
   }
 
-  // 检查是否有异常，从 try 块跳转到 catch 块
-  // 找到所有以 unreachable 结尾的基本块（可能是 throw 语句生成的）
   for (auto &block : *func) {
     if (block.getTerminator() && block.getTerminator()->getOpcode() == llvm::Instruction::Unreachable) {
-      // 在 unreachable 指令前插入分支到 catch 块
       builder()->SetInsertPoint(block.getTerminator());
-      builder()->CreateBr(catchBlock);
+      
+      if (!typeCheckBlocks.empty()) {
+        builder()->CreateBr(typeCheckBlocks[0]);
+      } else {
+        builder()->CreateBr(endBlock);
+      }
       block.getTerminator()->eraseFromParent();
     }
   }
 
-  // 设置插入点到 end 块
   builder()->SetInsertPoint(endBlock);
 
   return nullptr;
@@ -1653,23 +1699,17 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 
 llvm::Value *LLVMCodeGenerator::generateThrowStmt(
     std::unique_ptr<ast::ThrowStmt> throwStmt) {
-  // 生成异常表达式
   llvm::Value *exceptionValue = generateExpression(std::move(throwStmt->expr));
   llvm::Type *intType = llvm::Type::getInt32Ty(context());
+  llvm::PointerType *int8PtrType = llvm::PointerType::get(context(), 0);
 
-  // 获取或创建全局异常标志变量
   llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
   if (!exceptionFlag) {
     exceptionFlag = new llvm::GlobalVariable(
-        *module(),
-        intType,
-        false,
-        llvm::GlobalValue::ExternalLinkage,
-        llvm::ConstantInt::get(intType, 0),
-        "exception_flag");
+        *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0), "exception_flag");
   }
   
-  // 获取或创建全局异常值变量
   llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
   if (!exceptionValueVar) {
     exceptionValueVar = new llvm::GlobalVariable(
@@ -1677,18 +1717,91 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
         llvm::ConstantInt::get(intType, 0), "exception_value");
   }
 
-  // 存储异常值
+  llvm::GlobalVariable *exceptionTypeVar = module()->getNamedGlobal("exception_type");
+  if (!exceptionTypeVar) {
+    exceptionTypeVar = new llvm::GlobalVariable(
+        *module(), int8PtrType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantPointerNull::get(int8PtrType), "exception_type");
+  }
+
   if (exceptionValue) {
     builder()->CreateStore(exceptionValue, exceptionValueVar);
+    
+    std::string typeName = "int";
+    if (exceptionValue->getType()->isFloatingPointTy()) {
+      typeName = "double";
+    } else if (exceptionValue->getType()->isIntegerTy()) {
+      typeName = "int";
+    }
+    
+    llvm::Constant *typeConst = llvm::ConstantDataArray::getString(context(), typeName, true);
+    llvm::GlobalVariable *typeGlobal = new llvm::GlobalVariable(
+        *module(), typeConst->getType(), true,
+        llvm::GlobalValue::PrivateLinkage, typeConst, "throw.type");
+    
+    llvm::Value *typePtr = builder()->CreateBitCast(typeGlobal, int8PtrType);
+    builder()->CreateStore(typePtr, exceptionTypeVar);
   }
   
-  // 设置异常标志为 1（表示有异常）
   builder()->CreateStore(llvm::ConstantInt::get(intType, 1), exceptionFlag);
-
-  // 生成不可达指令，因为异常会由上层的 try 块处理
-  builder()->CreateUnreachable();
+  // 不要使用 unreachable，而是返回一个默认值
+  // builder()->CreateUnreachable();
+  
+  // 获取当前函数的返回类型
+  llvm::Function *currentFunc = builder()->GetInsertBlock()->getParent();
+  if (currentFunc) {
+    llvm::Type *returnType = currentFunc->getReturnType();
+    if (returnType->isVoidTy()) {
+      builder()->CreateRetVoid();
+    } else if (returnType->isIntegerTy()) {
+      builder()->CreateRet(llvm::ConstantInt::get(returnType, 0));
+    } else if (returnType->isFloatingPointTy()) {
+      builder()->CreateRet(llvm::ConstantFP::get(returnType, 0.0));
+    } else {
+      // 对于其他类型，使用 nullptr
+      builder()->CreateRet(
+          llvm::ConstantPointerNull::get(returnType->getPointerTo()));
+    }
+  }
 
   return nullptr;
+}
+
+void LLVMCodeGenerator::checkExceptionAfterCall() {
+  llvm::Type *intType = llvm::Type::getInt32Ty(context());
+  
+  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+  if (!exceptionFlag) {
+    exceptionFlag = new llvm::GlobalVariable(
+        *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantInt::get(intType, 0), "exception_flag");
+  }
+  
+  // 检查异常标志
+  llvm::Value *flagValue = builder()->CreateLoad(intType, exceptionFlag, "check_exception");
+  llvm::Value *hasException = builder()->CreateICmpNE(flagValue, llvm::ConstantInt::get(intType, 0));
+  
+  // 创建一个基本块用于处理异常
+  llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
+  if (!currentBlock) return;
+  
+  llvm::Function *currentFunc = currentBlock->getParent();
+  if (!currentFunc) return;
+  
+  // 创建一个异常处理块
+  llvm::BasicBlock *exceptionBlock = llvm::BasicBlock::Create(context(), "exception.handle", currentFunc);
+  llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context(), "continue", currentFunc);
+  
+  // 创建条件分支
+  builder()->CreateCondBr(hasException, exceptionBlock, nextBlock);
+  
+  // 在异常处理块中，我们需要跳转到最近的异常处理点
+  // 这里我们使用 unreachable，让后端处理
+  builder()->SetInsertPoint(exceptionBlock);
+  builder()->CreateUnreachable();
+  
+  // 设置插入点到继续执行的块
+  builder()->SetInsertPoint(nextBlock);
 }
 
 llvm::Value *LLVMCodeGenerator::generateDeferStmt(
@@ -2273,10 +2386,20 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             llvm::Constant::getNullValue(function->getArg(i)->getType()));
       }
     }
-    return builder()->CreateCall(function, adjustedArgs, "calltmp");
+    llvm::Value *callResult = builder()->CreateCall(function, adjustedArgs, "calltmp");
+    
+    // 检查异常
+    checkExceptionAfterCall();
+    
+    return callResult;
   }
 
-  return builder()->CreateCall(function, args, "calltmp");
+  llvm::Value *callResult = builder()->CreateCall(function, args, "calltmp");
+  
+  // 检查异常
+  checkExceptionAfterCall();
+  
+  return callResult;
 }
 
 // Missing function implementations
