@@ -169,6 +169,46 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
         // 如果变量未定义，暂时使用 int 作为默认类型
         varType = llvm::Type::getInt32Ty(context());
       }
+    } else if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(
+                   varDecl->initializer.get())) {
+      // 对于成员表达式，推断类型
+      std::string memberName = memberExpr->member;
+      if (memberName == "len") {
+        // len 字段是 i32 类型
+        varType = llvm::Type::getInt32Ty(context());
+      } else if (memberName == "ptr") {
+        // ptr 字段是指针类型
+        varType = llvm::PointerType::get(context(), 0);
+      } else {
+        // 对于其他成员，暂时使用 int 作为默认类型
+        varType = llvm::Type::getInt32Ty(context());
+      }
+    } else if (auto *arrayInitExpr = dynamic_cast<ast::ArrayInitExpr *>(
+                   varDecl->initializer.get())) {
+      // 对于数组初始化表达式，生成切片类型
+      std::string sliceTypeName = "Slice_int";
+
+      // 检查是否已经存在该切片类型
+      auto it = sliceTypes_.find(sliceTypeName);
+      llvm::StructType *sliceStructType;
+      if (it != sliceTypes_.end()) {
+        sliceStructType = it->second;
+      } else {
+        // 生成元素类型
+        llvm::Type *elementType = llvm::Type::getInt32Ty(context());
+
+        // 创建切片类型的结构体
+        std::vector<llvm::Type *> fields;
+        fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
+        fields.push_back(llvm::Type::getInt32Ty(context()));      // len
+        sliceStructType =
+            llvm::StructType::create(context(), fields, sliceTypeName);
+
+        // 存储到 sliceTypes_ 映射中
+        sliceTypes_[sliceTypeName] = sliceStructType;
+      }
+
+      varType = sliceStructType;
     } else {
       // 对于其他非字面量初始化器，暂时使用 int 作为默认类型
       varType = llvm::Type::getInt32Ty(context());
@@ -230,6 +270,21 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   }
 
 normal_var_path:
+  // 检查是否是数组初始化表达式
+  if (varDecl->initializer) {
+    if (auto *arrayInitExpr =
+            dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
+      // 对于数组初始化表达式，直接调用 generateArrayInitExpr
+      // 它会返回一个 AllocaInst，我们直接使用它
+      llvm::Value *initValue =
+          generateExpression(std::move(varDecl->initializer));
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
+        namedValues_[varDecl->name] = alloca;
+        return alloca;
+      }
+    }
+  }
+
   llvm::AllocaInst *alloca =
       builder()->CreateAlloca(varType, nullptr, varDecl->name);
 
@@ -292,6 +347,24 @@ normal_var_path:
     if (varDecl->initializer) {
       llvm::Value *initValue =
           generateExpression(std::move(varDecl->initializer));
+
+      // 检查是否是数组初始化表达式返回的切片结构体指针
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
+        llvm::Type *allocatedType = alloca->getAllocatedType();
+        if (allocatedType->isStructTy()) {
+          llvm::StructType *structType =
+              dyn_cast<llvm::StructType>(allocatedType);
+          if (structType) {
+            std::string structName = structType->getName().str();
+            // 检查是否是切片类型
+            if (structName.find("Slice_") == 0) {
+              // 对于切片类型，直接使用返回的 AllocaInst，不需要创建新的
+              namedValues_[varDecl->name] = alloca;
+              return alloca;
+            }
+          }
+        }
+      }
 
       // 如果初始化值的类型与变量类型不匹配，进行类型转换
       if (initValue->getType() != varType) {
@@ -734,48 +807,57 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
                   << (lastBlock->getTerminator() != nullptr) << std::endl;
         if (!lastBlock->getTerminator()) {
           std::cerr << "Debug: Adding default return statement" << std::endl;
-          
+
           // 检查是否有异常
           if (currentFunctionHasTry_) {
             llvm::Type *intType = llvm::Type::getInt32Ty(context());
-            
+
             // 获取全局异常标志变量
-            llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+            llvm::GlobalVariable *exceptionFlag =
+                module()->getNamedGlobal("exception_flag");
             if (exceptionFlag) {
-              llvm::Value *flag = builder()->CreateLoad(intType, exceptionFlag, "load_flag");
-              llvm::Value *hasException = builder()->CreateICmpNE(flag, llvm::ConstantInt::get(intType, 0), "has_exception");
-              
+              llvm::Value *flag =
+                  builder()->CreateLoad(intType, exceptionFlag, "load_flag");
+              llvm::Value *hasException = builder()->CreateICmpNE(
+                  flag, llvm::ConstantInt::get(intType, 0), "has_exception");
+
               // 创建异常处理块
-              llvm::BasicBlock *normalReturnBlock = llvm::BasicBlock::Create(context(), "normal_return", function);
-              llvm::BasicBlock *catchBlock = llvm::BasicBlock::Create(context(), "exception_catch", function);
-              
+              llvm::BasicBlock *normalReturnBlock = llvm::BasicBlock::Create(
+                  context(), "normal_return", function);
+              llvm::BasicBlock *catchBlock = llvm::BasicBlock::Create(
+                  context(), "exception_catch", function);
+
               // 条件分支
               builder()->SetInsertPoint(lastBlock);
-              builder()->CreateCondBr(hasException, catchBlock, normalReturnBlock);
-              
+              builder()->CreateCondBr(hasException, catchBlock,
+                                      normalReturnBlock);
+
               // 生成 catch 块代码
               builder()->SetInsertPoint(catchBlock);
-              
+
               // 处理 catch 块
               for (auto &catchStmt : catchStmts_) {
                 if (catchStmt->param) {
                   // 从全局变量读取异常值
-                  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+                  llvm::GlobalVariable *exceptionValueVar =
+                      module()->getNamedGlobal("exception_value");
                   if (exceptionValueVar) {
-                    llvm::AllocaInst *alloca = builder()->CreateAlloca(intType, nullptr, catchStmt->param->name);
-                    llvm::Value *loadedException = builder()->CreateLoad(intType, exceptionValueVar, "load_exception");
+                    llvm::AllocaInst *alloca = builder()->CreateAlloca(
+                        intType, nullptr, catchStmt->param->name);
+                    llvm::Value *loadedException = builder()->CreateLoad(
+                        intType, exceptionValueVar, "load_exception");
                     builder()->CreateStore(loadedException, alloca);
                     namedValues_[catchStmt->param->name] = alloca;
                   }
                 }
                 generateStatement(std::move(catchStmt->body));
               }
-              
+
               // 生成正常返回块代码
               builder()->SetInsertPoint(normalReturnBlock);
             }
           }
-          
+
           // 为已初始化的 late 变量调用析构函数
           for (const auto &[varName, info] : lateVariables_) {
             if (info.isInitialized) {
@@ -811,11 +893,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   }
 
   std::cerr << "Debug: Before returning function" << std::endl;
-   
-   // 重置标记
-   currentFunctionHasTry_ = false;
-   
-   return function;
+
+  // 重置标记
+  currentFunctionHasTry_ = false;
+
+  return function;
 }
 
 llvm::Value *LLVMCodeGenerator::generateClassDecl(
@@ -1577,36 +1659,43 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   llvm::Type *intType = llvm::Type::getInt32Ty(context());
   llvm::PointerType *int8PtrType = llvm::PointerType::get(context(), 0);
 
-  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+  llvm::GlobalVariable *exceptionFlag =
+      module()->getNamedGlobal("exception_flag");
   if (!exceptionFlag) {
     exceptionFlag = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_flag");
   }
 
-  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+  llvm::GlobalVariable *exceptionValueVar =
+      module()->getNamedGlobal("exception_value");
   if (!exceptionValueVar) {
     exceptionValueVar = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_value");
   }
 
-  llvm::GlobalVariable *exceptionTypeVar = module()->getNamedGlobal("exception_type");
+  llvm::GlobalVariable *exceptionTypeVar =
+      module()->getNamedGlobal("exception_type");
   if (!exceptionTypeVar) {
     exceptionTypeVar = new llvm::GlobalVariable(
         *module(), int8PtrType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantPointerNull::get(int8PtrType), "exception_type");
   }
 
-  llvm::BasicBlock *tryBlock = llvm::BasicBlock::Create(context(), "try.body", func);
-  llvm::BasicBlock *endBlock = llvm::BasicBlock::Create(context(), "try.end", func);
+  llvm::BasicBlock *tryBlock =
+      llvm::BasicBlock::Create(context(), "try.body", func);
+  llvm::BasicBlock *endBlock =
+      llvm::BasicBlock::Create(context(), "try.end", func);
 
-  std::vector<llvm::BasicBlock*> catchBlocks;
-  std::vector<llvm::BasicBlock*> typeCheckBlocks;
-  
+  std::vector<llvm::BasicBlock *> catchBlocks;
+  std::vector<llvm::BasicBlock *> typeCheckBlocks;
+
   for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
-    typeCheckBlocks.push_back(llvm::BasicBlock::Create(context(), "catch.check." + std::to_string(i), func));
-    catchBlocks.push_back(llvm::BasicBlock::Create(context(), "catch.body." + std::to_string(i), func));
+    typeCheckBlocks.push_back(llvm::BasicBlock::Create(
+        context(), "catch.check." + std::to_string(i), func));
+    catchBlocks.push_back(llvm::BasicBlock::Create(
+        context(), "catch.body." + std::to_string(i), func));
   }
 
   llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
@@ -1614,75 +1703,86 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 
   builder()->SetInsertPoint(tryBlock);
   generateStatement(std::move(tryStmt->tryBlock));
-  
+
   if (!builder()->GetInsertBlock()->getTerminator()) {
     builder()->CreateBr(endBlock);
   }
 
   for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
     auto &catchStmt = tryStmt->catchStmts[i];
-    
+
     builder()->SetInsertPoint(typeCheckBlocks[i]);
-    
+
     bool hasTypeCheck = false;
     if (catchStmt->param && catchStmt->param->type) {
       std::string catchTypeName = catchStmt->param->type->toString();
-      llvm::Value *exceptionType = builder()->CreateLoad(int8PtrType, exceptionTypeVar, "load_exception_type");
-      
-      llvm::Constant *catchTypeConst = llvm::ConstantDataArray::getString(context(), catchTypeName, true);
+      llvm::Value *exceptionType = builder()->CreateLoad(
+          int8PtrType, exceptionTypeVar, "load_exception_type");
+
+      llvm::Constant *catchTypeConst =
+          llvm::ConstantDataArray::getString(context(), catchTypeName, true);
       llvm::GlobalVariable *catchTypeGlobal = new llvm::GlobalVariable(
-          *module(), catchTypeConst->getType(), true, 
-          llvm::GlobalValue::PrivateLinkage, catchTypeConst, "catch.type." + std::to_string(i));
-      
-      llvm::Value *catchTypePtr = builder()->CreateBitCast(catchTypeGlobal, int8PtrType);
-      
+          *module(), catchTypeConst->getType(), true,
+          llvm::GlobalValue::PrivateLinkage, catchTypeConst,
+          "catch.type." + std::to_string(i));
+
+      llvm::Value *catchTypePtr =
+          builder()->CreateBitCast(catchTypeGlobal, int8PtrType);
+
       llvm::Function *strcmpFunc = module()->getFunction("strcmp");
       if (!strcmpFunc) {
-        std::vector<llvm::Type*> strcmpArgs = {int8PtrType, int8PtrType};
-        llvm::FunctionType *strcmpType = llvm::FunctionType::get(intType, strcmpArgs, false);
-        strcmpFunc = llvm::Function::Create(strcmpType, llvm::Function::ExternalLinkage, "strcmp", module());
+        std::vector<llvm::Type *> strcmpArgs = {int8PtrType, int8PtrType};
+        llvm::FunctionType *strcmpType =
+            llvm::FunctionType::get(intType, strcmpArgs, false);
+        strcmpFunc = llvm::Function::Create(
+            strcmpType, llvm::Function::ExternalLinkage, "strcmp", module());
       }
-      
-      llvm::Value *cmpResult = builder()->CreateCall(strcmpFunc, {exceptionType, catchTypePtr});
-      llvm::Value *typeMatch = builder()->CreateICmpEQ(cmpResult, llvm::ConstantInt::get(intType, 0));
-      
-      llvm::BasicBlock *nextBlock = (i + 1 < tryStmt->catchStmts.size()) 
-                                      ? typeCheckBlocks[i + 1] 
-                                      : endBlock;
+
+      llvm::Value *cmpResult =
+          builder()->CreateCall(strcmpFunc, {exceptionType, catchTypePtr});
+      llvm::Value *typeMatch = builder()->CreateICmpEQ(
+          cmpResult, llvm::ConstantInt::get(intType, 0));
+
+      llvm::BasicBlock *nextBlock = (i + 1 < tryStmt->catchStmts.size())
+                                        ? typeCheckBlocks[i + 1]
+                                        : endBlock;
       builder()->CreateCondBr(typeMatch, catchBlocks[i], nextBlock);
       hasTypeCheck = true;
     }
-    
+
     if (!hasTypeCheck) {
       builder()->CreateBr(catchBlocks[i]);
     }
 
     builder()->SetInsertPoint(catchBlocks[i]);
-    
+
     if (catchStmt->param) {
       llvm::Type *paramType = intType;
       if (catchStmt->param->type) {
         paramType = generateType(catchStmt->param->type.get());
       }
-      
-      llvm::AllocaInst *alloca = builder()->CreateAlloca(paramType, nullptr, catchStmt->param->name);
-      
-      llvm::Value *exceptionValue = builder()->CreateLoad(paramType, exceptionValueVar, "load_exception");
+
+      llvm::AllocaInst *alloca =
+          builder()->CreateAlloca(paramType, nullptr, catchStmt->param->name);
+
+      llvm::Value *exceptionValue =
+          builder()->CreateLoad(paramType, exceptionValueVar, "load_exception");
       builder()->CreateStore(exceptionValue, alloca);
       namedValues_[catchStmt->param->name] = alloca;
     }
-    
+
     generateStatement(std::move(catchStmt->body));
-    
+
     if (!builder()->GetInsertBlock()->getTerminator()) {
       builder()->CreateBr(endBlock);
     }
   }
 
   for (auto &block : *func) {
-    if (block.getTerminator() && block.getTerminator()->getOpcode() == llvm::Instruction::Unreachable) {
+    if (block.getTerminator() &&
+        block.getTerminator()->getOpcode() == llvm::Instruction::Unreachable) {
       builder()->SetInsertPoint(block.getTerminator());
-      
+
       if (!typeCheckBlocks.empty()) {
         builder()->CreateBr(typeCheckBlocks[0]);
       } else {
@@ -1703,21 +1803,24 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
   llvm::Type *intType = llvm::Type::getInt32Ty(context());
   llvm::PointerType *int8PtrType = llvm::PointerType::get(context(), 0);
 
-  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+  llvm::GlobalVariable *exceptionFlag =
+      module()->getNamedGlobal("exception_flag");
   if (!exceptionFlag) {
     exceptionFlag = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_flag");
   }
-  
-  llvm::GlobalVariable *exceptionValueVar = module()->getNamedGlobal("exception_value");
+
+  llvm::GlobalVariable *exceptionValueVar =
+      module()->getNamedGlobal("exception_value");
   if (!exceptionValueVar) {
     exceptionValueVar = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_value");
   }
 
-  llvm::GlobalVariable *exceptionTypeVar = module()->getNamedGlobal("exception_type");
+  llvm::GlobalVariable *exceptionTypeVar =
+      module()->getNamedGlobal("exception_type");
   if (!exceptionTypeVar) {
     exceptionTypeVar = new llvm::GlobalVariable(
         *module(), int8PtrType, false, llvm::GlobalValue::ExternalLinkage,
@@ -1726,27 +1829,28 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
 
   if (exceptionValue) {
     builder()->CreateStore(exceptionValue, exceptionValueVar);
-    
+
     std::string typeName = "int";
     if (exceptionValue->getType()->isFloatingPointTy()) {
       typeName = "double";
     } else if (exceptionValue->getType()->isIntegerTy()) {
       typeName = "int";
     }
-    
-    llvm::Constant *typeConst = llvm::ConstantDataArray::getString(context(), typeName, true);
+
+    llvm::Constant *typeConst =
+        llvm::ConstantDataArray::getString(context(), typeName, true);
     llvm::GlobalVariable *typeGlobal = new llvm::GlobalVariable(
         *module(), typeConst->getType(), true,
         llvm::GlobalValue::PrivateLinkage, typeConst, "throw.type");
-    
+
     llvm::Value *typePtr = builder()->CreateBitCast(typeGlobal, int8PtrType);
     builder()->CreateStore(typePtr, exceptionTypeVar);
   }
-  
+
   builder()->CreateStore(llvm::ConstantInt::get(intType, 1), exceptionFlag);
   // 不要使用 unreachable，而是返回一个默认值
   // builder()->CreateUnreachable();
-  
+
   // 获取当前函数的返回类型
   llvm::Function *currentFunc = builder()->GetInsertBlock()->getParent();
   if (currentFunc) {
@@ -1769,37 +1873,44 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
 
 void LLVMCodeGenerator::checkExceptionAfterCall() {
   llvm::Type *intType = llvm::Type::getInt32Ty(context());
-  
-  llvm::GlobalVariable *exceptionFlag = module()->getNamedGlobal("exception_flag");
+
+  llvm::GlobalVariable *exceptionFlag =
+      module()->getNamedGlobal("exception_flag");
   if (!exceptionFlag) {
     exceptionFlag = new llvm::GlobalVariable(
         *module(), intType, false, llvm::GlobalValue::ExternalLinkage,
         llvm::ConstantInt::get(intType, 0), "exception_flag");
   }
-  
+
   // 检查异常标志
-  llvm::Value *flagValue = builder()->CreateLoad(intType, exceptionFlag, "check_exception");
-  llvm::Value *hasException = builder()->CreateICmpNE(flagValue, llvm::ConstantInt::get(intType, 0));
-  
+  llvm::Value *flagValue =
+      builder()->CreateLoad(intType, exceptionFlag, "check_exception");
+  llvm::Value *hasException =
+      builder()->CreateICmpNE(flagValue, llvm::ConstantInt::get(intType, 0));
+
   // 创建一个基本块用于处理异常
   llvm::BasicBlock *currentBlock = builder()->GetInsertBlock();
-  if (!currentBlock) return;
-  
+  if (!currentBlock)
+    return;
+
   llvm::Function *currentFunc = currentBlock->getParent();
-  if (!currentFunc) return;
-  
+  if (!currentFunc)
+    return;
+
   // 创建一个异常处理块
-  llvm::BasicBlock *exceptionBlock = llvm::BasicBlock::Create(context(), "exception.handle", currentFunc);
-  llvm::BasicBlock *nextBlock = llvm::BasicBlock::Create(context(), "continue", currentFunc);
-  
+  llvm::BasicBlock *exceptionBlock =
+      llvm::BasicBlock::Create(context(), "exception.handle", currentFunc);
+  llvm::BasicBlock *nextBlock =
+      llvm::BasicBlock::Create(context(), "continue", currentFunc);
+
   // 创建条件分支
   builder()->CreateCondBr(hasException, exceptionBlock, nextBlock);
-  
+
   // 在异常处理块中，我们需要跳转到最近的异常处理点
   // 这里我们使用 unreachable，让后端处理
   builder()->SetInsertPoint(exceptionBlock);
   builder()->CreateUnreachable();
-  
+
   // 设置插入点到继续执行的块
   builder()->SetInsertPoint(nextBlock);
 }
@@ -1835,15 +1946,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::SubscriptExpr:
     return generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr>(
         static_cast<ast::SubscriptExpr *>(expr.release())));
-  case ast::NodeType::ThisExpr:
-    return generateThisExpr(std::unique_ptr<ast::ThisExpr>(
-        static_cast<ast::ThisExpr *>(expr.release())));
   case ast::NodeType::SelfExpr:
     return generateSelfExpr(std::unique_ptr<ast::SelfExpr>(
         static_cast<ast::SelfExpr *>(expr.release())));
-  case ast::NodeType::SuperExpr:
-    return generateSuperExpr(std::unique_ptr<ast::SuperExpr>(
-        static_cast<ast::SuperExpr *>(expr.release())));
   case ast::NodeType::NewExpr:
     return generateNewExpr(std::unique_ptr<ast::NewExpr>(
         static_cast<ast::NewExpr *>(expr.release())));
@@ -1880,15 +1985,19 @@ llvm::Value *
 LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   // 处理可以作为左值的表达式
   if (auto *identifier = dynamic_cast<ast::Identifier *>(expr.get())) {
-    std::cerr << "Debug: getExpressionLValue - identifier name: " << identifier->name << std::endl;
+    std::cerr << "Debug: getExpressionLValue - identifier name: "
+              << identifier->name << std::endl;
     auto it = namedValues_.find(identifier->name);
-    std::cerr << "Debug: namedValues_ size: " << namedValues_.size() << std::endl;
+    std::cerr << "Debug: namedValues_ size: " << namedValues_.size()
+              << std::endl;
     if (it != namedValues_.end()) {
-      std::cerr << "Debug: Found LValue for identifier: " << identifier->name << std::endl;
+      std::cerr << "Debug: Found LValue for identifier: " << identifier->name
+                << std::endl;
       expr.release();
       return it->second;
     } else {
-      std::cerr << "Debug: LValue not found for identifier: " << identifier->name << std::endl;
+      std::cerr << "Debug: LValue not found for identifier: "
+                << identifier->name << std::endl;
     }
   } else if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(expr.get())) {
     // 处理成员表达式
@@ -1921,9 +2030,66 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
       llvm::Value *index = generateExpression(
           std::unique_ptr<ast::Expression>(subscriptExpr->index.release()));
       if (index) {
-        // 假设 array 是一个数组或切片
         expr.release();
-        // 对于不透明指针，使用int8类型作为元素类型
+
+        // 检查是否是切片类型
+        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(array)) {
+          llvm::Type *allocatedType = alloca->getAllocatedType();
+          if (allocatedType->isStructTy()) {
+            llvm::StructType *structType =
+                dyn_cast<llvm::StructType>(allocatedType);
+            if (structType) {
+              std::string structName = structType->getName().str();
+              // 检查是否是切片类型
+              if (structName.find("Slice_") == 0) {
+                // 生成切片类型名称
+                std::string sliceTypeName =
+                    "Slice_" +
+                    getLLVMTypeName(llvm::Type::getInt32Ty(context()));
+
+                // 检查是否已经存在该切片类型
+                auto it = sliceTypes_.find(sliceTypeName);
+                llvm::StructType *sliceStructType;
+                if (it != sliceTypes_.end()) {
+                  sliceStructType = it->second;
+                } else {
+                  // 生成元素类型
+                  llvm::Type *elementType = llvm::Type::getInt32Ty(context());
+
+                  // 创建切片类型的结构体
+                  std::vector<llvm::Type *> fields;
+                  fields.push_back(
+                      llvm::PointerType::get(elementType, 0));         // ptr
+                  fields.push_back(llvm::Type::getInt32Ty(context())); // len
+                  sliceStructType = llvm::StructType::create(context(), fields,
+                                                             sliceTypeName);
+
+                  // 存储到 sliceTypes_ 映射中
+                  sliceTypes_[sliceTypeName] = sliceStructType;
+                }
+
+                // 获取切片的 ptr 字段
+                llvm::Value *ptrFieldPtr = builder()->CreateStructGEP(
+                    sliceStructType, array, 0, "slice.ptr");
+                // 加载 ptr 字段的值
+                // 使用与 generateArrayInitExpr 函数相同的指针类型
+                llvm::Type *ptrType = llvm::PointerType::get(
+                    llvm::Type::getInt32Ty(context()), 0);
+                llvm::Value *ptr =
+                    builder()->CreateLoad(ptrType, ptrFieldPtr, "slice.ptr");
+
+                // 假设元素类型是 int32
+                llvm::Type *elementType = builder()->getInt32Ty();
+
+                // 计算元素地址
+                return builder()->CreateGEP(elementType, ptr, index,
+                                            "element.ptr");
+              }
+            }
+          }
+        }
+
+        // 对于其他类型，使用int8类型作为元素类型
         return builder()->CreateGEP(llvm::Type::getInt8Ty(context()), array,
                                     index, "array_idx");
       }
@@ -1936,8 +2102,9 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
 
 llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     std::unique_ptr<ast::BinaryExpr> binaryExpr) {
-  std::cerr << "Debug: generateBinaryExpr - op: " << static_cast<int>(binaryExpr->op) << std::endl;
-  
+  std::cerr << "Debug: generateBinaryExpr - op: "
+            << static_cast<int>(binaryExpr->op) << std::endl;
+
   // 特殊处理赋值操作符
   if (binaryExpr->op == ast::BinaryExpr::Op::Assign) {
     std::cerr << "Debug: Processing assignment" << std::endl;
@@ -1952,7 +2119,7 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     }
     return nullptr;
   }
-  
+
   llvm::Value *lhs = generateExpression(std::move(binaryExpr->left));
   llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
 
@@ -2386,19 +2553,20 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             llvm::Constant::getNullValue(function->getArg(i)->getType()));
       }
     }
-    llvm::Value *callResult = builder()->CreateCall(function, adjustedArgs, "calltmp");
-    
+    llvm::Value *callResult =
+        builder()->CreateCall(function, adjustedArgs, "calltmp");
+
     // 检查异常
     checkExceptionAfterCall();
-    
+
     return callResult;
   }
 
   llvm::Value *callResult = builder()->CreateCall(function, args, "calltmp");
-  
+
   // 检查异常
   checkExceptionAfterCall();
-  
+
   return callResult;
 }
 
@@ -2461,6 +2629,21 @@ llvm::Value *LLVMCodeGenerator::generateIdentifier(
     llvm::Value *value = it->second;
     // 如果值是AllocaInst（即变量的地址），需要加载其值
     if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(value)) {
+      // 检查是否是切片类型
+      llvm::Type *allocatedType = alloca->getAllocatedType();
+      if (allocatedType->isStructTy()) {
+        llvm::StructType *structType =
+            dyn_cast<llvm::StructType>(allocatedType);
+        if (structType) {
+          std::string structName = structType->getName().str();
+          // 检查是否是切片类型
+          if (structName.find("Slice_") == 0) {
+            // 对于切片类型，返回变量的地址
+            return alloca;
+          }
+        }
+      }
+      // 对于其他类型，加载其值
       return builder()->CreateLoad(alloca->getAllocatedType(), alloca,
                                    identifier->name);
     }
@@ -2471,37 +2654,346 @@ llvm::Value *LLVMCodeGenerator::generateIdentifier(
 
 llvm::Value *LLVMCodeGenerator::generateExpansionExpr(
     std::unique_ptr<ast::ExpansionExpr> expansionExpr) {
-  // TODO: Implement expansion expression generation
-  return nullptr;
+  // 生成内部表达式
+  llvm::Value *exprValue = generateExpression(std::move(expansionExpr->expr));
+  if (!exprValue) {
+    return nullptr;
+  }
+
+  // 对于展开表达式，我们直接返回内部表达式的值
+  // 注意：实际实现可能需要根据语言的具体语义进行调整
+  return exprValue;
 }
 
 llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
     std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr) {
-  // TODO: Implement array init expression generation
-  return nullptr;
+  // 检查 arrayInitExpr 是否为空
+  if (!arrayInitExpr) {
+    return nullptr;
+  }
+
+  // 获取数组大小
+  size_t arraySize = arrayInitExpr->elements.size();
+  if (arraySize == 0) {
+    // 空数组，返回 null
+    return nullptr;
+  }
+
+  // 从第一个元素推断类型
+  llvm::Type *llvmElementType = llvm::Type::getInt32Ty(context()); // 默认类型
+
+  if (!arrayInitExpr->elements.empty()) {
+    // 生成第一个元素的表达式，获取其类型
+    // 注意：这里不能移动原始元素，因为后面还要使用
+    // 所以我们先克隆一个副本
+    auto firstElementCopy = arrayInitExpr->elements[0]->clone();
+    llvm::Value *firstElement = generateExpression(std::move(firstElementCopy));
+    if (firstElement) {
+      llvmElementType = firstElement->getType();
+    }
+  }
+
+  // 创建数组类型
+  llvm::ArrayType *arrayType = llvm::ArrayType::get(llvmElementType, arraySize);
+
+  // 创建切片类型
+  // 生成切片类型名称
+  std::string sliceTypeName = "Slice_" + getLLVMTypeName(llvmElementType);
+
+  // 检查是否已经存在该切片类型
+  auto it = sliceTypes_.find(sliceTypeName);
+  llvm::StructType *sliceStructType;
+  if (it != sliceTypes_.end()) {
+    sliceStructType = it->second;
+  } else {
+    // 生成元素类型
+    llvm::Type *elementType = llvmElementType;
+
+    // 创建切片类型的结构体
+    std::vector<llvm::Type *> fields;
+    fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
+    fields.push_back(llvm::Type::getInt32Ty(context()));      // len
+    sliceStructType =
+        llvm::StructType::create(context(), fields, sliceTypeName);
+
+    // 存储到 sliceTypes_ 映射中
+    sliceTypes_[sliceTypeName] = sliceStructType;
+  }
+
+  // 在堆上分配数组
+  // 计算数组大小（以字节为单位）
+  llvm::Value *arraySizeValue = llvm::ConstantInt::get(
+      llvm::Type::getInt32Ty(context()), static_cast<uint32_t>(arraySize));
+
+  // 对于 int32 类型，大小是 4 字节
+  llvm::Value *elementSizeValue =
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 4);
+  llvm::Value *totalSizeValue =
+      builder()->CreateMul(arraySizeValue, elementSizeValue, "total.size");
+
+  // 调用 malloc 分配内存
+  llvm::FunctionType *mallocType =
+      llvm::FunctionType::get(llvm::PointerType::get(context(), 0),
+                              {llvm::Type::getInt32Ty(context())}, false);
+  llvm::Function *mallocFunc = module()->getFunction("malloc");
+  if (!mallocFunc) {
+    mallocFunc = llvm::Function::Create(
+        mallocType, llvm::Function::ExternalLinkage, "malloc", module());
+  }
+  llvm::Value *arrayAlloca =
+      builder()->CreateCall(mallocFunc, {totalSizeValue}, "array");
+
+  // 将 void* 转换为元素类型的指针
+  arrayAlloca = builder()->CreatePointerCast(
+      arrayAlloca, llvm::PointerType::get(llvmElementType, 0), "array.cast");
+
+  // 初始化数组元素
+  for (size_t i = 0; i < arraySize; ++i) {
+    if (i >= arrayInitExpr->elements.size()) {
+      // 防止越界访问
+      break;
+    }
+
+    // 生成元素表达式
+    // 注意：这里不能移动原始元素，因为后面可能还要使用
+    // 所以我们先克隆一个副本
+    auto elementCopy = arrayInitExpr->elements[i]->clone();
+    llvm::Value *elementValue = generateExpression(std::move(elementCopy));
+    if (!elementValue) {
+      // 如果元素生成失败，使用默认值
+      if (llvmElementType->isIntegerTy()) {
+        elementValue = llvm::ConstantInt::get(llvmElementType, 0);
+      } else if (llvmElementType->isFloatingPointTy()) {
+        elementValue = llvm::ConstantFP::get(llvmElementType, 0.0);
+      } else {
+        continue;
+      }
+    }
+
+    // 确保元素类型匹配
+    if (elementValue->getType() != llvmElementType) {
+      // 尝试类型转换
+      if (llvmElementType->isIntegerTy() &&
+          elementValue->getType()->isFloatingPointTy()) {
+        elementValue =
+            builder()->CreateFPToSI(elementValue, llvmElementType, "casttmp");
+      } else if (llvmElementType->isFloatingPointTy() &&
+                 elementValue->getType()->isIntegerTy()) {
+        elementValue =
+            builder()->CreateSIToFP(elementValue, llvmElementType, "casttmp");
+      } else if (llvmElementType->isPointerTy() &&
+                 elementValue->getType()->isPointerTy()) {
+        elementValue = builder()->CreatePointerCast(elementValue,
+                                                    llvmElementType, "casttmp");
+      } else {
+        // 类型不匹配，使用默认值
+        if (llvmElementType->isIntegerTy()) {
+          elementValue = llvm::ConstantInt::get(llvmElementType, 0);
+        } else if (llvmElementType->isFloatingPointTy()) {
+          elementValue = llvm::ConstantFP::get(llvmElementType, 0.0);
+        } else {
+          continue;
+        }
+      }
+    }
+
+    // 计算元素的索引
+    llvm::Value *index = llvm::ConstantInt::get(
+        llvm::Type::getInt32Ty(context()), static_cast<uint32_t>(i));
+
+    // 获取元素的地址
+    llvm::Value *elementPtr = builder()->CreateGEP(llvmElementType, arrayAlloca,
+                                                   index, "element.ptr");
+
+    // 存储元素值
+    builder()->CreateStore(elementValue, elementPtr);
+  }
+
+  // 在栈上分配切片结构体
+  llvm::AllocaInst *sliceAlloca =
+      builder()->CreateAlloca(sliceStructType, nullptr, "slice");
+
+  // 存储 ptr 字段
+  llvm::Value *ptrFieldPtr =
+      builder()->CreateStructGEP(sliceStructType, sliceAlloca, 0, "slice.ptr");
+  builder()->CreateStore(arrayAlloca, ptrFieldPtr);
+
+  // 存储 len 字段
+  llvm::Value *lenFieldPtr =
+      builder()->CreateStructGEP(sliceStructType, sliceAlloca, 1, "slice.len");
+  llvm::Value *lenValue = llvm::ConstantInt::get(
+      llvm::Type::getInt32Ty(context()), static_cast<uint32_t>(arraySize));
+  builder()->CreateStore(lenValue, lenFieldPtr);
+
+  // 返回切片结构体
+  return sliceAlloca;
 }
 
 llvm::Value *LLVMCodeGenerator::generateStructInitExpr(
     std::unique_ptr<ast::StructInitExpr> structInitExpr) {
-  // TODO: Implement struct init expression generation
-  return nullptr;
+  // 检查是否有类型信息
+  if (!structInitExpr->type) {
+    return nullptr;
+  }
+
+  // 生成结构体类型
+  llvm::Type *llvmType = generateType(structInitExpr->type.get());
+  if (!llvmType) {
+    return nullptr;
+  }
+
+  // 检查是否是结构体类型
+  if (!llvmType->isStructTy()) {
+    return nullptr;
+  }
+
+  // 分配结构体实例
+  llvm::Value *structPtr =
+      builder()->CreateAlloca(llvmType, nullptr, "struct.ptr");
+
+  // 生成每个字段的表达式并存储到结构体中
+  for (auto &field : structInitExpr->fields) {
+    const std::string &fieldName = field.first;
+    std::unique_ptr<ast::Expression> fieldExpr =
+        std::move(const_cast<std::unique_ptr<ast::Expression> &>(field.second));
+
+    // 生成字段表达式
+    llvm::Value *fieldValue = generateExpression(std::move(fieldExpr));
+    if (!fieldValue) {
+      return nullptr;
+    }
+
+    // 查找字段在结构体中的索引
+    // 注意：这里简化处理，假设字段名与结构体中的字段顺序一致
+    // 实际实现需要根据结构体的字段信息进行查找
+    unsigned int fieldIndex = 0; // 临时实现，需要根据实际情况修改
+
+    // 计算字段地址
+    llvm::Value *fieldPtr = builder()->CreateStructGEP(llvmType, structPtr,
+                                                       fieldIndex, "field.ptr");
+
+    // 存储字段值
+    builder()->CreateStore(fieldValue, fieldPtr);
+  }
+
+  return structPtr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateTupleExpr(
     std::unique_ptr<ast::TupleExpr> tupleExpr) {
-  // TODO: Implement tuple expression generation
-  return nullptr;
+  // 检查元组是否为空
+  if (tupleExpr->elements.empty()) {
+    return nullptr;
+  }
+
+  // 生成每个元素的表达式
+  std::vector<llvm::Value *> elementValues;
+  std::vector<llvm::Type *> elementTypes;
+
+  for (auto &element : tupleExpr->elements) {
+    // 生成元素表达式
+    llvm::Value *elementValue = generateExpression(std::move(element));
+    if (!elementValue) {
+      return nullptr;
+    }
+    elementValues.push_back(elementValue);
+    elementTypes.push_back(elementValue->getType());
+  }
+
+  // 创建元组类型（结构体类型）
+  llvm::StructType *tupleType =
+      llvm::StructType::create(context(), elementTypes, "Tuple");
+
+  // 分配元组实例
+  llvm::Value *tuplePtr =
+      builder()->CreateAlloca(tupleType, nullptr, "tuple.ptr");
+
+  // 存储每个元素到元组中
+  for (unsigned int i = 0; i < elementValues.size(); i++) {
+    // 计算元素地址
+    llvm::Value *elementPtr =
+        builder()->CreateStructGEP(tupleType, tuplePtr, i, "element.ptr");
+    // 存储元素值
+    builder()->CreateStore(elementValues[i], elementPtr);
+  }
+
+  return tuplePtr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
     std::unique_ptr<ast::LambdaExpr> lambdaExpr) {
-  // TODO: Implement lambda expression generation
-  return nullptr;
+  // 生成参数类型
+  std::vector<llvm::Type *> paramTypes;
+  for (const auto &param : lambdaExpr->params) {
+    // 生成参数类型
+    llvm::Type *paramType = generateType(param->type.get());
+    if (!paramType) {
+      return nullptr;
+    }
+    paramTypes.push_back(paramType);
+  }
+
+  // 假设返回类型为 void
+  // 实际实现需要根据函数体的返回值类型进行推断
+  llvm::Type *returnType = llvm::Type::getVoidTy(context());
+
+  // 创建函数类型
+  llvm::FunctionType *functionType =
+      llvm::FunctionType::get(returnType, paramTypes, false);
+
+  // 创建函数
+  llvm::Function *lambdaFunction = llvm::Function::Create(
+      functionType, llvm::Function::InternalLinkage, "lambda", module());
+
+  // 设置参数名称
+  unsigned int i = 0;
+  for (auto &arg : lambdaFunction->args()) {
+    arg.setName(lambdaExpr->params[i]->name);
+    i++;
+  }
+
+  // 保存当前的插入点
+  llvm::BasicBlock::iterator currentInsertPoint = builder()->GetInsertPoint();
+
+  // 创建函数体的基本块
+  llvm::BasicBlock *entryBlock =
+      llvm::BasicBlock::Create(context(), "entry", lambdaFunction);
+  builder()->SetInsertPoint(entryBlock);
+
+  // 处理捕获的变量
+  // 注意：这里简化处理，实际实现需要根据捕获方式（值捕获或引用捕获）进行处理
+  for (const auto &capture : lambdaExpr->captures) {
+    // 查找捕获的变量
+    auto it = namedValues_.find(capture.name);
+    if (it != namedValues_.end()) {
+      // 将捕获的变量添加到 lambda 函数的命名值中
+      // 注意：这里简化处理，实际实现需要根据捕获方式进行处理
+      namedValues_[capture.name] = it->second;
+    }
+  }
+
+  // 生成函数体
+  generateStatement(std::move(lambdaExpr->body));
+
+  // 如果函数体没有返回语句，添加一个默认的返回语句
+  if (!entryBlock->getTerminator()) {
+    builder()->CreateRetVoid();
+  }
+
+  // 恢复插入点到之前的位置
+  builder()->SetInsertPoint(currentInsertPoint);
+
+  // 创建函数指针
+  llvm::Value *functionPtr = llvm::ConstantExpr::getBitCast(
+      lambdaFunction, llvm::PointerType::get(functionType, 0));
+
+  return functionPtr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateReflectionExpr(
     std::unique_ptr<ast::ReflectionExpr> reflectionExpr) {
-  // TODO: Implement reflection expression generation
+  // 反射表达式在 LLVM 中比较复杂，需要更多的上下文信息
+  // 暂时返回 nullptr，实际实现需要根据反射的具体语义进行处理
   return nullptr;
 }
 
@@ -2548,6 +3040,33 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
     } else if (typeName == "void") {
       return llvm::Type::getVoidTy(context());
     }
+  } else if (auto *sliceType = dynamic_cast<ast::SliceType *>(type)) {
+    // 生成切片类型，类似于 LiteralView，包含 ptr 和 len 两个字段
+    std::string sliceTypeName = "Slice_" + sliceType->baseType->toString();
+
+    // 检查是否已经存在该切片类型
+    auto it = sliceTypes_.find(sliceTypeName);
+    if (it != sliceTypes_.end()) {
+      return it->second;
+    }
+
+    // 生成元素类型
+    llvm::Type *elementType = generateType(sliceType->baseType.get());
+    if (!elementType) {
+      elementType = llvm::Type::getInt32Ty(context());
+    }
+
+    // 创建切片类型的结构体
+    std::vector<llvm::Type *> fields;
+    fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
+    fields.push_back(llvm::Type::getInt32Ty(context()));      // len
+    llvm::StructType *sliceStructType =
+        llvm::StructType::create(context(), fields, sliceTypeName);
+
+    // 存储到 sliceTypes_ 映射中
+    sliceTypes_[sliceTypeName] = sliceStructType;
+
+    return sliceStructType;
   }
 
   // 默认返回i32类型
@@ -2570,32 +3089,231 @@ llvm::Type *LLVMCodeGenerator::getLiteralViewType() {
 // Additional missing function implementations
 llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     std::unique_ptr<ast::MemberExpr> memberExpr) {
-  // TODO: Implement member expression generation
+  // 生成对象表达式
+  llvm::Value *object = generateExpression(std::move(memberExpr->object));
+  if (!object) {
+    return nullptr;
+  }
+
+  std::string memberName = memberExpr->member;
+
+  // 检查是否是切片类型的属性访问
+  if (memberName == "len" || memberName == "ptr") {
+    // 生成切片类型名称，与 generateArrayInitExpr 函数保持一致
+    std::string sliceTypeName =
+        "Slice_" + getLLVMTypeName(llvm::Type::getInt32Ty(context()));
+
+    // 检查是否已经存在该切片类型
+    auto it = sliceTypes_.find(sliceTypeName);
+    llvm::StructType *sliceStructType;
+    if (it != sliceTypes_.end()) {
+      sliceStructType = it->second;
+    } else {
+      // 生成元素类型
+      llvm::Type *elementType = llvm::Type::getInt32Ty(context());
+
+      // 创建切片类型的结构体
+      std::vector<llvm::Type *> fields;
+      fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
+      fields.push_back(llvm::Type::getInt32Ty(context()));      // len
+      sliceStructType =
+          llvm::StructType::create(context(), fields, sliceTypeName);
+
+      // 存储到 sliceTypes_ 映射中
+      sliceTypes_[sliceTypeName] = sliceStructType;
+    }
+
+    if (memberName == "len") {
+      // 使用 CreateStructGEP 访问 len 字段（索引为 1）
+      llvm::Value *lenFieldPtr =
+          builder()->CreateStructGEP(sliceStructType, object, 1, "slice.len");
+      // 加载 len 字段的值
+      return builder()->CreateLoad(builder()->getInt32Ty(), lenFieldPtr,
+                                   "slice.len");
+    } else if (memberName == "ptr") {
+      // 使用 CreateStructGEP 访问 ptr 字段（索引为 0）
+      llvm::Value *ptrFieldPtr =
+          builder()->CreateStructGEP(sliceStructType, object, 0, "slice.ptr");
+      // 加载 ptr 字段的值
+      // 使用与 generateArrayInitExpr 函数相同的指针类型
+      llvm::Type *ptrType =
+          llvm::PointerType::get(llvm::Type::getInt32Ty(context()), 0);
+      return builder()->CreateLoad(ptrType, ptrFieldPtr, "slice.ptr");
+    }
+  }
+
+  // 处理其他类型的成员访问
+  if (object->getType()->isStructTy()) {
+    llvm::StructType *structType =
+        dyn_cast<llvm::StructType>(object->getType());
+    if (structType) {
+      std::string structName = structType->getName().str();
+
+      // 检查是否是切片类型
+      if (structName.find("Slice_") == 0) {
+        // 切片类型的属性访问
+        if (memberName == "len") {
+          // 返回 len 字段（索引 1）
+          return builder()->CreateExtractValue(object, 1, "slice.len");
+        } else if (memberName == "ptr") {
+          // 返回 ptr 字段（索引 0）
+          return builder()->CreateExtractValue(object, 0, "slice.ptr");
+        }
+      }
+    }
+  }
+
+  // 检查 object 是否为指针类型
+  if (object->getType()->isPointerTy()) {
+    // 指针类型，使用 -> 操作符
+    // 对于成员变量，需要解引用指针
+    // 对于成员函数，直接传递指针作为 this 参数
+
+    // 这里简化处理，假设是成员函数调用
+    // 实际应该根据成员类型判断
+
+    // 构建函数名，格式为 "ClassName_MemberName"
+    std::string className = "Object";
+    std::string funcName = className + "_" + memberName;
+
+    // 查找函数
+    auto it = functions_.find(funcName);
+    if (it != functions_.end()) {
+      llvm::Function *func = it->second;
+      // 调用成员函数，传入 this 指针
+      return builder()->CreateCall(func, {object});
+    }
+  } else {
+    // 值类型，使用 . 操作符
+    // 对于成员变量，直接访问
+    // 对于成员函数，需要取地址
+
+    // 这里简化处理，假设是成员函数调用
+    // 实际应该根据成员类型判断
+
+    // 构建函数名，格式为 "ClassName_MemberName"
+    std::string className = "Object";
+    std::string funcName = className + "_" + memberName;
+
+    // 查找函数
+    auto it = functions_.find(funcName);
+    if (it != functions_.end()) {
+      llvm::Function *func = it->second;
+      // 取对象地址作为 this 指针
+      llvm::Value *objectPtr = builder()->CreatePointerCast(
+          object, llvm::PointerType::get(object->getType(), 0));
+      // 调用成员函数
+      return builder()->CreateCall(func, {objectPtr});
+    }
+  }
+
   return nullptr;
 }
 
 llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     std::unique_ptr<ast::SubscriptExpr> subscriptExpr, bool isLValue) {
-  // TODO: Implement subscript expression generation
-  return nullptr;
-}
+  // 生成数组/切片表达式
+  llvm::Value *array = generateExpression(std::move(subscriptExpr->object));
+  if (!array) {
+    return nullptr;
+  }
 
-llvm::Value *
-LLVMCodeGenerator::generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr) {
-  // TODO: Implement this expression generation
-  return nullptr;
+  // 生成索引表达式
+  llvm::Value *index = generateExpression(std::move(subscriptExpr->index));
+  if (!index) {
+    return nullptr;
+  }
+
+  // 确保索引类型是整数
+  if (!index->getType()->isIntegerTy()) {
+    if (index->getType()->isFloatingPointTy()) {
+      // 浮点数转换为整数
+      index = builder()->CreateFPToSI(index, llvm::Type::getInt32Ty(context()),
+                                      "index.cast");
+    } else {
+      // 其他类型转换为整数
+      index = builder()->CreatePointerCast(
+          index, llvm::Type::getInt32Ty(context()), "index.cast");
+    }
+  }
+
+  // 检查是否是切片类型
+  // 对于切片类型，我们直接处理，因为我们知道它是一个结构体
+  // 假设 object 是指向切片结构体的指针
+  // 生成切片类型名称
+  std::string sliceTypeName =
+      "Slice_" + getLLVMTypeName(llvm::Type::getInt32Ty(context()));
+
+  // 检查是否已经存在该切片类型
+  auto it = sliceTypes_.find(sliceTypeName);
+  llvm::StructType *sliceStructType;
+  if (it != sliceTypes_.end()) {
+    sliceStructType = it->second;
+  } else {
+    // 生成元素类型
+    llvm::Type *elementType = llvm::Type::getInt32Ty(context());
+
+    // 创建切片类型的结构体
+    std::vector<llvm::Type *> fields;
+    fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
+    fields.push_back(llvm::Type::getInt32Ty(context()));      // len
+    sliceStructType =
+        llvm::StructType::create(context(), fields, sliceTypeName);
+
+    // 存储到 sliceTypes_ 映射中
+    sliceTypes_[sliceTypeName] = sliceStructType;
+  }
+
+  // 获取切片的 ptr 字段
+  llvm::Value *ptrFieldPtr =
+      builder()->CreateStructGEP(sliceStructType, array, 0, "slice.ptr");
+  // 加载 ptr 字段的值
+  // 使用与 generateArrayInitExpr 函数相同的指针类型
+  llvm::Type *ptrType =
+      llvm::PointerType::get(llvm::Type::getInt32Ty(context()), 0);
+  llvm::Value *ptr = builder()->CreateLoad(ptrType, ptrFieldPtr, "slice.ptr");
+
+  // 获取切片的 len 字段
+  llvm::Value *lenFieldPtr =
+      builder()->CreateStructGEP(sliceStructType, array, 1, "slice.len");
+  llvm::Value *len =
+      builder()->CreateLoad(builder()->getInt32Ty(), lenFieldPtr, "slice.len");
+
+  // 假设元素类型是 int32
+  llvm::Type *elementType = builder()->getInt32Ty();
+
+  // 计算元素地址
+  // 注意：ptr 已经是指向元素的指针，所以我们直接使用它
+  llvm::Value *elementPtr =
+      builder()->CreateGEP(elementType, ptr, index, "element.ptr");
+
+  if (isLValue) {
+    // 返回元素地址作为左值
+    return elementPtr;
+  } else {
+    // 加载元素值作为右值
+    return builder()->CreateLoad(elementType, elementPtr, "element.value");
+  }
 }
 
 llvm::Value *
 LLVMCodeGenerator::generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr) {
-  // TODO: Implement self expression generation
-  return nullptr;
-}
+  // 获取当前函数
+  if (!currentFunction_) {
+    return nullptr;
+  }
 
-llvm::Value *LLVMCodeGenerator::generateSuperExpr(
-    std::unique_ptr<ast::SuperExpr> superExpr) {
-  // TODO: Implement super expression generation
-  return nullptr;
+  // 检查当前函数是否是成员函数（是否有 self 指针参数）
+  if (currentFunction_->arg_size() == 0) {
+    // 不是成员函数，没有 self 指针
+    return nullptr;
+  }
+
+  // 获取第一个参数（假设是 self 指针）
+  auto argIt = currentFunction_->arg_begin();
+  llvm::Value *selfPtr = argIt;
+
+  return selfPtr;
 }
 
 llvm::Value *
@@ -2647,6 +3365,29 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     return nullptr;
   }
 
+  // 检查是否为指针类型
+  if (!ptr->getType()->isPointerTy()) {
+    // 不是指针类型，直接返回
+    return nullptr;
+  }
+
+  // 检查是否为类类型指针，需要调用析构函数
+  // 这里简化处理，假设所有指针都是类类型
+  // 实际应该根据类型信息判断
+
+  // 查找析构函数
+  // 假设析构函数命名为 `ClassName_~ClassName`
+  // 这里简化处理，使用默认的析构函数名
+  std::string destructorName = "~default";
+
+  // 尝试查找析构函数
+  auto it = functions_.find(destructorName);
+  if (it != functions_.end()) {
+    llvm::Function *destructor = it->second;
+    // 调用析构函数，传入 this 指针
+    builder()->CreateCall(destructor, {ptr});
+  }
+
   // 获取 free 函数
   llvm::FunctionType *freeType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context()),
@@ -2667,8 +3408,91 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
 
 llvm::Value *
 LLVMCodeGenerator::generateFoldExpr(std::unique_ptr<ast::FoldExpr> foldExpr) {
-  // TODO: Implement fold expression generation
+  // 生成要折叠的表达式
+  llvm::Value *exprValue = generateExpression(std::move(foldExpr->expr));
+  if (!exprValue) {
+    return nullptr;
+  }
+
+  // 生成右侧表达式（如果有）
+  llvm::Value *rightValue = nullptr;
+  if (foldExpr->right) {
+    rightValue = generateExpression(std::move(foldExpr->right));
+    if (!rightValue) {
+      return nullptr;
+    }
+  }
+
+  // 折叠表达式的实现比较复杂，需要根据折叠类型和操作符进行处理
+  // 暂时返回 nullptr，实际实现需要根据具体语义进行处理
   return nullptr;
+}
+
+// 辅助函数：获取 AST 类型的名称
+std::string LLVMCodeGenerator::getTypeName(ast::Type *type) {
+  if (!type) {
+    return "int";
+  }
+
+  if (auto *primitiveType = dynamic_cast<ast::PrimitiveType *>(type)) {
+    switch (primitiveType->kind) {
+    case ast::PrimitiveType::Kind::Int:
+      return "int";
+    case ast::PrimitiveType::Kind::Double:
+      return "double";
+    case ast::PrimitiveType::Kind::Float:
+      return "float";
+    case ast::PrimitiveType::Kind::Bool:
+      return "bool";
+    case ast::PrimitiveType::Kind::Byte:
+      return "byte";
+    case ast::PrimitiveType::Kind::Char:
+      return "char";
+    case ast::PrimitiveType::Kind::Void:
+      return "void";
+    default:
+      return "int";
+    }
+  } else if (auto *namedType = dynamic_cast<ast::NamedType *>(type)) {
+    return namedType->name;
+  } else if (auto *sliceType = dynamic_cast<ast::SliceType *>(type)) {
+    return "Slice_" + getTypeName(sliceType->baseType.get());
+  }
+
+  return "int";
+}
+
+// 辅助函数：获取 LLVM 类型的名称
+std::string LLVMCodeGenerator::getLLVMTypeName(llvm::Type *type) {
+  if (!type) {
+    return "int";
+  }
+
+  if (type->isIntegerTy()) {
+    return "int";
+  } else if (type->isDoubleTy()) {
+    return "double";
+  } else if (type->isFloatTy()) {
+    return "float";
+  } else if (type->isPointerTy()) {
+    return "ptr";
+  } else if (type->isStructTy()) {
+    return "struct";
+  } else if (type->isArrayTy()) {
+    return "array";
+  }
+
+  return "int";
+}
+
+// 辅助函数：获取函数签名
+std::string LLVMCodeGenerator::mangleFunctionName(
+    const std::string &funcName, const std::vector<ast::Type *> &paramTypes) {
+  std::string uniqueName = funcName;
+  for (auto *paramType : paramTypes) {
+    uniqueName += "_" + getTypeName(paramType);
+  }
+  return uniqueName;
 }
 
 } // namespace llvm_codegen

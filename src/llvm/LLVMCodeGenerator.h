@@ -150,6 +150,7 @@ private:
   // 辅助函数
   llvm::Type *getLiteralViewType();
   std::string getTypeName(ast::Type *type);
+  std::string getLLVMTypeName(llvm::Type *type);
   std::string mangleFunctionName(const std::string &funcName,
                                  const std::vector<ast::Type *> &paramTypes);
 
@@ -165,6 +166,7 @@ private:
 
   // 类型映射
   std::unordered_map<std::string, llvm::StructType *> structTypes_;
+  std::unordered_map<std::string, llvm::StructType *> sliceTypes_;
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
   std::unordered_map<std::string, llvm::Function *> functions_;
