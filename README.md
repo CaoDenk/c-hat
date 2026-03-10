@@ -373,9 +373,11 @@ tests/semantic/Debug/semantic_catch2_test.exe
 - [x] 变量声明和函数代码生成
 - [x] 类系统代码生成
 - [x] defer 机制完整实现（收集和执行）
-- [ ] 异常处理 LLVM 代码生成（invoke/landingpad）
-- [ ] 构造函数和析构函数代码生成
-- [ ] new/delete 代码生成
+- [x] 切片功能实现（属性访问和下标访问）
+- [x] 表达式生成函数实现（Self、Expansion、StructInit、Tuple、Lambda、Reflection、Fold）
+- [x] 异常处理 LLVM 代码生成（invoke/landingpad）
+- [x] 构造函数和析构函数代码生成
+- [x] new/delete 代码生成
 
 ### 第四阶段：优化 📋
 - [ ] 基础优化
@@ -384,6 +386,14 @@ tests/semantic/Debug/semantic_catch2_test.exe
 - [ ] 优化反馈
 
 ## 最近更新
+
+### 2026-03-10
+- ✅ 实现切片功能（属性访问和下标访问）
+- ✅ 实现表达式生成函数（Self、Expansion、StructInit、Tuple、Lambda、Reflection、Fold）
+- ✅ 修复编译错误，确保代码能够正常构建
+- ✅ 实现异常处理 LLVM 代码生成（使用 invoke/landingpad 指令）
+- ✅ 实现构造函数和析构函数代码生成
+- ✅ 实现 new/delete 代码生成
 
 ### 2026-02-18
 - ✅ 完善类系统测试（访问修饰符）

@@ -50,6 +50,9 @@ public:
   // 检查是否为 LiteralView 类型
   virtual bool isLiteralView() const { return false; }
 
+  // 检查是否为引用类型
+  virtual bool isReference() const { return false; }
+
   // 检查是否为只读类型
   virtual bool isReadonly() const { return false; }
 

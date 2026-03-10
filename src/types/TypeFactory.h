@@ -10,6 +10,7 @@
 #include "ReadonlyType.h"
 #include "RectangularArrayType.h"
 #include "RectangularSliceType.h"
+#include "ReferenceType.h"
 #include "SliceType.h"
 #include "TupleType.h"
 #include <memory>
@@ -67,6 +68,9 @@ public:
 
   // 获取只读类型
   static std::shared_ptr<Type> getReadonlyType(std::shared_ptr<Type> baseType);
+
+  // 获取引用类型
+  static std::shared_ptr<Type> getReferenceType(std::shared_ptr<Type> baseType);
 };
 
 } // namespace types

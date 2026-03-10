@@ -40,9 +40,16 @@ public:
     return generator_.emitAssemblyFile(filename);
   }
 
+  // 循环优化
+  void optimizeLoops();
+  bool isLoopInvariant(llvm::Instruction *inst, llvm::BasicBlock *loopHeader);
+
+  // 函数内联优化
+  void optimizeFunctionInlining();
+
 private:
   LLVMIRGenerator generator_;
-  
+
   bool currentFunctionHasTry_ = false;
   llvm::GlobalVariable *currentJmpBuf_ = nullptr;
   llvm::StructType *jmpBufType_ = nullptr;
@@ -95,7 +102,8 @@ private:
   llvm::Value *generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
   llvm::Value *
   generateContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
-  llvm::Value *generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);// 异常处理
+  llvm::Value *
+  generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt); // 异常处理
   llvm::Value *generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
   llvm::Value *generateThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
   void checkExceptionAfterCall();
@@ -170,6 +178,19 @@ private:
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
   std::unordered_map<std::string, llvm::Function *> functions_;
+
+  // 类型缓存，用于提高代码生成效率
+  std::unordered_map<ast::Type *, llvm::Type *> typeCache_;
+
+  // 错误处理
+  int errorCount_ = 0;
+  bool hasErrors_ = false;
+
+  // 错误处理方法
+  void error(const std::string &message, ast::Node *node = nullptr);
+  void warning(const std::string &message, ast::Node *node = nullptr);
+  bool hasErrors() const { return hasErrors_; }
+  int getErrorCount() const { return errorCount_; }
 
   // 延迟变量
   struct LateVariableInfo {

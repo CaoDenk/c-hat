@@ -20,7 +20,14 @@ bool SliceType::isCompatibleWithImpl(const Type &other) const {
 }
 
 bool SliceType::isSubtypeOfImpl(const Type &other) const {
-  return isCompatibleWithImpl(other);
+  // 检查是否是兼容的切片类型
+  if (other.isSlice()) {
+    const auto &otherSlice = static_cast<const SliceType &>(other);
+    return elementType->isSubtypeOf(*otherSlice.elementType);
+  }
+  
+  // 检查是否是兼容的数组类型（切片可以转换为数组吗？不，数组可以转换为切片）
+  return false;
 }
 
 } // namespace types

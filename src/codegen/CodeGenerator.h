@@ -94,6 +94,9 @@ private:
   // 生成元组表达式代码
   std::string generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
 
+  // 生成数组初始化表达式代码
+  std::string generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
+
   // 生成类型代码
   std::string generateType(std::unique_ptr<ast::Type> type);
 

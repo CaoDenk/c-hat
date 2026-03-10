@@ -3,6 +3,7 @@
 #include "semantic/SemanticAnalyzer.h"
 #include "llvm/LLVMCodeGenerator.h"
 #include <argparse/argparse.hpp>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -10,18 +11,6 @@
 #include <print>
 #include <string>
 #include <vector>
-
-// LLD headers
-#include <lld/Common/Driver.h>
-#include <llvm/ADT/ArrayRef.h>
-#include <llvm/Support/raw_ostream.h>
-
-// Declare that we use the COFF driver
-LLD_HAS_DRIVER(coff);
-LLD_HAS_DRIVER(elf);
-LLD_HAS_DRIVER(mingw);
-LLD_HAS_DRIVER(macho);
-LLD_HAS_DRIVER(wasm);
 
 namespace fs = std::filesystem;
 
@@ -261,27 +250,39 @@ int main(int argc, char *argv[]) {
               lib); // 直接使用用户指定的库文件名，不添加 .lib 后缀
         }
 
-        // 3. 使用 LLD 库进行链接
-        std::println("\nLinking with LLD (library)...");
+        // 3. 使用系统链接器进行链接
+        std::println("\nLinking with system linker...");
 
-        // 构建参数数组
-        std::vector<const char *> args;
-        for (const auto &s : argsStr) {
-          args.push_back(s.c_str());
+        // 构建链接命令
+        std::string linkCommand = "link.exe";
+        linkCommand += " /OUT:" + exeOutputFile;
+        linkCommand += " /DEFAULTLIB:libcmt";
+        linkCommand += " /DEFAULTLIB:oldnames";
+
+        // 添加库文件路径
+        for (const auto &path : libPaths) {
+          linkCommand += " /LIBPATH:" + path;
         }
 
-        // 定义驱动程序
-        std::vector<lld::DriverDef> drivers = LLD_ALL_DRIVERS;
+        linkCommand += " " + objOutputFile;
 
-        // 调用 LLD main
-        lld::Result result =
-            lld::lldMain(llvm::ArrayRef<const char *>(args.data(), args.size()),
-                         llvm::outs(), llvm::errs(), drivers);
+        // 添加用户指定的 C 标准库文件
+        if (!cLibFile.empty()) {
+          linkCommand += " " + cLibFile;
+        }
 
-        if (result.retCode == 0) {
+        // 添加用户指定的库文件
+        for (const auto &lib : libraries) {
+          linkCommand += " " + lib;
+        }
+
+        // 执行链接命令
+        int linkResult = std::system(linkCommand.c_str());
+
+        if (linkResult == 0) {
           std::println("\n✓ Executable generated: {}", exeOutputFile);
         } else {
-          std::println("\n✗ Linking failed with code: {}", result.retCode);
+          std::println("\n✗ Linking failed with code: {}", linkResult);
         }
       }
     }

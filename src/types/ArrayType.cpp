@@ -26,7 +26,13 @@ bool ArrayType::isSubtypeOfImpl(const Type &other) const {
     const auto &otherSlice = static_cast<const SliceType &>(other);
     return elementType->isSubtypeOf(*otherSlice.getElementType());
   }
-  return isCompatibleWithImpl(other);
+  
+  if (other.isArray()) {
+    const auto &otherArray = static_cast<const ArrayType &>(other);
+    return size == otherArray.size && elementType->isSubtypeOf(*otherArray.elementType);
+  }
+  
+  return false;
 }
 
 } // namespace types

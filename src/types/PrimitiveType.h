@@ -43,6 +43,15 @@ public:
   // 获取类型枚举值
   Kind getKind() const { return kind; }
 
+  // 检查是否为整数类型
+  bool isInteger() const;
+
+  // 检查是否为浮点数类型
+  bool isFloatingPoint() const;
+
+  // 获取类型大小（以字节为单位）
+  size_t getSize() const;
+
 protected:
   // 具体类型的兼容性检查实现
   bool isCompatibleWithImpl(const Type &other) const override;

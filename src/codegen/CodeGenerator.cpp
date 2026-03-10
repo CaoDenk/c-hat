@@ -236,6 +236,9 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::TupleExpr:
     return generateTupleExpr(std::unique_ptr<ast::TupleExpr>(
         static_cast<ast::TupleExpr *>(expression.release())));
+  case ast::NodeType::ArrayInitExpr:
+    return generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr>(
+        static_cast<ast::ArrayInitExpr *>(expression.release())));
   default:
     return "";
   }
@@ -433,6 +436,12 @@ std::string CodeGenerator::generateType(std::unique_ptr<ast::Type> type) {
         static_cast<ast::Type *>(sliceType->baseType.release())));
     result += "[]";
     return result;
+  } else if (auto *referenceType =
+                 dynamic_cast<ast::ReferenceType *>(type.get())) {
+    std::string result = generateType(std::unique_ptr<ast::Type>(
+        static_cast<ast::Type *>(referenceType->baseType.release())));
+    result += "&";
+    return result;
   }
 
   return "unknown";
@@ -547,6 +556,19 @@ CodeGenerator::generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr) {
     code += generateExpression(std::move(tupleExpr->elements[i]));
   }
   code += ")";
+  return code;
+}
+
+std::string CodeGenerator::generateArrayInitExpr(
+    std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr) {
+  std::string code = "{";
+  for (size_t i = 0; i < arrayInitExpr->elements.size(); ++i) {
+    if (i > 0) {
+      code += ", ";
+    }
+    code += generateExpression(std::move(arrayInitExpr->elements[i]));
+  }
+  code += "}";
   return code;
 }
 
