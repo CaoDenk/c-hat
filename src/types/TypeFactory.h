@@ -26,6 +26,9 @@ public:
   // 获取基本类型
   static std::shared_ptr<Type> getPrimitiveType(PrimitiveType::Kind kind);
 
+  // 根据名称获取基本类型
+  static std::shared_ptr<Type> getPrimitiveTypeByName(const std::string &name);
+
   // 获取数组类型
   static std::shared_ptr<Type> getArrayType(std::shared_ptr<Type> elementType,
                                             size_t size);
@@ -53,6 +56,9 @@ public:
 
   // 获取类类型
   static std::shared_ptr<Type> getClassType(const std::string &name);
+
+  // 获取接口类型
+  static std::shared_ptr<Type> getInterfaceType(const std::string &name);
 
   // 获取泛型类型
   static std::shared_ptr<Type>

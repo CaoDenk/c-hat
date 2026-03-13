@@ -1924,8 +1924,23 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
   // 计算数组大小
   size_t size = arrayInitExpr->elements.size();
 
+  // 分析第一个元素的类型
+  llvm::Type *elementType = nullptr;
+  if (size > 0) {
+    // 复制第一个元素用于类型分析
+    auto firstElement = arrayInitExpr->elements[0]->clone();
+    llvm::Value *firstValue = generateExpression(std::move(firstElement));
+    if (firstValue) {
+      elementType = firstValue->getType();
+    }
+  }
+
+  // 如果无法确定元素类型，默认使用 int32
+  if (!elementType) {
+    elementType = llvm::Type::getInt32Ty(context());
+  }
+
   // 创建数组类型
-  llvm::Type *elementType = llvm::Type::getInt32Ty(context());
   llvm::ArrayType *arrayType = llvm::ArrayType::get(elementType, size);
 
   // 分配数组
@@ -1934,14 +1949,16 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
 
   // 初始化元素
   for (size_t i = 0; i < size; ++i) {
-    llvm::Value *element =
-        generateExpression(std::move(arrayInitExpr->elements[i]));
-    llvm::Value *indices[] = {
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)};
-    llvm::Value *ptr =
-        builder()->CreateGEP(arrayType, alloca, indices, "element_ptr");
-    builder()->CreateStore(element, ptr);
+    auto element = arrayInitExpr->elements[i]->clone();
+    llvm::Value *elementValue = generateExpression(std::move(element));
+    if (elementValue) {
+      llvm::Value *indices[] = {
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), static_cast<int>(i))};
+      llvm::Value *ptr =
+          builder()->CreateGEP(arrayType, alloca, indices, "element_ptr");
+      builder()->CreateStore(elementValue, ptr);
+    }
   }
 
   return alloca;

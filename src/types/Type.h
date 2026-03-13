@@ -6,6 +6,9 @@
 namespace c_hat {
 namespace types {
 
+// 访问控制修饰符
+enum class AccessModifier { Public, Private, Protected };
+
 // 类型基类
 class Type {
 public:
@@ -37,6 +40,9 @@ public:
 
   // 检查是否为类类型
   virtual bool isClass() const { return false; }
+
+  // 检查是否为接口类型
+  virtual bool isInterface() const { return false; }
 
   // 检查是否为泛型类型
   virtual bool isGeneric() const { return false; }

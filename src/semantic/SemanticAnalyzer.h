@@ -59,6 +59,9 @@ private:
   // 分析类声明
   void analyzeClassDecl(ast::ClassDecl *classDecl);
 
+  // 分析接口声明
+  void analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl);
+
   // 分析结构体声明
   void analyzeStructDecl(ast::StructDecl *structDecl);
 
@@ -192,6 +195,9 @@ private:
   // 分析类型
   std::shared_ptr<types::Type> analyzeType(const ast::Type *type);
 
+  // 根据类型名称分析类型
+  std::shared_ptr<types::Type> analyzeTypeByName(const std::string &typeName);
+
   // 分析基本类型
   std::shared_ptr<types::Type>
   analyzePrimitiveType(const ast::PrimitiveType *primitiveType);
@@ -238,6 +244,9 @@ private:
 
   // 解析可见性修饰符
   Visibility parseVisibility(const std::vector<std::string> &specifiers);
+
+  // 将 Visibility 转换为 AccessModifier
+  types::AccessModifier visibilityToAccessModifier(Visibility visibility);
 
   // 报告错误
   void error(const std::string &message, const ast::Node &node);

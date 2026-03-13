@@ -55,30 +55,30 @@ bool PrimitiveType::isSubtypeOfImpl(const Type &other) const {
   if (!other.isPrimitive()) {
     return false;
   }
-
+  
   const auto &otherPrimitive = static_cast<const PrimitiveType &>(other);
-
+  
   // 相同类型，是子类型
   if (kind == otherPrimitive.kind) {
     return true;
   }
-
+  
   // 整数类型之间的转换：可以从较小的整数类型转换到较大的整数类型
   if (isInteger() && otherPrimitive.isInteger()) {
     return getSize() <= otherPrimitive.getSize();
   }
-
+  
   // 浮点数类型之间的转换：可以从较小的浮点数类型转换到较大的浮点数类型
   if (isFloatingPoint() && otherPrimitive.isFloatingPoint()) {
     return getSize() <= otherPrimitive.getSize();
   }
-
+  
   // 整数到浮点数的转换：根据测试，整数类型不是浮点数类型的子类型
   // 即使它们之间可以进行隐式转换
   if (isInteger() && otherPrimitive.isFloatingPoint()) {
     return false;
   }
-
+  
   return false;
 }
 

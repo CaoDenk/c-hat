@@ -37,6 +37,7 @@
 #include "declarations/FunctionDecl.h"
 #include "declarations/GetterDecl.h"
 #include "declarations/ImportDecl.h"
+#include "declarations/InterfaceDecl.h"
 #include "declarations/ModuleDecl.h"
 #include "declarations/NamespaceDecl.h"
 #include "declarations/SetterDecl.h"

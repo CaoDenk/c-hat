@@ -7,6 +7,41 @@ std::shared_ptr<Type> TypeFactory::getPrimitiveType(PrimitiveType::Kind kind) {
   return std::make_shared<PrimitiveType>(kind);
 }
 
+std::shared_ptr<Type> TypeFactory::getPrimitiveTypeByName(const std::string &name) {
+  if (name == "void") {
+    return getPrimitiveType(PrimitiveType::Kind::Void);
+  } else if (name == "bool") {
+    return getPrimitiveType(PrimitiveType::Kind::Bool);
+  } else if (name == "byte") {
+    return getPrimitiveType(PrimitiveType::Kind::Byte);
+  } else if (name == "sbyte") {
+    return getPrimitiveType(PrimitiveType::Kind::SByte);
+  } else if (name == "short") {
+    return getPrimitiveType(PrimitiveType::Kind::Short);
+  } else if (name == "ushort") {
+    return getPrimitiveType(PrimitiveType::Kind::UShort);
+  } else if (name == "int") {
+    return getPrimitiveType(PrimitiveType::Kind::Int);
+  } else if (name == "uint") {
+    return getPrimitiveType(PrimitiveType::Kind::UInt);
+  } else if (name == "long") {
+    return getPrimitiveType(PrimitiveType::Kind::Long);
+  } else if (name == "ulong") {
+    return getPrimitiveType(PrimitiveType::Kind::ULong);
+  } else if (name == "float") {
+    return getPrimitiveType(PrimitiveType::Kind::Float);
+  } else if (name == "double") {
+    return getPrimitiveType(PrimitiveType::Kind::Double);
+  } else if (name == "fp16") {
+    return getPrimitiveType(PrimitiveType::Kind::Fp16);
+  } else if (name == "bf16") {
+    return getPrimitiveType(PrimitiveType::Kind::Bf16);
+  } else if (name == "char") {
+    return getPrimitiveType(PrimitiveType::Kind::Char);
+  }
+  return nullptr;
+}
+
 std::shared_ptr<Type>
 TypeFactory::getArrayType(std::shared_ptr<Type> elementType, size_t size) {
   return std::make_shared<ArrayType>(elementType, size);
@@ -43,6 +78,10 @@ std::shared_ptr<Type> TypeFactory::getFunctionType(
 
 std::shared_ptr<Type> TypeFactory::getClassType(const std::string &name) {
   return std::make_shared<ClassType>(name);
+}
+
+std::shared_ptr<Type> TypeFactory::getInterfaceType(const std::string &name) {
+  return std::make_shared<InterfaceType>(name);
 }
 
 std::shared_ptr<Type>

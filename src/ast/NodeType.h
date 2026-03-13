@@ -33,6 +33,7 @@ enum class NodeType {
   TupleDestructuringDecl,
   FunctionDecl,
   ClassDecl,
+  InterfaceDecl,
   StructDecl,
   EnumDecl,
   NamespaceDecl,
