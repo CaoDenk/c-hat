@@ -9,7 +9,9 @@ using namespace c_hat;
 
 bool analyzeSource(const std::string &source) {
   try {
-    parser::Parser parser(source);
+    // 添加一个简单的 main 函数
+    std::string sourceWithMain = source + "\nfunc main() { }\n";
+    parser::Parser parser(sourceWithMain);
     auto program = parser.parseProgram();
     if (!program)
       return false;

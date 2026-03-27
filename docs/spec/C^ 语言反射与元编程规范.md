@@ -2,158 +2,166 @@
 
 ## 1. 概述
 
-C^ 语言提供了强大的反射和元编程能力，允许程序在编译期和运行时检查和操作类型信息。反射和元编程是 C^ 语言的高级特性，用于实现序列化、ORM、依赖注入等复杂功能。本文档详细描述 C^ 语言中反射和元编程的语法、API 和应用场景。
+C^ 的反射机制是**纯静态（Compile-time）**的，零运行时开销，零标准库依赖。`@` 操作符和 `comptime for` 是纯编译器内置特性，所有元数据属性类型均为内置类型（`literalview`、`bool`、`int`、`long`），不引用任何 `std.*` 模块。
 
-## 2. 反射基础
+运行时反射是独立的 opt-in 机制（见第 4 节），与静态反射完全分离。
 
-### 2.1 反射概念
+## 2. 核心概念
 
-- **反射**：程序在运行时或编译期检查和操作自身结构的能力
-- **编译期反射**：在编译期获取和操作类型信息，零运行时开销
-- **运行时反射**：在运行时获取和操作类型信息，有一定运行时开销
-- **元编程**：编写能够生成或修改其他代码的代码
-
-### 2.2 反射的优势
-
-- **代码生成**：通过反射自动生成重复性代码
-- **动态类型操作**：在运行时处理未知类型
-- **序列化和反序列化**：自动将对象转换为其他格式（如 JSON、XML）
-- **依赖注入**：自动解析和注入依赖
-- **ORM**：对象关系映射，自动处理数据库操作
-- **测试工具**：自动生成测试代码和测试数据
+- **编译期反射**：`@` 操作符 + `comptime for`，编译器内置，零运行时开销
+- **元编程**：`comptime` 关键字标记编译期执行的代码或函数
+- **运行时反射**：`[Reflectable]` 标注 + `obj.rtti`，opt-in，默认不生成
 
 ## 3. 编译期反射
 
-### 3.1 设计哲学
+### 3.1 设计原则
 
-C^ 的反射机制是**纯静态（Compile-time）**的。与 Java/C# 的运行时反射不同，C^ 的反射在编译期完成所有元信息的解析和代码生成。
+1. **零标准库依赖** — `@` 与 `comptime for` 纯编译器内置
+2. **元数据类型全用内置类型** — `literalview`、`bool`、`int`、`long`
+3. **类型是一等公民** — `field.type` 返回真正的编译期类型值，不是字符串
+4. **编译期/运行时严格分离**
 
-### 3.2 核心语法：`@` 操作符与 `typeof` 关键字
+### 3.2 `typeof` — 获取表达式的静态类型
 
-我们将 **类型获取** 与 **元数据获取** 分离，实现更优雅的正交设计。
+`typeof` 是关键字，返回编译期类型值，可用于声明、泛型参数、类型比较：
 
-#### 3.2.1 类型操作符：`typeof(expr)`
-
-`typeof` 是一个 **关键字**，用于在编译期获取表达式的类型。它返回的是一个 **类型 (Type)**，可以用于变量声明、泛型参数等。
-
-```cpp
+```c^
 int a = 10;
-typeof(a) b = 20; // 等价于 int b = 20;
-List<typeof(a)> list; // 等价于 List<int>
+typeof(a) b = 20;           // 等价于 int b = 20
+List<typeof(a)> list;       // 等价于 List<int>
+
+// 类型比较（编译期）
+comptime if (field.type == typeof(int)) { ... }
 ```
 
-#### 3.2.2 反射操作符：`@`
+### 3.3 `@` 操作符 — 获取类型的编译期元对象
 
-`@` 是一个 **前缀运算符**，用于获取类型或实体的 **元数据 (Metadata)**。它返回一个编译期常量对象（如 `std::meta::Type`）。
+`@` 是前缀操作符，作用于**类型**，返回编译器生成的匿名元对象：
 
-*   语法：`@Type`
-*   组合：`@typeof(expr)` —— 先获取类型，再获取该类型的元数据。
-
-```cpp
-struct User { int id; }
-int a = 10;
-
-// 1. 获取命名类型的元数据
-comptime TypeInfo info1 = @User;
-
-// 2. 获取表达式类型的元数据 (组合使用)
-comptime TypeInfo info2 = @typeof(a); 
-
-// 3. 错误示例
-// comptime TypeInfo info3 = @a; // 错误！@ 操作符作用于类型，而非值
+```c^
+@User              // 获取 User 类型的元对象
+@typeof(expr)      // 先取静态类型，再取元对象
+@int               // 内置类型同样支持
 ```
 
-这种设计的优势在于：
-1.  **正交性**：`typeof` 负责类型系统，`@` 负责反射系统。
-2.  **清晰性**：`@typeof(a)` 明确表达了"获取 a 的类型的元数据"这一语义。
-3.  **扩展性**：`@` 未来可以扩展用于获取函数、模块的元数据（如 `@func_name`）。
+> ⚠️ **`@` 永远作用于类型，不直接作用于值。**
+> - `@User` — 合法，`User` 是类型名
+> - `@typeof(a)` — 合法，`typeof(a)` 在编译期返回 `a` 的静态类型
+> - `@a` — **编译错误**，`a` 是值
 
-#### 3.2.3 `std.meta.Type` 接口
+`@` 操作符**不可重载**，保证反射入口的统一性和确定性。
 
-`@T` 返回的对象提供了一系列编译期属性：
+### 3.4 元对象的内置属性
 
-```cpp
-// 编译期获取类型名
-comptime string type_name = @typeof(User).name; // "User"
+所有属性均为编译期常量，类型全部是内置类型：
 
-// 判断是否为结构体
-comptime bool is_struct = @typeof(User).is_struct;
+```c^
+@T.name            // literalview  — 类型名，如 "User"
+@T.is_struct       // bool
+@T.is_class        // bool
+@T.is_enum         // bool
+@T.is_primitive    // bool         — int/bool/byte/char/long/float/double
+@T.size            // long         — sizeof(T)
+@T.align           // long         — alignof(T)
+@T.field_count     // int
+@T.fields          // 编译期异构元组，只能 comptime for 遍历
+@T.method_count    // int
+@T.methods         // 编译期异构元组，只能 comptime for 遍历
 ```
 
-#### 3.2.4 `@` 操作符不可重载
+**字段元对象：**
 
-`@` 是编译器内置的反射操作符，**不允许用户重载**。这保证了反射行为的确定性和零开销。用户如果需要自定义类型的反射行为，应通过 **Attributes (属性)** 或 **Traits/Concepts** 来实现。
+```c^
+field.name         // literalview  — 字段名
+field.type         // 编译期类型值  — 可与 typeof() 比较
+field.offset       // long         — 字节偏移
+field.is_public    // bool
+field.is_mutable   // bool         — var 为 true，let 为 false
+field.has_attr(A)  // bool         — 是否有 Attribute A
+field.attr(A)      // A 的编译期实例
+```
 
-### 3.3 编译期遍历：`comptime for`
+**方法元对象：**
 
-摒弃奇怪的 `@foreach`，直接复用 `for` 循环，加上 `comptime` 标记，表示这是**编译期展开**。
+```c^
+method.name        // literalview
+method.is_public   // bool
+method.is_static   // bool
+method.param_count // int
+```
 
-```cpp
+### 3.5 `comptime for` — 编译期异构展开
+
+`comptime for` 遍历 `@T.fields` / `@T.methods`，编译器将循环**完全展开**为独立语句，不产生任何运行时循环：
+
+```c^
 func print_fields<T>(T! obj) {
-    // 编译期遍历 T 的所有字段
-    // 编译器会将此循环展开为一系列顺序执行的语句
     comptime for (var field : @T.fields) {
-        // 生成代码：print("id: " + obj.id);
-        // 生成代码：print("name: " + obj.name);
-        print(field.name + ": " + obj.@[field]); 
+        print(field.name);
+        print(": ");
+        print(obj.[field]);   // 通过字段元对象访问成员
+        print("\n");
     }
 }
 ```
 
-### 3.4 成员访问：`@[meta]`
+### 3.6 字段访问语法 `obj.[field]`
 
-`obj.@[meta]` 用于通过元数据访问对象的成员。这是一种**编译期成员访问**语法。
+通过字段元对象访问对象成员，与硬编码 `obj.name` 完全等价：
 
-### 3.5 类型元数据概念 (Meta Concept)
+```c^
+obj.[field]           // 读取字段值
+obj.[field] = value   // 写入字段（field.is_mutable == true 时合法）
+```
 
-`@T` 返回的元类型满足以下 Concept 约束（而非固定的 Interface）：
+### 3.7 `comptime if` — 编译期条件分支
 
-```cpp
-concept TypeInfo {
-    // 类型基本信息 (comptime 常量)
-    comptime bool is_void;
-    comptime bool is_struct;
-    // ...
-    
-    // 属性
-    comptime string name;
-    
-    // 成员集合 (编译期可遍历序列)
-    comptime auto fields; // Returns Sequence<FieldInfo>
-    comptime auto methods; // Returns Sequence<MethodInfo>
+```c^
+comptime for (var field : @T.fields) {
+    comptime if (field.type == typeof(int) || field.type == typeof(long)) {
+        print_int(obj.[field]);
+    } else comptime if (field.type == typeof(bool)) {
+        print_bool(obj.[field]);
+    } else comptime if (field.type == typeof(literalview)) {
+        print_str(obj.[field]);
+    } else {
+        print_fields(obj.[field]);   // 递归处理嵌套类型
+    }
 }
 ```
 
 ## 4. 运行时反射 (Runtime Reflection)
 
-### 4.1 设计原则：Opt-in RTTI
+### 4.1 设计原则：严格 Opt-in
 
-C^ 默认**不生成**运行时类型信息 (RTTI)，以保证零开销和最小二进制体积。
-运行时反射是**基于静态反射构建的**。
+运行时反射与静态反射**完全独立**，不共用任何机制。C^ 默认**不生成** RTTI，保证零开销和最小二进制体积。
 
 ### 4.2 启用运行时反射
 
-用户必须显式标记需要运行时反射的类型：
-
-```cpp
+```c^
 [Reflectable]
-class User { ... }
+class Animal { ... }
 
-// 或者在编译选项中开启全局 RTTI（不推荐）
+[Reflectable]
+class Dog : Animal { ... }
 ```
 
-对于未标记的类型，`@typeof(val)` 在运行时可能会报错或返回有限信息。
+编译器为 `[Reflectable]` 类型注入最小 `rtti` 字段，只包含动态类型名。
 
-### 4.3 `@typeof` 运算符
+### 4.3 使用
 
-`@typeof` 运算符在运行时获取类型的元数据（如果已启用）：
-
-```cpp
-// 运行时获取类型元数据
-func get_type_info<T>(T value) -> TypeInfo {
-    return @typeof(value);
-}
+```c^
+Animal^ a = new Dog;
+a.rtti.name    // literalview，运行时可用，值为 "Dog"（动态类型名）
 ```
+
+对于未标注 `[Reflectable]` 的类型，`rtti` 字段不存在，访问即**编译错误**。
+
+### 4.4 原则
+
+- 不生成全局类型表，只为 `[Reflectable]` 类型注入最小字段
+- 运行时反射不依赖静态反射的 `@` 操作符
+- 默认关闭，不产生任何二进制开销
 
 ## 5. 编译期执行 (Comptime Execution)
 

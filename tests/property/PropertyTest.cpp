@@ -8,22 +8,33 @@ using namespace c_hat;
 
 bool analyzeSource(const std::string &source) {
   try {
-    parser::Parser parser(source);
+    // 添加一个简单的 main 函数
+    std::string sourceWithMain = source + "\nfunc main() { }\n";
+    parser::Parser parser(sourceWithMain);
     auto program = parser.parseProgram();
     if (!program)
       return false;
 
     semantic::SemanticAnalyzer analyzer;
     analyzer.analyze(*program);
-    return !analyzer.hasError();
+    bool hasError = analyzer.hasError();
+    if (hasError) {
+      std::cout << "Semantic analysis failed for source: " << source
+                << std::endl;
+    }
+    return !hasError;
+  } catch (const std::exception &e) {
+    std::cout << "Exception: " << e.what() << std::endl;
+    return false;
   } catch (...) {
+    std::cout << "Unknown exception" << std::endl;
     return false;
   }
 }
 
 TEST_CASE("Property: Basic property with getter", "[property]") {
   REQUIRE(analyzeSource("class Person {\n"
-                        "  private var _name: string;\n"
+                        "  private string _name;\n"
                         "  \n"
                         "  public get name -> string {\n"
                         "    return _name;\n"
@@ -33,8 +44,8 @@ TEST_CASE("Property: Basic property with getter", "[property]") {
 
 TEST_CASE("Property: Property with arrow expression getter", "[property]") {
   REQUIRE(analyzeSource("class Point {\n"
-                        "  private var _x: int;\n"
-                        "  private var _y: int;\n"
+                        "  private int _x;\n"
+                        "  private int _y;\n"
                         "  \n"
                         "  public get x -> int => _x;\n"
                         "  public get y -> int => _y;\n"
@@ -43,7 +54,7 @@ TEST_CASE("Property: Property with arrow expression getter", "[property]") {
 
 TEST_CASE("Property: Read-only property", "[property]") {
   REQUIRE(analyzeSource("class Circle {\n"
-                        "  private var _radius: double;\n"
+                        "  private double _radius;\n"
                         "  \n"
                         "  public get radius -> double {\n"
                         "    return _radius;\n"

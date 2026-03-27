@@ -140,6 +140,33 @@ CodeGenerator::generateStatement(std::unique_ptr<ast::Statement> statement) {
   case ast::NodeType::ComptimeStmt:
     return generateComptimeStmt(std::unique_ptr<ast::ComptimeStmt>(
         static_cast<ast::ComptimeStmt *>(statement.release())));
+  case ast::NodeType::IfStmt:
+    return generateIfStmt(std::unique_ptr<ast::IfStmt>(
+        static_cast<ast::IfStmt *>(statement.release())));
+  case ast::NodeType::WhileStmt:
+    return generateWhileStmt(std::unique_ptr<ast::WhileStmt>(
+        static_cast<ast::WhileStmt *>(statement.release())));
+  case ast::NodeType::ForStmt:
+    return generateForStmt(std::unique_ptr<ast::ForStmt>(
+        static_cast<ast::ForStmt *>(statement.release())));
+  case ast::NodeType::BreakStmt:
+    return generateBreakStmt(std::unique_ptr<ast::BreakStmt>(
+        static_cast<ast::BreakStmt *>(statement.release())));
+  case ast::NodeType::ContinueStmt:
+    return generateContinueStmt(std::unique_ptr<ast::ContinueStmt>(
+        static_cast<ast::ContinueStmt *>(statement.release())));
+  case ast::NodeType::MatchStmt:
+    return generateMatchStmt(std::unique_ptr<ast::MatchStmt>(
+        static_cast<ast::MatchStmt *>(statement.release())));
+  case ast::NodeType::TryStmt:
+    return generateTryStmt(std::unique_ptr<ast::TryStmt>(
+        static_cast<ast::TryStmt *>(statement.release())));
+  case ast::NodeType::ThrowStmt:
+    return generateThrowStmt(std::unique_ptr<ast::ThrowStmt>(
+        static_cast<ast::ThrowStmt *>(statement.release())));
+  case ast::NodeType::DeferStmt:
+    return generateDeferStmt(std::unique_ptr<ast::DeferStmt>(
+        static_cast<ast::DeferStmt *>(statement.release())));
   default:
     return "";
   }
@@ -484,6 +511,130 @@ std::string CodeGenerator::generateExpansionExpr(
 
 std::string CodeGenerator::indent() {
   return std::string(indentLevel * 2, ' ');
+}
+
+std::string CodeGenerator::generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt) {
+  std::string code = indent();
+  code += "if (";
+  code += generateExpression(std::move(ifStmt->condition));
+  code += ") ";
+  code += generateStatement(std::move(ifStmt->thenBranch));
+  if (ifStmt->elseBranch) {
+    code += " else ";
+    code += generateStatement(std::move(ifStmt->elseBranch));
+  }
+  return code;
+}
+
+std::string
+CodeGenerator::generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt) {
+  std::string code = indent();
+  code += "while (";
+  code += generateExpression(std::move(whileStmt->condition));
+  code += ") ";
+  code += generateStatement(std::move(whileStmt->body));
+  return code;
+}
+
+std::string CodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
+  std::string code = indent();
+  code += "for (";
+  if (forStmt->init) {
+    // 检查init是否是语句
+    if (auto *stmt = dynamic_cast<ast::Statement *>(forStmt->init.get())) {
+      code += generateStatement(std::unique_ptr<ast::Statement>(stmt));
+      forStmt->init.release();
+    } else {
+      // 简化处理，输出占位符
+      code += "/* init */";
+    }
+  }
+  code += "; ";
+  if (forStmt->condition) {
+    code += generateExpression(std::move(forStmt->condition));
+  }
+  code += "; ";
+  if (forStmt->update) {
+    code += generateExpression(std::move(forStmt->update));
+  }
+  code += ") ";
+  code += generateStatement(std::move(forStmt->body));
+  return code;
+}
+
+std::string
+CodeGenerator::generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt) {
+  std::string code = indent();
+  code += "break";
+  code += ";";
+  return code;
+}
+
+std::string CodeGenerator::generateContinueStmt(
+    std::unique_ptr<ast::ContinueStmt> continueStmt) {
+  std::string code = indent();
+  code += "continue";
+  code += ";";
+  return code;
+}
+
+std::string
+CodeGenerator::generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt) {
+  std::string code = indent();
+  code += "switch (";
+  code += generateExpression(std::move(matchStmt->expr));
+  code += ") {\n";
+  indentLevel++;
+  for (auto &arm : matchStmt->arms) {
+    code += indent();
+    code += "case ";
+    // 简化处理，假设pattern是表达式
+    code += "/* pattern */";
+    code += ":\n";
+    indentLevel++;
+    code += generateStatement(std::move(arm->body));
+    code += "\n";
+    indentLevel--;
+  }
+  indentLevel--;
+  code += indent();
+  code += "}";
+  return code;
+}
+
+std::string
+CodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
+  std::string code = indent();
+  code += "try ";
+  code += generateStatement(std::move(tryStmt->tryBlock));
+  for (auto &catchStmt : tryStmt->catchStmts) {
+    code += " catch (";
+    code += "/* exception */";
+    code += ") ";
+    code += generateStatement(std::move(catchStmt->body));
+  }
+  return code;
+}
+
+std::string
+CodeGenerator::generateThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt) {
+  std::string code = indent();
+  code += "throw";
+  if (throwStmt->expr) {
+    code += " ";
+    code += generateExpression(std::move(throwStmt->expr));
+  }
+  code += ";";
+  return code;
+}
+
+std::string
+CodeGenerator::generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt) {
+  std::string code = indent();
+  code += "defer ";
+  code += generateExpression(std::move(deferStmt->expr));
+  code += ";";
+  return code;
 }
 
 std::string

@@ -150,6 +150,11 @@ int main(int argc, char *argv[]) {
     semanticAnalyzer.analyze(*program);
     std::cout << "Debug: After semantic analysis" << std::endl;
 
+    if (semanticAnalyzer.hasError()) {
+      std::println("\n✗ Semantic analysis failed!");
+      return 1;
+    }
+
     std::cout << "\n✓ Parsing and semantic analysis successful!" << std::endl;
 
     std::cout << "\nStarting code generation..." << std::endl;

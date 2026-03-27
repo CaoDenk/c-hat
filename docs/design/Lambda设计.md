@@ -74,11 +74,11 @@ var f = [](int x) => x * x;
 ```
 
 ### 3.2 函数类型接口
-当需要存储或传递 Lambda 时，使用 `func<Sig>` 类型。
+当需要存储或传递 Lambda 时，使用 `func(Params)->Ret` 类型。
 
 ```cpp
 // 接受一个 int -> int 的函数
-func apply(func<int(int)> f, int val) {
+func apply(func(int)->int f, int val) {
     return f(val);
 }
 

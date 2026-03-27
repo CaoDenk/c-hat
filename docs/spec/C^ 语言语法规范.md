@@ -1257,7 +1257,7 @@ public class Box<T> {
 }
 
 // 带约束的泛型函数
-func max<T>(a: T, b: T) -> T where Comparable<T> {
+func max<T>(T a, T b) -> T where Comparable<T> {
   return a > b ? a : b;
 }
 

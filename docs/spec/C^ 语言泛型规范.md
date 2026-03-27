@@ -324,7 +324,7 @@ func draw_object<T>(T obj) where Drawable<T> { ... }
 ```
 
 // 涉及多个泛型参数的约束
-public func zip<A, B>(seq1: A, seq2: B) -> Pair<A::Item, B::Item>
+public func zip<A, B>(A seq1, B seq2) -> Pair<A::Item, B::Item>
     where Iterable<A> && Iterable<B> && SameType<A::Item, B::Item>
 {
     // 实现 zip 逻辑

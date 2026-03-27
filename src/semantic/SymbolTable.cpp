@@ -84,5 +84,24 @@ bool SymbolTable::hasSymbolInCurrentScope(const std::string &name) const {
   return symbolIt != currentScope.end() && !symbolIt->second.empty();
 }
 
+// 获取上一级作用域中的所有符号
+std::vector<std::shared_ptr<Symbol>> SymbolTable::getSymbolsInParentScope() const {
+  std::vector<std::shared_ptr<Symbol>> result;
+
+  // 检查是否有上一级作用域
+  if (scopes.size() > 1) {
+    const auto &parentScope = scopes[scopes.size() - 2];
+
+    // 遍历上一级作用域中的所有符号
+    for (const auto &entry : parentScope) {
+      for (const auto &symbol : entry.second) {
+        result.push_back(symbol);
+      }
+    }
+  }
+
+  return result;
+}
+
 } // namespace semantic
 } // namespace c_hat

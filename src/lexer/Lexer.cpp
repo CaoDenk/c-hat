@@ -325,7 +325,7 @@ std::string Token::toString() const {
     typeStr = "Extern";
     break;
   case TokenType::LiteralView:
-    typeStr = "LiteralView";
+    typeStr = "literalview";
     break;
   case TokenType::Namespace:
     typeStr = "Namespace";

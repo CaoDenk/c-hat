@@ -1,35 +1,35 @@
-# LiteralView 与只读类型系统进展
+# literalview 与只读类型系统进展
 
 ## 日期
 2026-02-16
 
 ## 当前进展
 
-### 1. LiteralView 类型实现
+### 1. literalview 类型实现
 
 #### 1.1 设计文档完善
-- **文件**: `docs/design/LiteralView设计.md`
+- **文件**: `docs/design/literalview设计.md`
 - **内容**:
-  - 明确了 `LiteralView.ptr` 和 `len` 是只读 get 属性
+  - 明确了 `literalview.ptr` 和 `len` 是只读 get 属性
   - 添加注释说明这些属性不能被赋值
-  - 完善了 `LiteralView` 的 ABI 布局和设计说明
+  - 完善了 `literalview` 的 ABI 布局和设计说明
 
 #### 1.2 类型系统实现
 - **新增文件**:
-  - `src/types/LiteralViewType.h` - LiteralView 类型类头文件
-  - `src/types/LiteralViewType.cpp` - LiteralView 类型实现
+  - `src/types/literalviewType.h` - literalview 类型类头文件
+  - `src/types/literalviewType.cpp` - literalview 类型实现
 - **修改文件**:
-  - `src/types/TypeFactory.h` - 添加 getLiteralViewType() 方法
-  - `src/types/TypeFactory.cpp` - 实现 LiteralView 类型工厂
-  - `src/ast/types/Type.h` - 添加 LiteralViewType AST 节点
-  - `src/ast/types/Type.cpp` - 实现 LiteralViewType 的 toString
+  - `src/types/TypeFactory.h` - 添加 getliteralviewType() 方法
+  - `src/types/TypeFactory.cpp` - 实现 literalview 类型工厂
+  - `src/ast/types/Type.h` - 添加 literalviewType AST 节点
+  - `src/ast/types/Type.cpp` - 实现 literalviewType 的 toString
   - `src/parser/Parser.cpp` - 支持解析 `literalview` 关键字为类型
-  - `src/semantic/SemanticAnalyzer.cpp` - 添加字符串字面量类型推导为 LiteralViewType
+  - `src/semantic/SemanticAnalyzer.cpp` - 添加字符串字面量类型推导为 literalviewType
 
 #### 1.3 功能特性
-- ✅ `LiteralView` 作为内置原生类型
-- ✅ 字符串字面量自动推导为 `LiteralView` 类型
-- ✅ `LiteralView` 包含两个字段：`ptr` 和 `len`
+- ✅ `literalview` 作为内置原生类型
+- ✅ 字符串字面量自动推导为 `literalview` 类型
+- ✅ `literalview` 包含两个字段：`ptr` 和 `len`
 - ✅ `ptr` 和 `len` 设计为只读属性（get）
 
 ### 2. 只读类型系统实现
@@ -68,12 +68,12 @@
 
 #### 3.1 测试文件
 - **新增文件**:
-  - `tests/test_literalview.ch` - LiteralView 类型测试
+  - `tests/test_literalview.ch` - literalview 类型测试
   - `tests/test_readonly_compatibility.ch` - 只读类型兼容性测试
   - `tests/test_simple_pointer.ch` - 简单指针类型测试
 
 #### 3.2 测试结果
-- ✅ `test_literalview.ch` - LiteralView 类型解析和语义分析成功
+- ✅ `test_literalview.ch` - literalview 类型解析和语义分析成功
 - ✅ `test_readonly_compatibility.ch` - 只读类型兼容性检查正常工作
 - ✅ `test_simple_pointer.ch` - 指针类型解析成功，包括 `byte!^`
 
@@ -163,12 +163,12 @@ bool Type::isCompatibleWith(const Type &other) const {
    - [ ] `T!^` 不与 `T^` 兼容（不能去掉底层 const）
    - [ ] 添加指针类型兼容性测试
 
-2. **添加 LiteralView 到 byte![] 的隐式转换**
+2. **添加 literalview 到 byte![] 的隐式转换**
    - [ ] 在语义分析器中添加隐式转换支持
    - [ ] 测试 `byte![] s = "hello"` 是否工作
 
-3. **完善 LiteralView 的代码生成**
-   - [ ] 在 LLVMCodeGenerator 中添加 LiteralView 支持
+3. **完善 literalview 的代码生成**
+   - [ ] 在 LLVMCodeGenerator 中添加 literalview 支持
    - [ ] 生成 .rodata 段的字符串字面量
    - [ ] 生成 ptr+len 的结构
 
@@ -193,8 +193,8 @@ bool Type::isCompatibleWith(const Type &other) const {
 ## 已修改/新增文件清单
 
 ### 新增文件
-1. `src/types/LiteralViewType.h`
-2. `src/types/LiteralViewType.cpp`
+1. `src/types/literalviewType.h`
+2. `src/types/literalviewType.cpp`
 3. `src/types/ReadonlyType.h`
 4. `src/types/ReadonlyType.cpp`
 5. `src/types/Type.cpp`
@@ -204,8 +204,8 @@ bool Type::isCompatibleWith(const Type &other) const {
 
 ### 修改文件
 1. `src/types/Type.h` - 添加 isCompatibleWithImpl 和 isSubtypeOfImpl
-2. `src/types/TypeFactory.h` - 添加 getLiteralViewType()
-3. `src/types/TypeFactory.cpp` - 实现 LiteralView 类型工厂
+2. `src/types/TypeFactory.h` - 添加 getliteralviewType()
+3. `src/types/TypeFactory.cpp` - 实现 literalview 类型工厂
 4. `src/types/PrimitiveType.cpp` - 重命名为 isCompatibleWithImpl
 5. `src/types/ArrayType.cpp` - 重命名为 isCompatibleWithImpl
 6. `src/types/RectangularArrayType.cpp` - 重命名为 isCompatibleWithImpl
@@ -216,20 +216,20 @@ bool Type::isCompatibleWith(const Type &other) const {
 11. `src/types/FunctionType.cpp` - 重命名为 isCompatibleWithImpl
 12. `src/types/ClassType.cpp` - 重命名为 isCompatibleWithImpl
 13. `src/types/GenericType.cpp` - 重命名为 isCompatibleWithImpl
-14. `src/ast/types/Type.h` - 添加 LiteralViewType AST 节点
-15. `src/ast/types/Type.cpp` - 实现 LiteralViewType 的 toString
+14. `src/ast/types/Type.h` - 添加 literalviewType AST 节点
+15. `src/ast/types/Type.cpp` - 实现 literalviewType 的 toString
 16. `src/parser/Parser.cpp` - 支持解析 literalview 关键字
 17. `src/semantic/SemanticAnalyzer.cpp` - 添加字符串字面量类型推导和只读检查
-18. `src/ast/CMakeLists.txt` - 添加 LiteralViewType
-19. `src/types/CMakeLists.txt` - 添加 LiteralViewType, ReadonlyType, Type.cpp
-20. `docs/design/LiteralView设计.md` - 完善设计文档
+18. `src/ast/CMakeLists.txt` - 添加 literalviewType
+19. `src/types/CMakeLists.txt` - 添加 literalviewType, ReadonlyType, Type.cpp
+20. `docs/design/literalview设计.md` - 完善设计文档
 
 ---
 
 ## 总结
 
 本次实现了两个核心功能：
-1. **LiteralView 类型** - 用于承载字符串字面量的内置类型
+1. **literalview 类型** - 用于承载字符串字面量的内置类型
 2. **只读类型系统** - 完整的顶层 Readonly 支持，包括：
    - Readonly 类型包装
    - 赋值检查

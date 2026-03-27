@@ -52,6 +52,34 @@ private:
   std::string
   generateComptimeStmt(std::unique_ptr<ast::ComptimeStmt> comptimeStmt);
 
+  // 生成if语句代码
+  std::string generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
+
+  // 生成while语句代码
+  std::string generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
+
+  // 生成for语句代码
+  std::string generateForStmt(std::unique_ptr<ast::ForStmt> forStmt);
+
+  // 生成break语句代码
+  std::string generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
+
+  // 生成continue语句代码
+  std::string
+  generateContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
+
+  // 生成match语句代码
+  std::string generateMatchStmt(std::unique_ptr<ast::MatchStmt> matchStmt);
+
+  // 生成try语句代码
+  std::string generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt);
+
+  // 生成throw语句代码
+  std::string generateThrowStmt(std::unique_ptr<ast::ThrowStmt> throwStmt);
+
+  // 生成defer语句代码
+  std::string generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
+
   // 生成表达式代码
   std::string generateExpression(std::unique_ptr<ast::Expression> expression);
 
@@ -95,7 +123,8 @@ private:
   std::string generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
 
   // 生成数组初始化表达式代码
-  std::string generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
+  std::string
+  generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
 
   // 生成类型代码
   std::string generateType(std::unique_ptr<ast::Type> type);

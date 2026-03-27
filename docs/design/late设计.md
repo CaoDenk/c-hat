@@ -135,6 +135,29 @@ person = Person("Alice"); // 需要构造函数
 
 ## 3. 典型应用场景
 
+### 3.0 与 Dart `late` 的区别
+
+C^ 的 `late` 与 Dart 的 `late` 有本质区别，需要注意区分：
+
+| 特性 | Dart `late` | C^ `late` |
+|------|-------------|-----------|
+| **语义** | 惰性求值（首次访问时构造） | 编译期预留 + 确定初始化点 |
+| **运行时** | 首次读取时检查是否已构造，未构造则构造 | 无运行时检查，编译期控制流分析 |
+| **构造时机** | 不确定（取决于执行顺序） | 确定（由赋值语句触发） |
+| **使用场景** | 解决循环依赖、延迟大对象构造 | 解决 try-catch 条件初始化 |
+
+```cpp
+// Dart 的 late 是"运行时惰性"
+late var x = compute(); // 首次读取 x 时才调用 compute()
+
+// C^ 的 late 是"编译期确定性"
+late int x;        // 栈上预留空间
+if (cond) {
+    x = 10;        // 确定初始化点
+}
+print(x);          // 编译期确认所有路径已初始化
+```
+
 ### 3.1 Try-Catch 块初始化
 
 这是 `late` 最杀手级的应用场景。在 C++ 中，为了在 `try` 块外使用变量，必须先在块外声明（通常需要默认构造函数），然后在 `try` 块内赋值。这导致了双重初始化和不必要的默认构造要求。
@@ -179,7 +202,38 @@ func logic(bool condition) {
 }
 ```
 
-### 3.3 编译错误示例
+### 3.3 构造可能失败的场景
+
+`late` 与异常处理配合良好，支持构造失败的情况：
+
+```cpp
+func load_config() {
+    late Config cfg;
+
+    try {
+        // 构造可能失败（如文件不存在、解析错误）
+        cfg = try_load_config("app.cfg");
+    } catch (ConfigError err) {
+        // cfg 未初始化，安全退出
+        print("Config load failed: ", err.message);
+        return;
+    } catch {
+        // 其他异常，同样安全退出
+        print("Unknown error loading config");
+        return;
+    }
+
+    // 编译器确认：只有构造成功才会到达此处
+    cfg.apply();
+} // cfg.~Config() 会被调用，因为初始化成功了
+```
+
+**关键点**：
+- 如果 `try_load_config` 抛出异常，`cfg` 始终保持未初始化状态
+- 退出函数时**不会调用** `cfg` 的析构函数（因为从未构造）
+- 编译器通过控制流分析确保这一语义正确性
+
+### 3.4 编译错误示例
 
 ```cpp
 func error_case(bool condition) {
@@ -215,3 +269,5 @@ func error_case(bool condition) {
 ## 5. 总结
 
 `late` 关键字是 C^ 对 C++ 内存模型的一次理性升级。它保留了栈分配的高效性，同时引入了现代编译器的数据流分析能力，提供了更安全、更符合直觉的编程体验。
+
+**与 Dart `late` 的核心区别**：Dart 的 `late` 是运行时惰性求值（不确定构造时机），而 C^ 的 `late` 是编译期确定性（初始化点由代码显式决定）。两者解决的问题域不同。

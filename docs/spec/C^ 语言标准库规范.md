@@ -800,8 +800,8 @@ public func println(byte^ str);
 // println($"Name: {name}, Age: {age}");
 
 // 标准流
-public var stdout: FileStream;
-public var stderr: FileStream;
+public var FileStream stdout;
+public var FileStream stderr;
 ```
 
 ### 9.2 文件操作

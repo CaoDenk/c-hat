@@ -8,6 +8,8 @@ namespace ast {
 // 模式
 class Pattern : public Node {
 public:
+    bool isDefault = false;
+    
     NodeType getType() const override { return NodeType::Pattern; }
     std::string toString() const override { return "Pattern()"; };
 };

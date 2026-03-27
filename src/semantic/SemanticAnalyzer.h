@@ -54,7 +54,9 @@ private:
   void analyzeTupleDestructuringDecl(ast::TupleDestructuringDecl *decl);
 
   // 分析函数声明
-  void analyzeFunctionDecl(ast::FunctionDecl *funcDecl);
+  void analyzeFunctionDecl(
+      ast::FunctionDecl *funcDecl,
+      std::shared_ptr<types::ClassType> currentClassType = nullptr);
 
   // 分析类声明
   void analyzeClassDecl(ast::ClassDecl *classDecl);
@@ -93,14 +95,17 @@ private:
   void analyzeNamespaceDecl(ast::NamespaceDecl *namespaceDecl);
 
   // 分析语句
-  std::shared_ptr<types::Type> analyzeStatement(ast::Statement *stmt);
+  std::shared_ptr<types::Type> analyzeStatement(
+      ast::Statement *stmt,
+      std::shared_ptr<types::ClassType> currentClassType = nullptr);
 
   // 分析表达式语句
   std::shared_ptr<types::Type> analyzeExprStmt(ast::ExprStmt *exprStmt);
 
   // 分析复合语句
-  std::shared_ptr<types::Type>
-  analyzeCompoundStmt(ast::CompoundStmt *compoundStmt);
+  std::shared_ptr<types::Type> analyzeCompoundStmt(
+      ast::CompoundStmt *compoundStmt,
+      std::shared_ptr<types::ClassType> currentClassType = nullptr);
 
   // 分析返回语句
   std::shared_ptr<types::Type> analyzeReturnStmt(ast::ReturnStmt *returnStmt);
@@ -250,6 +255,32 @@ private:
 
   // 报告错误
   void error(const std::string &message, const ast::Node &node);
+  void error(const std::string &message);
+
+  // 检查循环继承
+  bool checkCircularInheritance(const types::ClassType *derived,
+                                const types::ClassType *base);
+
+  // 检查类是否实现了所有接口方法
+  void checkInterfaceImplementation(ast::ClassDecl *classDecl,
+                                    types::ClassType *classType);
+
+  // 检查访问控制
+  bool checkAccessControl(types::AccessModifier access,
+                          const types::ClassType *currentClass);
+
+  // 分析模板参数
+  std::vector<std::shared_ptr<types::Type>> analyzeTemplateParameters(
+      const std::vector<std::unique_ptr<ast::Node>> &params);
+
+  // 分析模板实参
+  std::vector<std::shared_ptr<types::Type>>
+  analyzeTemplateArguments(const std::vector<std::unique_ptr<ast::Node>> &args);
+
+  // 实例化模板类型
+  std::shared_ptr<types::Type> instantiateTemplateType(
+      const std::shared_ptr<types::Type> &templateType,
+      const std::vector<std::shared_ptr<types::Type>> &typeArguments);
 
   // 是否有错误
   bool hasError_ = false;
