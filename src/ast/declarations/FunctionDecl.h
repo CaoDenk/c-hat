@@ -20,11 +20,13 @@ public:
                  std::unique_ptr<Node> requiresClause,
                  std::unique_ptr<Node> body,
                  std::unique_ptr<Expression> arrowExpr = nullptr,
-                 bool isImmutable = false)
+                 bool isImmutable = false,
+                 std::unique_ptr<Expression> superCall = nullptr)
         : specifiers(specifiers), name(name), templateParams(std::move(templateParams)),
           params(std::move(params)), returnType(std::move(returnType)),
           whereClause(std::move(whereClause)), requiresClause(std::move(requiresClause)),
-          body(std::move(body)), arrowExpr(std::move(arrowExpr)), isImmutable(isImmutable) {}
+          body(std::move(body)), arrowExpr(std::move(arrowExpr)), isImmutable(isImmutable),
+          superCall(std::move(superCall)) {}
     
     NodeType getType() const override { return NodeType::FunctionDecl; }
     std::string toString() const override;
@@ -39,6 +41,7 @@ public:
     std::unique_ptr<Node> body;
     std::unique_ptr<Expression> arrowExpr;
     bool isImmutable;
+    std::unique_ptr<Expression> superCall;
 };
 
 } // namespace ast

@@ -14,7 +14,8 @@ namespace semantic {
 
 class SemanticAnalyzer {
 public:
-  SemanticAnalyzer(const std::string &stdlibPath = "");
+  SemanticAnalyzer(const std::string &stdlibPath = "",
+                   bool requireMainFunction = true);
 
   // 分析整个程序
   void analyze(ast::Program &program);
@@ -44,6 +45,9 @@ private:
   // 作用域类型栈，用于跟踪当前是否在循环或switch语句中
   std::vector<std::string> scopeStack;
 
+  // 当前循环嵌套深度
+  int loopDepth_ = 0;
+
   // 分析声明
   void analyzeDeclaration(ast::Declaration *declaration);
 
@@ -56,7 +60,8 @@ private:
   // 分析函数声明
   void analyzeFunctionDecl(
       ast::FunctionDecl *funcDecl,
-      std::shared_ptr<types::ClassType> currentClassType = nullptr);
+      std::shared_ptr<types::ClassType> currentClassType = nullptr,
+      bool analyzeBody = true);
 
   // 分析类声明
   void analyzeClassDecl(ast::ClassDecl *classDecl);
@@ -267,7 +272,11 @@ private:
 
   // 检查访问控制
   bool checkAccessControl(types::AccessModifier access,
-                          const types::ClassType *currentClass);
+                          const types::ClassType *ownerClass);
+
+  // 检查一个类是否是另一个类的子类
+  bool isSubclassOf(const types::ClassType *derived,
+                    const types::ClassType *base);
 
   // 分析模板参数
   std::vector<std::shared_ptr<types::Type>> analyzeTemplateParameters(
@@ -285,11 +294,17 @@ private:
   // 是否有错误
   bool hasError_ = false;
 
+  // 是否需要 main 函数
+  bool requireMainFunction_ = true;
+
   // 当前函数的返回类型
   std::shared_ptr<types::Type> currentFunctionReturnType_;
 
   // 当前类名
   std::string currentClassName_;
+
+  // 当前方法是否为 static（用于检查静态方法体内非法访问非静态成员）
+  bool currentFuncIsStatic_ = false;
 
   // late 变量的初始化状态跟踪
   struct LateVariableStatus {
@@ -297,6 +312,15 @@ private:
     const ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableStatus> lateVariables_;
+  using LateVariablesSnapshot =
+      std::unordered_map<std::string, LateVariableStatus>;
+
+  LateVariablesSnapshot snapshotLateVariables() const;
+  void restoreLateVariables(const LateVariablesSnapshot &snapshot);
+  void mergeLateVariablesFromBranch(const LateVariablesSnapshot &before,
+                                    const LateVariablesSnapshot &branch,
+                                    bool useBranchState);
+  bool statementDefinitelyReturns(const ast::Statement *stmt) const;
 
   // 初始化内置符号
   void initializeBuiltinSymbols();

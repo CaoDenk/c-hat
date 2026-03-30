@@ -65,6 +65,7 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"null", TokenType::Null},
     {"self", TokenType::Self},
     {"base", TokenType::Base},
+    {"super", TokenType::Super},
     {"new", TokenType::New},
     {"delete", TokenType::Delete},
     {"if", TokenType::If},
@@ -73,6 +74,7 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"case", TokenType::Case},
     {"default", TokenType::Default},
     {"for", TokenType::For},
+    {"foreach", TokenType::Foreach},
     {"while", TokenType::While},
     {"do", TokenType::Do},
     {"break", TokenType::Break},
@@ -255,6 +257,9 @@ std::string Token::toString() const {
   case TokenType::Base:
     typeStr = "Base";
     break;
+  case TokenType::Super:
+    typeStr = "Super";
+    break;
   case TokenType::New:
     typeStr = "New";
     break;
@@ -278,6 +283,9 @@ std::string Token::toString() const {
     break;
   case TokenType::For:
     typeStr = "For";
+    break;
+  case TokenType::Foreach:
+    typeStr = "Foreach";
     break;
   case TokenType::While:
     typeStr = "While";

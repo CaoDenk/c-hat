@@ -15,6 +15,10 @@ std::string FunctionDecl::toString() const {
   if (returnType) {
     returnTypeStr = std::format(" -> {}", returnType->toString());
   }
+  std::string superCallStr = "";
+  if (superCall) {
+    superCallStr = std::format(", super: {}", superCall->toString());
+  }
   std::string bodyStr = "";
   if (body) {
     bodyStr = std::format(", {}", body->toString());
@@ -22,8 +26,8 @@ std::string FunctionDecl::toString() const {
   if (arrowExpr) {
     bodyStr = std::format(", => {}", arrowExpr->toString());
   }
-  return std::format("FunctionDecl({} {}({}){}{})", specifiers, name, paramsStr,
-                     returnTypeStr, bodyStr);
+  return std::format("FunctionDecl({} {}({}){}{}{})", specifiers, name, paramsStr,
+                     returnTypeStr, superCallStr, bodyStr);
 }
 
 } // namespace ast

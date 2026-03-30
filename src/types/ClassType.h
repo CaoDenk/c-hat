@@ -17,15 +17,18 @@ struct ClassMethod {
   std::vector<std::shared_ptr<Type>> paramTypes;
   bool isVirtual = false;
   bool isOverride = false;
+  bool isStatic = false;                          // 是否为静态方法
   AccessModifier access = AccessModifier::Public; // 默认公共访问
 
   ClassMethod() = default;
   ClassMethod(const std::string &name, std::shared_ptr<Type> returnType,
               std::vector<std::shared_ptr<Type>> paramTypes,
               bool isVirtual = false, bool isOverride = false,
-              AccessModifier access = AccessModifier::Public)
+              AccessModifier access = AccessModifier::Public,
+              bool isStatic = false)
       : name(name), returnType(returnType), paramTypes(paramTypes),
-        isVirtual(isVirtual), isOverride(isOverride), access(access) {}
+        isVirtual(isVirtual), isOverride(isOverride), isStatic(isStatic),
+        access(access) {}
 
   // 添加拷贝构造函数
   ClassMethod(const ClassMethod &) = default;
@@ -37,11 +40,13 @@ struct ClassField {
   std::string name;
   std::shared_ptr<Type> type;
   AccessModifier access = AccessModifier::Public; // 默认公共访问
+  bool isStatic = false;                          // 是否为静态字段
 
   ClassField() = default;
   ClassField(const std::string &name, std::shared_ptr<Type> type,
-             AccessModifier access = AccessModifier::Public)
-      : name(name), type(type), access(access) {}
+             AccessModifier access = AccessModifier::Public,
+             bool isStatic = false)
+      : name(name), type(type), access(access), isStatic(isStatic) {}
 
   // 添加拷贝构造函数
   ClassField(const ClassField &) = default;
@@ -164,6 +169,10 @@ public:
   // 检查是否有析构函数
   bool hasDestructor() const;
 
+  // 检查是否为抽象类
+  bool isAbstract() const { return isAbstract_; }
+  void setAbstract(bool isAbstract) { isAbstract_ = isAbstract; }
+
 protected:
   // 具体类型的兼容性检查实现
   bool isCompatibleWithImpl(const Type &other) const override;
@@ -179,6 +188,7 @@ private:
   std::unordered_map<std::string, ClassMethod> methods;      // 方法列表
   std::unordered_map<std::string, ClassField> fields;        // 字段列表
   std::unordered_map<std::string, ClassProperty> properties; // 属性列表
+  bool isAbstract_ = false;                                  // 是否为抽象类
 };
 
 } // namespace types

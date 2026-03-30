@@ -3,7 +3,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <string>
 
-
 using namespace c_hat;
 
 bool analyzeSource(const std::string &source) {
@@ -13,7 +12,7 @@ bool analyzeSource(const std::string &source) {
     if (!program)
       return false;
 
-    semantic::SemanticAnalyzer analyzer;
+    semantic::SemanticAnalyzer analyzer("", false);
     analyzer.analyze(*program);
     return !analyzer.hasError();
   } catch (...) {

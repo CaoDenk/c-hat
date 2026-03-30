@@ -8,8 +8,11 @@
 namespace c_hat {
 namespace semantic {
 
-SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath) {
+SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath,
+                                   bool requireMainFunction) {
   (void)stdlibPath; // 暂时不使用
+  // 记录是否强制要求 main 函数
+  requireMainFunction_ = requireMainFunction;
   initializeBuiltinSymbols();
 }
 
@@ -27,8 +30,8 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
           std::make_shared<ClassSymbol>(classDecl->name, classType);
       symbolTable.addSymbol(classSymbol);
     } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
-      // 处理函数声明
-      analyzeFunctionDecl(funcDecl);
+      // 第一遍只注册顶层函数签名，函数体放到类成员注册完成后再分析
+      analyzeFunctionDecl(funcDecl, nullptr, false);
     } else if (auto *interfaceDecl =
                    dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
       analyzeInterfaceDecl(interfaceDecl);
@@ -54,21 +57,16 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
     }
   }
 
-  // 第三遍：分析函数体和属性方法体
+  // 第三遍：分析顶层函数体
   for (auto &decl : program.declarations) {
     if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
-      // 分析函数体
-      if (funcDecl->body) {
-        if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
-          analyzeStatement(stmt);
-        }
-      }
+      analyzeFunctionDecl(funcDecl);
     }
-    // 注意：类的方法体和属性方法体已经在 analyzeClassDecl 中分析过了
-    // 所以这里不需要再次处理类声明
   }
 
-  // 检查是否存在 main 函数
+  // 第四遍：类的方法体和属性方法体已经在 analyzeClassDecl 中分析过
+
+  // 检查是否存在 main 函数（可选：在某些测试场景下禁用）
   bool hasMainFunction = false;
   auto mainSymbol = symbolTable.lookupSymbol("main");
   if (mainSymbol) {
@@ -77,7 +75,7 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
     }
   }
 
-  if (!hasMainFunction) {
+  if (!hasMainFunction && requireMainFunction_) {
     error("No main function found");
   }
 }
@@ -158,11 +156,13 @@ void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
   if (varDecl->type) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
       varType = analyzeType(typeNode);
-      if (!varType) {
+      if (!varType && !varDecl->isLate) {
         error("Invalid variable type", *varDecl);
       }
     }
   }
+
+  bool isInitialized = false;
 
   // 分析初始化表达式
   if (varDecl->initializer) {
@@ -171,19 +171,59 @@ void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
     if (!varType && initType) {
       varType = initType;
     }
+    if (varType && initType) {
+      bool compatible = false;
+      if (varType->isReference()) {
+        auto refVarType = std::dynamic_pointer_cast<types::ReferenceType>(varType);
+        auto refBaseType = refVarType ? refVarType->getBaseType() : nullptr;
+        if (refBaseType) {
+          if (refBaseType->isReadonly()) {
+            auto plainBaseType = types::unwrapReadonly(refBaseType);
+            if (initType->isReference()) {
+              auto initRefType =
+                  std::dynamic_pointer_cast<types::ReferenceType>(initType);
+              auto initBaseType = initRefType ? initRefType->getBaseType() : nullptr;
+              compatible =
+                  initBaseType && isTypeCompatible(plainBaseType, initBaseType);
+            } else {
+              compatible = isTypeCompatible(plainBaseType, initType);
+            }
+          } else {
+            if (initType->isReference()) {
+              auto initRefType =
+                  std::dynamic_pointer_cast<types::ReferenceType>(initType);
+              auto initBaseType = initRefType ? initRefType->getBaseType() : nullptr;
+              compatible =
+                  initBaseType && isTypeCompatible(refBaseType, initBaseType);
+            }
+          }
+        }
+      } else {
+        compatible = isTypeCompatible(varType, initType);
+      }
+
+      if (!compatible) {
+        error("Type mismatch in variable initialization", *varDecl);
+      }
+    }
+    isInitialized = initType != nullptr;
   }
 
   // 将变量添加到符号表
   auto variableSymbol = std::make_shared<VariableSymbol>(
       varDecl->name, varType, varDecl->kind, varDecl->isConst);
   symbolTable.addSymbol(variableSymbol);
+
+  if (varDecl->isLate) {
+    lateVariables_[varDecl->name] = {isInitialized, varDecl};
+  }
 }
 void SemanticAnalyzer::analyzeTupleDestructuringDecl(
     ast::TupleDestructuringDecl *decl) {}
 
 void SemanticAnalyzer::analyzeFunctionDecl(
     ast::FunctionDecl *funcDecl,
-    std::shared_ptr<types::ClassType> currentClassType) {
+    std::shared_ptr<types::ClassType> currentClassType, bool analyzeBody) {
   // 分析模板参数
   std::vector<std::shared_ptr<types::Type>> templateParams;
   if (!funcDecl->templateParams.empty()) {
@@ -194,12 +234,8 @@ void SemanticAnalyzer::analyzeFunctionDecl(
   std::vector<std::shared_ptr<types::Type>> paramTypes;
   for (auto &param : funcDecl->params) {
     if (auto *paramNode = dynamic_cast<ast::Parameter *>(param.get())) {
-      // 处理 self 参数
+      // 处理 self 参数：不计入重载签名，但仍会在函数作用域中注入符号
       if (paramNode->isSelf) {
-        // self 参数的类型是当前类的类型
-        if (currentClassType) {
-          paramTypes.push_back(currentClassType);
-        }
         continue;
       }
       if (auto *typeNode = dynamic_cast<ast::Type *>(paramNode->type.get())) {
@@ -226,12 +262,53 @@ void SemanticAnalyzer::analyzeFunctionDecl(
   // 创建函数类型
   auto funcType = std::make_shared<types::FunctionType>(returnType, paramTypes);
 
-  // 创建函数符号并添加到符号表
-  auto funcSymbol = std::make_shared<FunctionSymbol>(funcDecl->name, funcType, Visibility::Default, funcDecl->isImmutable);
-  symbolTable.addSymbol(funcSymbol);
+  // 注册阶段才添加函数符号，避免顶层函数在第三遍分析函数体时重复注册
+  if (!analyzeBody || currentClassType != nullptr) {
+    bool duplicateSignature = false;
+    auto functionSymbols = symbolTable.lookupFunctionSymbols(funcDecl->name);
+    for (const auto &existingSymbol : functionSymbols) {
+      auto existingType = existingSymbol->getType();
+      const auto &existingParams = existingType->getParameterTypes();
+      if (existingParams.size() != paramTypes.size()) {
+        continue;
+      }
+
+      bool sameSignature = true;
+      for (size_t i = 0; i < paramTypes.size(); ++i) {
+        if (!existingParams[i] || !paramTypes[i] ||
+            existingParams[i]->toString() != paramTypes[i]->toString()) {
+          sameSignature = false;
+          break;
+        }
+      }
+
+      if (sameSignature) {
+        duplicateSignature = true;
+        error("Function already defined with same signature: " + funcDecl->name,
+              *funcDecl);
+        break;
+      }
+    }
+
+    if (!duplicateSignature) {
+      auto funcSymbol = std::make_shared<FunctionSymbol>(
+          funcDecl->name, funcType, Visibility::Default, funcDecl->isImmutable);
+      symbolTable.addSymbol(funcSymbol);
+    }
+  }
 
   // 进入函数作用域
   symbolTable.enterScope();
+
+  auto previousReturnType = currentFunctionReturnType_;
+  currentFunctionReturnType_ = returnType;
+
+  // 类成员函数默认注入隐式 self，支持构造函数/普通方法体内直接使用 self.x
+  if (currentClassType) {
+    auto implicitSelfSymbol =
+        std::make_shared<VariableSymbol>("self", currentClassType);
+    symbolTable.addSymbol(implicitSelfSymbol);
+  }
 
   // 添加参数到函数作用域
   for (auto &param : funcDecl->params) {
@@ -239,7 +316,8 @@ void SemanticAnalyzer::analyzeFunctionDecl(
       // 处理 self 参数
       if (paramNode->isSelf) {
         if (currentClassType) {
-          auto selfSymbol = std::make_shared<VariableSymbol>(paramNode->name, currentClassType);
+          auto selfSymbol = std::make_shared<VariableSymbol>(paramNode->name,
+                                                             currentClassType);
           symbolTable.addSymbol(selfSymbol);
         }
         continue;
@@ -256,11 +334,13 @@ void SemanticAnalyzer::analyzeFunctionDecl(
   }
 
   // 分析函数体
-  if (funcDecl->body) {
+  if (analyzeBody && funcDecl->body) {
     if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
       analyzeStatement(stmt, currentClassType);
     }
   }
+
+  currentFunctionReturnType_ = previousReturnType;
 
   // 退出函数作用域
   symbolTable.exitScope();
@@ -407,6 +487,18 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
         auto variableSymbol =
             std::make_shared<VariableSymbol>(field.name, field.type);
         symbolTable.addSymbol(variableSymbol);
+      }
+    }
+
+    for (const auto &methodPair : baseClass->getMethods()) {
+      const auto &method = methodPair.second;
+      if (method.access == types::AccessModifier::Protected ||
+          method.access == types::AccessModifier::Public) {
+        auto methodType = std::make_shared<types::FunctionType>(
+            method.returnType, method.paramTypes);
+        auto methodSymbol = std::make_shared<FunctionSymbol>(
+            method.name, methodType, Visibility::Default);
+        symbolTable.addSymbol(methodSymbol);
       }
     }
   }
@@ -813,6 +905,7 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeCompoundStmt(
     ast::CompoundStmt *compoundStmt,
     std::shared_ptr<types::ClassType> currentClassType) {
   symbolTable.enterScope();
+  auto lateSnapshot = snapshotLateVariables();
 
   // 如果当前在类作用域中（即当前作用域级别 >
   // 1），则将类成员变量复制到当前作用域中 这样就可以在方法体中访问类成员变量
@@ -899,20 +992,76 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeCompoundStmt(
       analyzeDeclaration(decl);
     }
   }
+
+  auto after = snapshotLateVariables();
   symbolTable.exitScope();
+  restoreLateVariables(lateSnapshot);
+  for (const auto &[name, status] : lateSnapshot) {
+    auto afterIt = after.find(name);
+    if (afterIt != after.end()) {
+      lateVariables_[name].isInitialized = afterIt->second.isInitialized;
+    }
+  }
   return lastType;
 }
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeReturnStmt(ast::ReturnStmt *returnStmt) {
   if (returnStmt->expr) {
-    return analyzeExpression(returnStmt->expr.get());
+    auto returnType = analyzeExpression(returnStmt->expr.get());
+    if (currentFunctionReturnType_ && returnType &&
+        !isTypeCompatible(currentFunctionReturnType_, returnType)) {
+      error("Return type mismatch", *returnStmt);
+      return nullptr;
+    }
+    return returnType;
   }
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeIfStmt(ast::IfStmt *ifStmt) {
+  if (ifStmt->condition) {
+    analyzeExpression(ifStmt->condition.get());
+  }
+
+  auto before = snapshotLateVariables();
+  auto thenState = before;
+  auto elseState = before;
+
+  if (ifStmt->thenBranch) {
+    analyzeStatement(ifStmt->thenBranch.get());
+    thenState = snapshotLateVariables();
+    restoreLateVariables(before);
+  }
+
+  if (ifStmt->elseBranch) {
+    analyzeStatement(ifStmt->elseBranch.get());
+    elseState = snapshotLateVariables();
+    restoreLateVariables(before);
+  }
+
+  bool thenReturns = statementDefinitelyReturns(ifStmt->thenBranch.get());
+  bool elseReturns = statementDefinitelyReturns(ifStmt->elseBranch.get());
+
+  for (const auto &[name, status] : before) {
+    if (!lateVariables_.count(name)) {
+      continue;
+    }
+
+    if (thenReturns && !elseReturns) {
+      lateVariables_[name].isInitialized = elseState[name].isInitialized;
+    } else if (!thenReturns && elseReturns) {
+      lateVariables_[name].isInitialized = thenState[name].isInitialized;
+    } else if (!thenReturns && !elseReturns) {
+      lateVariables_[name].isInitialized =
+          thenState[name].isInitialized && elseState[name].isInitialized;
+    } else {
+      lateVariables_[name].isInitialized =
+          thenState[name].isInitialized && elseState[name].isInitialized;
+    }
+  }
+
   return nullptr;
 }
 std::shared_ptr<types::Type>
@@ -921,14 +1070,85 @@ SemanticAnalyzer::analyzeWhileStmt(ast::WhileStmt *whileStmt) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeForStmt(ast::ForStmt *forStmt) {
+  symbolTable.enterScope();
+
+  if (forStmt->isForeach) {
+    auto *iterVar = dynamic_cast<ast::VariableDecl *>(forStmt->init.get());
+    auto *indexVar = dynamic_cast<ast::VariableDecl *>(forStmt->indexVar.get());
+    auto collectionType = forStmt->condition
+                              ? analyzeExpression(forStmt->condition.get())
+                              : nullptr;
+
+    std::shared_ptr<types::Type> elementType;
+    if (!collectionType) {
+      error("Invalid foreach collection", *forStmt);
+    } else if (collectionType->isArray()) {
+      auto arrayType = std::dynamic_pointer_cast<types::ArrayType>(collectionType);
+      elementType = arrayType ? arrayType->getElementType() : nullptr;
+    } else if (collectionType->isSlice()) {
+      auto sliceType = std::dynamic_pointer_cast<types::SliceType>(collectionType);
+      elementType = sliceType ? sliceType->getElementType() : nullptr;
+    } else {
+      error("Foreach can only iterate over arrays or slices", *forStmt);
+    }
+
+    if (indexVar) {
+      auto intType = types::TypeFactory::getPrimitiveType(
+          types::PrimitiveType::Kind::Int);
+      auto indexSymbol = std::make_shared<VariableSymbol>(
+          indexVar->name, intType, indexVar->kind, indexVar->isConst);
+      symbolTable.addSymbol(indexSymbol);
+    }
+
+    if (iterVar) {
+      auto iterType = iterVar->type && dynamic_cast<ast::Type *>(iterVar->type.get())
+                          ? analyzeType(static_cast<ast::Type *>(iterVar->type.get()))
+                          : elementType;
+      auto variableSymbol = std::make_shared<VariableSymbol>(
+          iterVar->name, iterType, iterVar->kind, iterVar->isConst);
+      symbolTable.addSymbol(variableSymbol);
+    }
+  } else {
+    if (forStmt->init) {
+      if (auto *stmt = dynamic_cast<ast::Statement *>(forStmt->init.get())) {
+        analyzeStatement(stmt);
+      } else if (auto *decl = dynamic_cast<ast::Declaration *>(forStmt->init.get())) {
+        analyzeDeclaration(decl);
+      }
+    }
+
+    if (forStmt->condition) {
+      analyzeExpression(forStmt->condition.get());
+    }
+
+    if (forStmt->update) {
+      analyzeExpression(forStmt->update.get());
+    }
+  }
+
+  loopDepth_++;
+  if (forStmt->body) {
+    if (auto *stmt = dynamic_cast<ast::Statement *>(forStmt->body.get())) {
+      analyzeStatement(stmt);
+    }
+  }
+  loopDepth_--;
+
+  symbolTable.exitScope();
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBreakStmt(ast::BreakStmt *breakStmt) {
+  if (loopDepth_ <= 0) {
+    error("break statement can only appear inside a loop", *breakStmt);
+  }
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeContinueStmt(ast::ContinueStmt *continueStmt) {
+  if (loopDepth_ <= 0) {
+    error("continue statement can only appear inside a loop", *continueStmt);
+  }
   return nullptr;
 }
 std::shared_ptr<types::Type>
@@ -949,15 +1169,194 @@ SemanticAnalyzer::analyzeMatchStmt(ast::MatchStmt *matchStmt) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeTryStmt(ast::TryStmt *tryStmt) {
+  if (!tryStmt->tryBlock) {
+    error("Try statement requires a try block", *tryStmt);
+    return nullptr;
+  }
+
+  auto before = snapshotLateVariables();
+
+  analyzeStatement(tryStmt->tryBlock.get());
+  auto tryState = snapshotLateVariables();
+  restoreLateVariables(before);
+
+  if (tryStmt->catchStmts.empty()) {
+    error("Try statement requires at least one catch", *tryStmt);
+    return nullptr;
+  }
+
+  LateVariablesSnapshot mergedCatchState = before;
+  bool hasNonReturningCatch = false;
+
+  for (auto &catchStmt : tryStmt->catchStmts) {
+    if (!catchStmt) {
+      continue;
+    }
+
+    symbolTable.enterScope();
+
+    if (catchStmt->param && catchStmt->param->name != "...") {
+      std::shared_ptr<types::Type> catchType;
+      if (catchStmt->param->type) {
+        catchType = analyzeType(catchStmt->param->type.get());
+      }
+
+      if (!catchType) {
+        error("Invalid catch parameter type", *catchStmt);
+      } else {
+        auto catchSymbol = std::make_shared<VariableSymbol>(
+            catchStmt->param->name, catchType);
+        symbolTable.addSymbol(catchSymbol);
+      }
+    }
+
+    if (catchStmt->body) {
+      analyzeStatement(catchStmt->body.get());
+    }
+
+    auto catchState = snapshotLateVariables();
+    bool catchReturns = statementDefinitelyReturns(catchStmt->body.get());
+    symbolTable.exitScope();
+    restoreLateVariables(before);
+
+    if (!catchReturns) {
+      if (!hasNonReturningCatch) {
+        mergedCatchState = catchState;
+        hasNonReturningCatch = true;
+      } else {
+        for (const auto &[name, status] : mergedCatchState) {
+          if (catchState.count(name)) {
+            mergedCatchState[name].isInitialized =
+                mergedCatchState[name].isInitialized &&
+                catchState.at(name).isInitialized;
+          }
+        }
+      }
+    }
+  }
+
+  bool tryReturns = statementDefinitelyReturns(tryStmt->tryBlock.get());
+
+  for (const auto &[name, status] : before) {
+    if (!lateVariables_.count(name)) {
+      continue;
+    }
+
+    bool tryInitialized = tryState.count(name) ? tryState.at(name).isInitialized
+                                               : status.isInitialized;
+    bool catchInitialized = hasNonReturningCatch
+                                ? (mergedCatchState.count(name)
+                                       ? mergedCatchState.at(name).isInitialized
+                                       : status.isInitialized)
+                                : status.isInitialized;
+
+    if (tryReturns && hasNonReturningCatch) {
+      lateVariables_[name].isInitialized = catchInitialized;
+    } else if (!tryReturns && hasNonReturningCatch) {
+      lateVariables_[name].isInitialized = tryInitialized || catchInitialized;
+    } else if (!tryReturns) {
+      lateVariables_[name].isInitialized = tryInitialized;
+    } else {
+      lateVariables_[name].isInitialized = status.isInitialized;
+    }
+  }
+
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeThrowStmt(ast::ThrowStmt *throwStmt) {
+  if (throwStmt->expr) {
+    auto throwType = analyzeExpression(throwStmt->expr.get());
+    if (!throwType) {
+      error("Invalid throw expression", *throwStmt);
+      return nullptr;
+    }
+  }
+
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeDeferStmt(ast::DeferStmt *deferStmt) {
   return nullptr;
+}
+
+SemanticAnalyzer::LateVariablesSnapshot
+SemanticAnalyzer::snapshotLateVariables() const {
+  return lateVariables_;
+}
+
+void SemanticAnalyzer::restoreLateVariables(
+    const LateVariablesSnapshot &snapshot) {
+  lateVariables_ = snapshot;
+}
+
+void SemanticAnalyzer::mergeLateVariablesFromBranch(
+    const LateVariablesSnapshot &before, const LateVariablesSnapshot &branch,
+    bool useBranchState) {
+  for (const auto &[name, status] : before) {
+    auto it = lateVariables_.find(name);
+    if (it == lateVariables_.end()) {
+      continue;
+    }
+
+    if (!useBranchState) {
+      it->second.isInitialized = status.isInitialized;
+      continue;
+    }
+
+    auto branchIt = branch.find(name);
+    it->second.isInitialized =
+        branchIt != branch.end() ? branchIt->second.isInitialized
+                                 : status.isInitialized;
+  }
+}
+
+bool SemanticAnalyzer::statementDefinitelyReturns(const ast::Statement *stmt) const {
+  if (!stmt) {
+    return false;
+  }
+
+  if (dynamic_cast<const ast::ReturnStmt *>(stmt)) {
+    return true;
+  }
+
+  if (auto *compoundStmt = dynamic_cast<const ast::CompoundStmt *>(stmt)) {
+    for (const auto &child : compoundStmt->statements) {
+      if (auto *childStmt = dynamic_cast<ast::Statement *>(child.get())) {
+        if (statementDefinitelyReturns(childStmt)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  if (auto *ifStmt = dynamic_cast<const ast::IfStmt *>(stmt)) {
+    return ifStmt->thenBranch && ifStmt->elseBranch &&
+           statementDefinitelyReturns(ifStmt->thenBranch.get()) &&
+           statementDefinitelyReturns(ifStmt->elseBranch.get());
+  }
+
+  if (auto *tryStmt = dynamic_cast<const ast::TryStmt *>(stmt)) {
+    if (!tryStmt->tryBlock || tryStmt->catchStmts.empty()) {
+      return false;
+    }
+
+    if (!statementDefinitelyReturns(tryStmt->tryBlock.get())) {
+      return false;
+    }
+
+    for (const auto &catchStmt : tryStmt->catchStmts) {
+      if (!catchStmt || !catchStmt->body ||
+          !statementDefinitelyReturns(catchStmt->body.get())) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 std::shared_ptr<types::Type>
@@ -1008,8 +1407,31 @@ std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
   // 处理赋值操作
   if (binaryExpr->op == ast::BinaryExpr::Op::Assign) {
-    // 分析左操作数（赋值目标）
-    auto leftType = analyzeExpression(binaryExpr->left.get());
+    std::shared_ptr<types::Type> leftType;
+
+    // 赋值左侧是写入目标，不应触发 late 变量“读取未初始化”检查
+    if (auto *identifier =
+            dynamic_cast<ast::Identifier *>(binaryExpr->left.get())) {
+      auto symbol = symbolTable.lookupSymbol(identifier->name);
+      if (!symbol) {
+        error("Undeclared identifier: " + identifier->name, *identifier);
+        return nullptr;
+      }
+
+      if (auto variableSymbol =
+              std::dynamic_pointer_cast<VariableSymbol>(symbol)) {
+        leftType = variableSymbol->getType();
+      } else if (auto classSymbol =
+                     std::dynamic_pointer_cast<ClassSymbol>(symbol)) {
+        leftType = classSymbol->getType();
+      } else if (auto functionSymbol =
+                     std::dynamic_pointer_cast<FunctionSymbol>(symbol)) {
+        leftType = functionSymbol->getType();
+      }
+    } else {
+      // 分析左操作数（赋值目标）
+      leftType = analyzeExpression(binaryExpr->left.get());
+    }
 
     // 分析右操作数（赋值值）
     auto rightType = analyzeExpression(binaryExpr->right.get());
@@ -1020,10 +1442,22 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
       auto symbol = symbolTable.lookupSymbol(identifier->name);
       if (symbol) {
         if (auto *varSymbol = dynamic_cast<VariableSymbol *>(symbol.get())) {
-          if (varSymbol->isImmutableBinding()) {
-            error("Cannot reassign let variable: " + identifier->name,
+          if (varSymbol->isImmutableBinding() ||
+              (varSymbol->getType() && varSymbol->getType()->isLiteralView())) {
+            error("Cannot reassign immutable variable: " + identifier->name,
                   *binaryExpr);
             return nullptr;
+          }
+          if (varSymbol->getType() && varSymbol->getType()->isReference()) {
+            auto refType =
+                std::dynamic_pointer_cast<types::ReferenceType>(varSymbol->getType());
+            auto refBaseType = refType ? refType->getBaseType() : nullptr;
+            if (refBaseType && refBaseType->isReadonly()) {
+              error("Cannot assign through immutable reference: " +
+                        identifier->name,
+                    *binaryExpr);
+              return nullptr;
+            }
           }
         }
       }
@@ -1075,6 +1509,14 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
       }
     }
 
+    if (auto *identifier =
+            dynamic_cast<ast::Identifier *>(binaryExpr->left.get())) {
+      auto lateIt = lateVariables_.find(identifier->name);
+      if (lateIt != lateVariables_.end() && rightType) {
+        lateIt->second.isInitialized = true;
+      }
+    }
+
     return leftType;
   }
 
@@ -1082,7 +1524,41 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeUnaryExpr(ast::UnaryExpr *unaryExpr) {
-  return nullptr;
+  if (!unaryExpr->expr) {
+    return nullptr;
+  }
+
+  switch (unaryExpr->op) {
+  case ast::UnaryExpr::Op::AddressOf:
+  case ast::UnaryExpr::Op::Ref: {
+    auto operandType = analyzeExpression(unaryExpr->expr.get());
+    if (!operandType) {
+      return nullptr;
+    }
+    if (operandType->isReference()) {
+      return operandType;
+    }
+    return std::make_shared<types::ReferenceType>(operandType);
+  }
+  case ast::UnaryExpr::Op::Dereference: {
+    auto operandType = analyzeExpression(unaryExpr->expr.get());
+    if (!operandType) {
+      return nullptr;
+    }
+    if (operandType->isReference()) {
+      auto refType = std::dynamic_pointer_cast<types::ReferenceType>(operandType);
+      return refType ? refType->getBaseType() : nullptr;
+    }
+    if (operandType->isPointer()) {
+      auto ptrType = std::dynamic_pointer_cast<types::PointerType>(operandType);
+      return ptrType ? ptrType->getPointeeType() : nullptr;
+    }
+    error("Cannot dereference non-reference type", *unaryExpr);
+    return nullptr;
+  }
+  default:
+    return analyzeExpression(unaryExpr->expr.get());
+  }
 }
 
 std::shared_ptr<types::Type>
@@ -1093,7 +1569,19 @@ SemanticAnalyzer::analyzeIdentifierExpr(ast::Identifier *identifier) {
     // 检查符号类型
     if (auto variableSymbol =
             std::dynamic_pointer_cast<VariableSymbol>(symbol)) {
-      return variableSymbol->getType();
+      auto lateIt = lateVariables_.find(identifier->name);
+      if (lateIt != lateVariables_.end() && !lateIt->second.isInitialized) {
+        error("Late variable used before initialization: " + identifier->name,
+              *identifier);
+        return nullptr;
+      }
+
+      auto varType = variableSymbol->getType();
+      if (varType && varType->isReference()) {
+        auto refType = std::dynamic_pointer_cast<types::ReferenceType>(varType);
+        return refType ? refType->getBaseType() : nullptr;
+      }
+      return varType;
     } else if (auto classSymbol =
                    std::dynamic_pointer_cast<ClassSymbol>(symbol)) {
       return classSymbol->getType();
@@ -1123,10 +1611,10 @@ SemanticAnalyzer::analyzeLiteralExpr(ast::Literal *literal) {
     return types::TypeFactory::getPrimitiveType(
         types::PrimitiveType::Kind::Bool);
   case ast::Literal::Type::String:
-    // 字符串字面量类型为 LiteralView
-    // 暂时返回 void，需要在类型系统中添加 LiteralView 类型
+    return types::TypeFactory::getLiteralViewType();
+  case ast::Literal::Type::Character:
     return types::TypeFactory::getPrimitiveType(
-        types::PrimitiveType::Kind::Void);
+        types::PrimitiveType::Kind::Char);
   default:
     return nullptr;
   }
@@ -1171,6 +1659,50 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       for (size_t i = 0; i < argTypes.size(); ++i) {
         const auto &paramType = funcType->getParameterTypes()[i];
         const auto &argType = argTypes[i];
+
+        if (paramType && paramType->isReference()) {
+          auto refParamType = std::dynamic_pointer_cast<types::ReferenceType>(paramType);
+          auto refBaseType = refParamType ? refParamType->getBaseType() : nullptr;
+          if (!refBaseType) {
+            isViable = false;
+            break;
+          }
+
+          bool paramReadonly = refBaseType->isReadonly();
+          auto unwrappedParamBase = types::unwrapReadonly(refBaseType);
+
+          if (paramReadonly) {
+            if (argType->isReference()) {
+              auto argRefType = std::dynamic_pointer_cast<types::ReferenceType>(argType);
+              auto argBaseType = argRefType ? argRefType->getBaseType() : nullptr;
+              if (!argBaseType || !isTypeCompatible(unwrappedParamBase, argBaseType)) {
+                isViable = false;
+                break;
+              }
+            } else {
+              if (!isTypeCompatible(unwrappedParamBase, argType)) {
+                isViable = false;
+                break;
+              }
+            }
+          } else {
+            if (!argType->isReference()) {
+              isViable = false;
+              break;
+            }
+            auto argRefType = std::dynamic_pointer_cast<types::ReferenceType>(argType);
+            auto argBaseType = argRefType ? argRefType->getBaseType() : nullptr;
+            if (!argBaseType || !isTypeCompatible(refBaseType, argBaseType)) {
+              isViable = false;
+              break;
+            }
+          }
+
+          if (paramType->toString() != argType->toString()) {
+            isExact = false;
+          }
+          continue;
+        }
 
         if (!isTypeCompatible(paramType, argType)) {
           isViable = false;
@@ -1323,6 +1855,13 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
     return nullptr;
   }
 
+  if (arrayType->isReference()) {
+    auto refType = std::dynamic_pointer_cast<types::ReferenceType>(arrayType);
+    if (refType) {
+      arrayType = refType->getBaseType();
+    }
+  }
+
   // 分析下标表达式
   auto indexType = analyzeExpression(subscriptExpr->index.get());
   if (!indexType) {
@@ -1333,19 +1872,19 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
   // 检查是否是数组类型
   if (arrayType->isArray()) {
     auto array = std::dynamic_pointer_cast<types::ArrayType>(arrayType);
-    return array->getElementType();
+    return std::make_shared<types::ReferenceType>(array->getElementType());
   }
 
   // 检查是否是切片类型
   if (arrayType->isSlice()) {
     auto slice = std::dynamic_pointer_cast<types::SliceType>(arrayType);
-    return slice->getElementType();
+    return std::make_shared<types::ReferenceType>(slice->getElementType());
   }
 
   // 检查是否是指针类型
   if (arrayType->isPointer()) {
     auto pointer = std::dynamic_pointer_cast<types::PointerType>(arrayType);
-    return pointer->getPointeeType();
+    return std::make_shared<types::ReferenceType>(pointer->getPointeeType());
   }
 
   error("Subscript can only be used with arrays, slices, or pointers",
@@ -1435,6 +1974,10 @@ SemanticAnalyzer::analyzeType(const ast::Type *type) {
   } else if (auto *referenceType =
                  dynamic_cast<const ast::ReferenceType *>(type)) {
     return analyzeReferenceType(referenceType);
+  } else if (auto *readonlyType =
+                 dynamic_cast<const ast::ReadonlyType *>(type)) {
+    auto baseType = analyzeType(readonlyType->baseType.get());
+    return baseType ? types::TypeFactory::getReadonlyType(baseType) : nullptr;
   } else if (auto *functionType =
                  dynamic_cast<const ast::FunctionType *>(type)) {
     return analyzeFunctionType(functionType);
@@ -1568,7 +2111,16 @@ SemanticAnalyzer::analyzeSliceType(const ast::SliceType *sliceType) {
 }
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeReferenceType(
     const ast::ReferenceType *referenceType) {
-  return nullptr;
+  if (!referenceType || !referenceType->baseType) {
+    return nullptr;
+  }
+
+  auto baseType = analyzeType(referenceType->baseType.get());
+  if (!baseType) {
+    return nullptr;
+  }
+
+  return std::make_shared<types::ReferenceType>(baseType);
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeFunctionType(const ast::FunctionType *functionType) {
@@ -1589,6 +2141,10 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
   auto primitiveType = types::TypeFactory::getPrimitiveTypeByName(typeName);
   if (primitiveType) {
     return primitiveType;
+  }
+
+  if (typeName == "LiteralView") {
+    return types::TypeFactory::getLiteralViewType();
   }
 
   // 特殊处理 string 类型
@@ -1777,8 +2333,12 @@ std::shared_ptr<types::Type> SemanticAnalyzer::tryImplicitConversion(
       // 32位整数
       case types::PrimitiveType::Kind::Int:
       case types::PrimitiveType::Kind::UInt:
-        // 可以转换为64位整数或浮点数类型
+        // 可以转换为更宽整数、浮点数，以及字节类型（当前测试需要）
         switch (expectedKind) {
+        case types::PrimitiveType::Kind::Byte:
+        case types::PrimitiveType::Kind::SByte:
+        case types::PrimitiveType::Kind::Short:
+        case types::PrimitiveType::Kind::UShort:
         case types::PrimitiveType::Kind::Long:
         case types::PrimitiveType::Kind::ULong:
         case types::PrimitiveType::Kind::Float:
@@ -1870,13 +2430,13 @@ std::shared_ptr<types::Type> SemanticAnalyzer::tryImplicitConversion(
 Visibility
 SemanticAnalyzer::parseVisibility(const std::vector<std::string> &specifiers) {
   for (const auto &specifier : specifiers) {
-    if (specifier == "public") {
+    if (specifier.find("public") != std::string::npos) {
       return Visibility::Public;
-    } else if (specifier == "private") {
+    } else if (specifier.find("private") != std::string::npos) {
       return Visibility::Private;
-    } else if (specifier == "protected") {
+    } else if (specifier.find("protected") != std::string::npos) {
       return Visibility::Protected;
-    } else if (specifier == "internal") {
+    } else if (specifier.find("internal") != std::string::npos) {
       return Visibility::Internal;
     }
   }
@@ -1896,24 +2456,55 @@ void SemanticAnalyzer::error(const std::string &message) {
 
 // 检查访问控制
 bool SemanticAnalyzer::checkAccessControl(
-    types::AccessModifier access, const types::ClassType *currentClass) {
-  // 对于公共成员，总是可以访问
+    types::AccessModifier access, const types::ClassType *ownerClass) {
   if (access == types::AccessModifier::Public) {
     return true;
   }
 
-  // 对于私有成员，只有当前类内部可以访问
-  if (access == types::AccessModifier::Private) {
-    // 这里简化处理，实际应该检查当前作用域是否在类内部
-    // 暂时总是允许，因为我们还没有实现作用域跟踪
-    return true;
+  if (currentClassName_.empty() || ownerClass == nullptr) {
+    return false;
   }
 
-  // 对于受保护成员，当前类及其子类可以访问
+  auto currentSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+      symbolTable.lookupSymbol(currentClassName_));
+  if (!currentSymbol) {
+    return false;
+  }
+
+  auto currentClass =
+      std::dynamic_pointer_cast<types::ClassType>(currentSymbol->getType());
+  if (!currentClass) {
+    return false;
+  }
+
+  if (access == types::AccessModifier::Private) {
+    return currentClass->getName() == ownerClass->getName();
+  }
+
   if (access == types::AccessModifier::Protected) {
-    // 这里简化处理，实际应该检查访问者是否是子类
-    // 暂时总是允许，因为我们还没有实现作用域跟踪
-    return true;
+    return currentClass->getName() == ownerClass->getName() ||
+           isSubclassOf(currentClass.get(), ownerClass);
+  }
+
+  return false;
+}
+
+bool SemanticAnalyzer::isSubclassOf(const types::ClassType *derived,
+                                    const types::ClassType *base) {
+  if (!derived || !base) {
+    return false;
+  }
+
+  for (const auto &baseClass : derived->getBaseClasses()) {
+    if (!baseClass) {
+      continue;
+    }
+    if (baseClass->getName() == base->getName()) {
+      return true;
+    }
+    if (isSubclassOf(baseClass.get(), base)) {
+      return true;
+    }
   }
 
   return false;

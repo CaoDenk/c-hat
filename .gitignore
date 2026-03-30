@@ -5,3 +5,5 @@ build/
 build_tests/
 .cache/
 examples/
+.workbuddy/
+.claude/

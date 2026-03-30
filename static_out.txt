@@ -1,0 +1,46 @@
+Randomness seeded to: 1673330040
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+static_catch2_test.exe is a Catch2 v3.11.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+Static: global static variable
+  Top-level static variable
+-------------------------------------------------------------------------------
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(82)
+...............................................................................
+
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(85): FAILED:
+  CHECK( analyzeSource( "static int g_count = 0;\n" "func main() { g_count = 1; }") == true )
+with expansion:
+  false == true
+
+-------------------------------------------------------------------------------
+Static: static member variable
+  Static member access via class name
+-------------------------------------------------------------------------------
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(33)
+...............................................................................
+
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(38): FAILED:
+  CHECK( analyzeSource( "class Counter {\n" "  public static int count = 0;\n" "}\n" "func main() { int c = Counter.count; }") == true )
+with expansion:
+  false == true
+
+-------------------------------------------------------------------------------
+Static: static member function
+  Static function cannot access non-static members
+-------------------------------------------------------------------------------
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(68)
+...............................................................................
+
+D:\projects\CppProjs\c-hat\tests\static\StaticTest.cpp(74): FAILED:
+  CHECK( analyzeSource( "class Foo {\n" "  int val;\n" "  public static func bad() -> int { return val; }\n" "}\n" "func main() { }") == false )
+with expansion:
+  true == false
+
+===============================================================================
+test cases: 3 | 3 failed
+assertions: 8 | 5 passed | 3 failed
+

@@ -8,15 +8,14 @@ using namespace c_hat;
 
 bool analyzeSource(const std::string &source) {
   try {
-    std::string sourceWithMain = source + "\nfunc main() { }\n";
-    parser::Parser parser(sourceWithMain);
+    parser::Parser parser(source);
     auto program = parser.parseProgram();
     if (!program) {
       std::cerr << "Parse failed" << std::endl;
       return false;
     }
 
-    semantic::SemanticAnalyzer analyzer;
+    semantic::SemanticAnalyzer analyzer("", false);
     analyzer.analyze(*program);
     if (analyzer.hasError()) {
       std::cerr << "Semantic errors found" << std::endl;
@@ -83,6 +82,7 @@ TEST_CASE("Immutable: Mixed method styles", "[immutable][mixed]") {
         "}") == true);
   }
 }
+
 
 TEST_CASE("Immutable: Operator overload requires self", "[immutable][operator]") {
   SECTION("Operator+ with self!") {

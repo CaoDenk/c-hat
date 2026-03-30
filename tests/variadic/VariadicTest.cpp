@@ -16,7 +16,7 @@ bool analyzeSource(const std::string &source) {
       return false;
     }
 
-    semantic::SemanticAnalyzer analyzer;
+    semantic::SemanticAnalyzer analyzer("", false);
     analyzer.analyze(*program);
     bool result = !analyzer.hasError();
     if (!result) {

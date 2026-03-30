@@ -65,6 +65,9 @@ private:
   // 解析类声明
   std::unique_ptr<ast::ClassDecl> parseClassDecl();
 
+  // 解析接口声明
+  std::unique_ptr<ast::InterfaceDecl> parseInterfaceDecl();
+
   // 解析结构体声明
   std::unique_ptr<ast::StructDecl> parseStructDecl();
 
@@ -122,6 +125,12 @@ private:
 
   // 解析for语句
   std::unique_ptr<ast::ForStmt> parseForStmt();
+
+  // 解析foreach语句: foreach (var x : collection)
+  std::unique_ptr<ast::ForStmt> parseForeachStmt();
+
+  // 解析 foreach 迭代变量
+  std::unique_ptr<ast::VariableDecl> parseForeachVariableDecl();
 
   // 解析for初始化
   std::unique_ptr<ast::Node> parseForInit();

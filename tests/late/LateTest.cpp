@@ -7,13 +7,12 @@ using namespace c_hat;
 
 bool analyzeSource(const std::string &source) {
   try {
-    std::string sourceWithMain = source + "\nfunc main() { }\n";
-    parser::Parser parser(sourceWithMain);
+    parser::Parser parser(source);
     auto program = parser.parseProgram();
     if (!program)
       return false;
 
-    semantic::SemanticAnalyzer analyzer;
+    semantic::SemanticAnalyzer analyzer("", false);
     analyzer.analyze(*program);
     return !analyzer.hasError();
   } catch (...) {
