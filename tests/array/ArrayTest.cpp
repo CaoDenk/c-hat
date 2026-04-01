@@ -1,6 +1,7 @@
 #include "../src/parser/Parser.h"
 #include "../src/semantic/SemanticAnalyzer.h"
 #include <catch2/catch_test_macros.hpp>
+#include <iostream>
 #include <string>
 
 using namespace c_hat;
@@ -11,12 +12,20 @@ bool analyzeSource(const std::string &source) {
     std::string wrappedSource = "func main() { " + source + " }";
     parser::Parser parser(wrappedSource);
     auto program = parser.parseProgram();
-    if (!program)
+    if (!program) {
+      std::cout << "Parser failed" << std::endl;
       return false;
+    }
 
     semantic::SemanticAnalyzer analyzer;
     analyzer.analyze(*program);
+    if (analyzer.hasError()) {
+      std::cout << "Semantic analysis failed for: " << source << std::endl;
+    }
     return !analyzer.hasError();
+  } catch (const std::exception &e) {
+    std::cout << "Exception: " << e.what() << std::endl;
+    return false;
   } catch (...) {
     return false;
   }

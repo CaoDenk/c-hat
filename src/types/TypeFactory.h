@@ -5,6 +5,7 @@
 #include "FunctionType.h"
 #include "GenericType.h"
 #include "LiteralViewType.h"
+#include "NullableType.h"
 #include "PointerType.h"
 #include "PrimitiveType.h"
 #include "ReadonlyType.h"
@@ -77,6 +78,9 @@ public:
 
   // 获取引用类型
   static std::shared_ptr<Type> getReferenceType(std::shared_ptr<Type> baseType);
+
+  // 获取可空类型
+  static std::shared_ptr<Type> getNullableType(std::shared_ptr<Type> baseType);
 };
 
 } // namespace types

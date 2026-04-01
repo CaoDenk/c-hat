@@ -13,14 +13,14 @@ LLVMCodeGenerator::LLVMCodeGenerator(const std::string &moduleName)
     : generator_(moduleName) {}
 
 void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
-  // 先添加内置类型 LiteralView 到 structTypes_
-  structTypes_["LiteralView"] =
+  // 先添加内置类型 literalview 到 structTypes_
+  structTypes_["literalview"] =
       static_cast<llvm::StructType *>(getLiteralViewType());
-  // 添加 LiteralView 的成员信息
+  // 添加 literalview 的成员信息
   std::unordered_map<std::string, unsigned> literalViewInfo;
   literalViewInfo["ptr"] = 0;
   literalViewInfo["len"] = 1;
-  structInfo_["LiteralView"] = literalViewInfo;
+  structInfo_["literalview"] = literalViewInfo;
 
   // 先处理类型声明（不处理 VariableDecl）
   for (auto &decl : program->declarations) {
@@ -29,6 +29,15 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
         type == ast::NodeType::TypeAliasDecl ||
         type == ast::NodeType::ExtensionDecl) {
       generateDeclaration(std::move(decl));
+    }
+  }
+
+  // 处理 extern 声明
+  for (auto &decl : program->declarations) {
+    if (decl && decl->getType() == ast::NodeType::ExternDecl) {
+      auto externDecl = std::unique_ptr<ast::ExternDecl>(
+          static_cast<ast::ExternDecl *>(decl.release()));
+      generateExternDecl(std::move(externDecl));
     }
   }
 
@@ -444,6 +453,9 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   std::vector<llvm::Type *> paramTypes;
   for (auto &paramNode : funcDecl->params) {
     if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
+      if (param->isVariadic) {
+        continue;
+      }
       llvm::Type *paramType = generateType(param->type.get());
       if (!paramType) {
         throw std::runtime_error("Unknown parameter type for function: " +
@@ -453,37 +465,23 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
     }
   }
 
+  bool isVariadic = funcDecl->isVariadic;
   llvm::FunctionType *funcType =
-      llvm::FunctionType::get(returnType, paramTypes, false);
+      llvm::FunctionType::get(returnType, paramTypes, isVariadic);
 
-  // 为了支持重载，生成带参数类型的函数名
-  std::string uniqueFuncName = funcDecl->name;
-  for (auto &paramType : paramTypes) {
-    std::string typeName = paramType->getStructName().str();
-    if (typeName.empty()) {
-      if (paramType->isFloatingPointTy()) {
-        typeName = "double";
-      } else if (paramType->isIntegerTy()) {
-        typeName = "int";
-      } else {
-        typeName = paramType->getTypeID() == llvm::Type::PointerTyID
-                       ? "ptr"
-                       : "unknown";
-      }
-    }
-    uniqueFuncName += "_" + typeName;
-  }
+  std::string funcName = funcDecl->name;
 
   // 检查函数是否已经存在
-  llvm::Function *function = module()->getFunction(uniqueFuncName);
+  llvm::Function *function = module()->getFunction(funcName);
   if (function) {
     // 函数已经存在，如果当前是函数声明（没有函数体），直接返回
     if (!funcDecl->body) {
+      functions_[funcName] = function;
       return function;
     }
     // 如果函数已经存在且有函数体，报错
     if (!function->empty()) {
-      throw std::runtime_error("Function already defined: " + uniqueFuncName);
+      throw std::runtime_error("Function already defined: " + funcName);
     }
     // 函数已经存在但没有函数体，我们需要添加函数体
     // 首先清除personality routine（如果有的话）
@@ -493,74 +491,76 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   } else {
     // 创建新函数
     function = llvm::Function::Create(funcType, llvm::Function::ExternalLinkage,
-                                      uniqueFuncName, module());
+                                      funcName, module());
+    functions_[funcName] = function;
   }
 
-  if (funcDecl->body) {
-    llvm::BasicBlock *entryBlock =
-        llvm::BasicBlock::Create(context(), "entry", function);
-    builder()->SetInsertPoint(entryBlock);
+  // 外部函数没有函数体，直接返回
+  if (!funcDecl->body) {
+    return function;
+  }
+  llvm::BasicBlock *entryBlock =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBlock);
 
-    auto prevFunction = currentFunction_;
-    currentFunction_ = function;
+  auto prevFunction = currentFunction_;
+  currentFunction_ = function;
 
-    namedValues_.clear();
-    deferExpressions_.clear();
-    lateVariables_.clear();
+  namedValues_.clear();
+  deferExpressions_.clear();
+  lateVariables_.clear();
 
-    size_t paramIndex = 0;
-    auto argIt = function->args().begin();
-    for (auto &paramNode : funcDecl->params) {
-      if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
-        llvm::Value *arg = &(*argIt);
-        arg->setName(param->name);
+  size_t paramIndex = 0;
+  auto argIt = function->args().begin();
+  for (auto &paramNode : funcDecl->params) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
+      llvm::Value *arg = &(*argIt);
+      arg->setName(param->name);
 
-        llvm::AllocaInst *alloca =
-            builder()->CreateAlloca(arg->getType(), nullptr, param->name);
-        builder()->CreateStore(arg, alloca);
-        namedValues_[param->name] = alloca;
+      llvm::AllocaInst *alloca =
+          builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+      builder()->CreateStore(arg, alloca);
+      namedValues_[param->name] = alloca;
 
-        ++argIt;
-        ++paramIndex;
-      }
+      ++argIt;
+      ++paramIndex;
     }
-
-    if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
-      generateStatement(std::unique_ptr<ast::Statement>(
-          static_cast<ast::Statement *>(funcDecl->body.release())));
-
-      llvm::BasicBlock *lastBlock = &function->back();
-      if (!lastBlock->getTerminator()) {
-        // 为已初始化的 late 变量调用析构函数
-        for (const auto &[varName, info] : lateVariables_) {
-          if (info.isInitialized) {
-            // 这里需要添加析构函数调用的代码
-            // 目前暂时跳过，因为析构函数的实现还未完成
-          }
-        }
-
-        // 执行 defer 语句（按相反顺序）
-        while (!deferExpressions_.empty()) {
-          auto deferExpr = std::move(deferExpressions_.back());
-          deferExpressions_.pop_back();
-          generateExpression(std::move(deferExpr));
-        }
-
-        if (returnType->isVoidTy()) {
-          builder()->SetInsertPoint(lastBlock);
-          builder()->CreateRetVoid();
-        } else {
-          builder()->SetInsertPoint(lastBlock);
-          builder()->CreateRet(llvm::Constant::getNullValue(returnType));
-        }
-      }
-    }
-
-    currentFunction_ = prevFunction;
-    deferExpressions_.clear();
   }
 
-  functions_[funcDecl->name] = function;
+  if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+    generateStatement(std::unique_ptr<ast::Statement>(
+        static_cast<ast::Statement *>(funcDecl->body.release())));
+
+    llvm::BasicBlock *lastBlock = &function->back();
+    if (!lastBlock->getTerminator()) {
+      // 为已初始化的 late 变量调用析构函数
+      for (const auto &[varName, info] : lateVariables_) {
+        if (info.isInitialized) {
+          // 这里需要添加析构函数调用的代码
+          // 目前暂时跳过，因为析构函数的实现还未完成
+        }
+      }
+
+      // 执行 defer 语句（按相反顺序）
+      while (!deferExpressions_.empty()) {
+        auto deferExpr = std::move(deferExpressions_.back());
+        deferExpressions_.pop_back();
+        generateExpression(std::move(deferExpr));
+      }
+
+      if (returnType->isVoidTy()) {
+        builder()->SetInsertPoint(lastBlock);
+        builder()->CreateRetVoid();
+      } else {
+        builder()->SetInsertPoint(lastBlock);
+        builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  deferExpressions_.clear();
+
   return function;
 }
 
@@ -1091,18 +1091,18 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   return function;
 }
 
-// 辅助函数：获取 LiteralView 类型
+// 辅助函数：获取 literalview 类型
 llvm::Type *LLVMCodeGenerator::getLiteralViewType() {
   if (literalViewType_) {
     return literalViewType_;
   }
 
-  // 创建 LiteralView 类型：包含指针和长度
+  // 创建 literalview 类型：包含指针和长度
   std::vector<llvm::Type *> fields;
   fields.push_back(
       llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)); // ptr
   fields.push_back(llvm::Type::getInt64Ty(context()));              // len
-  literalViewType_ = llvm::StructType::create(context(), fields, "LiteralView");
+  literalViewType_ = llvm::StructType::create(context(), fields, "literalview");
 
   return literalViewType_;
 }
@@ -1139,7 +1139,8 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
     return generateVariableDecl(std::move(declaration));
   }
 
-  if (auto *tupleStmt = dynamic_cast<ast::TupleDestructuringStmt *>(stmt.get())) {
+  if (auto *tupleStmt =
+          dynamic_cast<ast::TupleDestructuringStmt *>(stmt.get())) {
     auto declaration = std::move(tupleStmt->declaration);
     return generateTupleDestructuringDecl(std::move(declaration));
   }
@@ -1181,6 +1182,15 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
   case ast::NodeType::DeferStmt:
     return generateDeferStmt(std::unique_ptr<ast::DeferStmt>(
         static_cast<ast::DeferStmt *>(stmt.release())));
+  case ast::NodeType::YieldStmt:
+    return generateYieldStmt(std::unique_ptr<ast::YieldStmt>(
+        static_cast<ast::YieldStmt *>(stmt.release())));
+  case ast::NodeType::GotoStmt:
+    return generateGotoStmt(std::unique_ptr<ast::GotoStmt>(
+        static_cast<ast::GotoStmt *>(stmt.release())));
+  case ast::NodeType::LabelStmt:
+    return generateLabelStmt(std::unique_ptr<ast::LabelStmt>(
+        static_cast<ast::LabelStmt *>(stmt.release())));
   default:
     return nullptr;
   }
@@ -1639,6 +1649,13 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
       sliceTypes_[sliceTypeName] = sliceStructType;
       llvmType = sliceStructType;
     }
+  } else if (auto *pointerType = dynamic_cast<ast::PointerType *>(type)) {
+    // 生成指针类型
+    llvm::Type *pointeeType = generateType(pointerType->baseType.get());
+    if (!pointeeType) {
+      pointeeType = llvm::Type::getInt8Ty(context());
+    }
+    llvmType = llvm::PointerType::get(pointeeType, 0);
   } else {
     // 对于其他类型，暂时使用 int 作为默认类型
     llvmType = llvm::Type::getInt32Ty(context());
@@ -1694,13 +1711,47 @@ LLVMCodeGenerator::generateLiteral(std::unique_ptr<ast::Literal> literal) {
                                   literal->value.empty() ? 0
                                                          : literal->value[0]);
   case ast::Literal::Type::String: {
-    // 创建全局字符串常量
+    std::string strValue = literal->value;
+    if (strValue.size() >= 2 && strValue.front() == '"' &&
+        strValue.back() == '"') {
+      strValue = strValue.substr(1, strValue.size() - 2);
+    }
+    std::string processedStr;
+    for (size_t i = 0; i < strValue.size(); ++i) {
+      if (strValue[i] == '\\' && i + 1 < strValue.size()) {
+        switch (strValue[i + 1]) {
+        case 'n':
+          processedStr += '\n';
+          break;
+        case 't':
+          processedStr += '\t';
+          break;
+        case 'r':
+          processedStr += '\r';
+          break;
+        case '\\':
+          processedStr += '\\';
+          break;
+        case '"':
+          processedStr += '"';
+          break;
+        case '0':
+          processedStr += '\0';
+          break;
+        default:
+          processedStr += strValue[i + 1];
+          break;
+        }
+        ++i;
+      } else {
+        processedStr += strValue[i];
+      }
+    }
     llvm::Constant *strConstant =
-        llvm::ConstantDataArray::getString(context(), literal->value, true);
+        llvm::ConstantDataArray::getString(context(), processedStr, true);
     llvm::GlobalVariable *globalStr = new llvm::GlobalVariable(
         *module(), strConstant->getType(), true,
         llvm::GlobalValue::PrivateLinkage, strConstant, ".str");
-    // 返回指向字符串的指针
     llvm::Value *zero =
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
     llvm::Value *indices[] = {zero, zero};
@@ -1743,7 +1794,8 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     llvm::Type *targetType = nullptr;
     if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(lhsPtr)) {
       targetType = alloca->getAllocatedType();
-    } else if (auto *ptrType = llvm::dyn_cast<llvm::PointerType>(lhsPtr->getType())) {
+    } else if (auto *ptrType =
+                   llvm::dyn_cast<llvm::PointerType>(lhsPtr->getType())) {
       targetType = ptrType->getNonOpaquePointerElementType();
     }
 
@@ -1844,6 +1896,13 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
 llvm::Value *
 LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                      bool isLValue) {
+  switch (unaryExpr->op) {
+  case ast::UnaryExpr::Op::Await:
+    return generateAwaitExpr(std::move(unaryExpr));
+  default:
+    break;
+  }
+
   llvm::Value *operand = generateExpression(std::move(unaryExpr->expr));
   if (!operand) {
     return nullptr;
@@ -1861,6 +1920,22 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
     return builder()->CreateLoad(operand->getType(), operand, "deref");
   case ast::UnaryExpr::Op::AddressOf:
     return operand; // 返回地址
+  case ast::UnaryExpr::Op::PreIncrement: {
+    llvm::Value *one = llvm::ConstantInt::get(operand->getType(), 1);
+    llvm::Value *result = builder()->CreateAdd(operand, one, "inctmp");
+    if (isLValue) {
+      builder()->CreateStore(result, operand);
+    }
+    return result;
+  }
+  case ast::UnaryExpr::Op::PreDecrement: {
+    llvm::Value *one = llvm::ConstantInt::get(operand->getType(), 1);
+    llvm::Value *result = builder()->CreateSub(operand, one, "dectmp");
+    if (isLValue) {
+      builder()->CreateStore(result, operand);
+    }
+    return result;
+  }
   default:
     error("Unknown unary operator");
     return nullptr;
@@ -1922,7 +1997,8 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
   }
 
   if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
-    object = builder()->CreateLoad(alloca->getAllocatedType(), alloca, "load_obj");
+    object =
+        builder()->CreateLoad(alloca->getAllocatedType(), alloca, "load_obj");
   }
 
   llvm::Value *ptr = builder()->CreateExtractValue(object, 0);
@@ -2137,9 +2213,8 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
 // 生成返回语句
 llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     std::unique_ptr<ast::ReturnStmt> returnStmt) {
-  llvm::Type *returnType = currentFunction_
-                               ? currentFunction_->getReturnType()
-                               : llvm::Type::getVoidTy(context());
+  llvm::Type *returnType = currentFunction_ ? currentFunction_->getReturnType()
+                                            : llvm::Type::getVoidTy(context());
 
   if (returnStmt->expr) {
     llvm::Value *retVal = generateExpression(std::move(returnStmt->expr));
@@ -2158,7 +2233,8 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
       } else if (returnType->isIntegerTy() &&
                  retVal->getType()->isFloatingPointTy()) {
         retVal = builder()->CreateFPToSI(retVal, returnType, "ret.cast");
-      } else if (returnType->isIntegerTy() && retVal->getType()->isIntegerTy()) {
+      } else if (returnType->isIntegerTy() &&
+                 retVal->getType()->isIntegerTy()) {
         retVal = builder()->CreateIntCast(retVal, returnType, true, "ret.cast");
       }
     }
@@ -2492,6 +2568,144 @@ bool LLVMCodeGenerator::isReadonlyType(ast::Type *type) { return false; }
 
 void LLVMCodeGenerator::checkExceptionAfterCall() {
   // TODO: 实现异常检查
+}
+
+llvm::Value *LLVMCodeGenerator::generateYieldStmt(
+    std::unique_ptr<ast::YieldStmt> yieldStmt) {
+  if (!currentFunctionIsCoroutine_) {
+    error("'yield' statement can only be used in coroutine functions",
+          yieldStmt.get());
+    return nullptr;
+  }
+
+  if (yieldStmt->expr) {
+    llvm::Value *value = generateExpression(std::move(yieldStmt->expr));
+    if (!value) {
+      return nullptr;
+    }
+
+    if (coroutinePromiseAlloca_) {
+      llvm::StructType *promiseType = llvm::dyn_cast<llvm::StructType>(
+          coroutinePromiseAlloca_->getAllocatedType());
+      if (promiseType) {
+        llvm::Value *zero =
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+        llvm::Value *idx =
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+        llvm::IRBuilder<>::InsertPointGuard guard(*builder());
+        builder()->SetInsertPoint(
+            coroutinePromiseAlloca_->getParent()->getFirstNonPHI());
+        llvm::Value *valuePtr =
+            builder()->CreateGEP(promiseType, coroutinePromiseAlloca_,
+                                 {zero, idx}, "yield_value_ptr");
+        builder()->CreateStore(value, valuePtr);
+      }
+    }
+  }
+
+  coroutineStateIndex_++;
+
+  llvm::BasicBlock *suspendBlock =
+      llvm::BasicBlock::Create(context(), "yield_suspend", currentFunction_);
+  llvm::BasicBlock *resumeBlock =
+      llvm::BasicBlock::Create(context(), "yield_resume", currentFunction_);
+
+  builder()->CreateBr(suspendBlock);
+  builder()->SetInsertPoint(suspendBlock);
+
+  if (coroutineStateAlloca_) {
+    llvm::Value *stateValue = llvm::ConstantInt::get(
+        llvm::Type::getInt32Ty(context()), coroutineStateIndex_);
+    builder()->CreateStore(stateValue, coroutineStateAlloca_);
+  }
+
+  builder()->CreateRetVoid();
+
+  builder()->SetInsertPoint(resumeBlock);
+
+  return nullptr;
+}
+
+llvm::Value *LLVMCodeGenerator::generateAwaitExpr(
+    std::unique_ptr<ast::UnaryExpr> awaitExpr) {
+  if (!currentFunctionIsCoroutine_) {
+    error("'await' expression can only be used in coroutine functions",
+          awaitExpr.get());
+    return nullptr;
+  }
+
+  llvm::Value *operand = generateExpression(std::move(awaitExpr->expr));
+  if (!operand) {
+    return nullptr;
+  }
+
+  coroutineStateIndex_++;
+
+  llvm::BasicBlock *suspendBlock =
+      llvm::BasicBlock::Create(context(), "await_suspend", currentFunction_);
+  llvm::BasicBlock *resumeBlock =
+      llvm::BasicBlock::Create(context(), "await_resume", currentFunction_);
+
+  builder()->CreateBr(suspendBlock);
+  builder()->SetInsertPoint(suspendBlock);
+
+  if (coroutineStateAlloca_) {
+    llvm::Value *stateValue = llvm::ConstantInt::get(
+        llvm::Type::getInt32Ty(context()), coroutineStateIndex_);
+    builder()->CreateStore(stateValue, coroutineStateAlloca_);
+  }
+
+  builder()->CreateRetVoid();
+
+  builder()->SetInsertPoint(resumeBlock);
+
+  return operand;
+}
+
+llvm::Value *
+LLVMCodeGenerator::generateGotoStmt(std::unique_ptr<ast::GotoStmt> gotoStmt) {
+  if (!gotoStmt->label.empty()) {
+    auto it = labelBlocks_.find(gotoStmt->label);
+    if (it != labelBlocks_.end()) {
+      builder()->CreateBr(it->second);
+    } else {
+      llvm::BasicBlock *targetBlock = llvm::BasicBlock::Create(
+          context(), "label_" + gotoStmt->label, currentFunction_);
+      labelBlocks_[gotoStmt->label] = targetBlock;
+      builder()->CreateBr(targetBlock);
+    }
+  }
+  return nullptr;
+}
+
+llvm::Value *LLVMCodeGenerator::generateLabelStmt(
+    std::unique_ptr<ast::LabelStmt> labelStmt) {
+  if (!labelStmt->label.empty()) {
+    llvm::BasicBlock *labelBlock = nullptr;
+    auto it = labelBlocks_.find(labelStmt->label);
+    if (it != labelBlocks_.end()) {
+      labelBlock = it->second;
+      if (labelBlock->size() == 0) {
+        builder()->SetInsertPoint(labelBlock);
+      } else {
+        llvm::BasicBlock *newBlock =
+            llvm::BasicBlock::Create(context(), "", currentFunction_);
+        builder()->SetInsertPoint(newBlock);
+        labelBlocks_[labelStmt->label] = newBlock;
+      }
+    } else {
+      labelBlock = llvm::BasicBlock::Create(
+          context(), "label_" + labelStmt->label, currentFunction_);
+      labelBlocks_[labelStmt->label] = labelBlock;
+
+      llvm::BasicBlock *prevBlock = builder()->GetInsertBlock();
+      if (prevBlock && !prevBlock->getTerminator()) {
+        builder()->CreateBr(labelBlock);
+      }
+      builder()->SetInsertPoint(labelBlock);
+    }
+  }
+  return nullptr;
 }
 
 } // namespace llvm_codegen

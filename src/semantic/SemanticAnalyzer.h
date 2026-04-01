@@ -2,9 +2,11 @@
 
 #include "../ast/AstNodes.h"
 #include "../types/Type.h"
+#include "ExtensionRegistry.h"
 #include "ModuleLoader.h"
 #include "SymbolTable.h"
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,8 +19,21 @@ public:
   SemanticAnalyzer(const std::string &stdlibPath = "",
                    bool requireMainFunction = true);
 
+  SemanticAnalyzer(const std::vector<std::string> &modulePaths,
+                   bool requireMainFunction = true);
+
   // 分析整个程序
   void analyze(ast::Program &program);
+
+  // 分析单个表达式（用于单元测试）
+  std::shared_ptr<types::Type>
+  analyzeExpressionOnly(ast::Expression *expression);
+
+  // 分析单个语句（用于单元测试）
+  std::shared_ptr<types::Type> analyzeStatementOnly(ast::Statement *statement);
+
+  // 分析单个声明（用于单元测试）
+  void analyzeDeclarationOnly(ast::Declaration *declaration);
 
   // 获取符号表
   SymbolTable &getSymbolTable() { return symbolTable; }
@@ -32,6 +47,9 @@ private:
 
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
+
+  // 扩展注册表
+  ExtensionRegistry extensionRegistry_;
 
   // 当前分析的程序
   ast::Program *currentProgram_ = nullptr;
@@ -68,6 +86,12 @@ private:
 
   // 分析接口声明
   void analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl);
+
+  // 分析 concept 声明
+  void analyzeConceptDecl(ast::ConceptDecl *conceptDecl);
+
+  // 分析 attribute 声明
+  void analyzeAttributeDecl(ast::AttributeDecl *attributeDecl);
 
   // 分析结构体声明
   void analyzeStructDecl(ast::StructDecl *structDecl);
@@ -143,6 +167,15 @@ private:
   // 分析defer语句
   std::shared_ptr<types::Type> analyzeDeferStmt(ast::DeferStmt *deferStmt);
 
+  // 分析goto语句
+  std::shared_ptr<types::Type> analyzeGotoStmt(ast::GotoStmt *gotoStmt);
+
+  // 分析label语句
+  std::shared_ptr<types::Type> analyzeLabelStmt(ast::LabelStmt *labelStmt);
+
+  // 分析yield语句
+  std::shared_ptr<types::Type> analyzeYieldStmt(ast::YieldStmt *yieldStmt);
+
   // 分析表达式
   std::shared_ptr<types::Type> analyzeExpression(ast::Expression *expression);
 
@@ -202,6 +235,14 @@ private:
   // 分析元组表达式
   std::shared_ptr<types::Type> analyzeTupleExpr(ast::TupleExpr *tupleExpr);
 
+  // 分析反射表达式
+  std::shared_ptr<types::Type>
+  analyzeReflectionExpr(ast::ReflectionExpr *reflectionExpr);
+
+  // 分析内置变量表达式
+  std::shared_ptr<types::Type>
+  analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr);
+
   // 分析类型
   std::shared_ptr<types::Type> analyzeType(const ast::Type *type);
 
@@ -239,6 +280,10 @@ private:
   // 分析元组类型
   std::shared_ptr<types::Type>
   analyzeTupleType(const ast::TupleType *tupleType);
+
+  // 分析泛型类型实例化
+  std::shared_ptr<types::Type>
+  analyzeGenericType(const ast::GenericType *genericType);
 
   // 检查表达式是否为左值
   bool isLValue(const ast::Expression &expr) const;
@@ -297,6 +342,13 @@ private:
   // 是否需要 main 函数
   bool requireMainFunction_ = true;
 
+  // 当前模块路径
+  std::vector<std::string> currentModulePath_;
+
+  // 已加载的模块符号表（模块路径 -> 符号表）
+  std::unordered_map<std::string, std::unique_ptr<SymbolTable>>
+      loadedModuleSymbols_;
+
   // 当前函数的返回类型
   std::shared_ptr<types::Type> currentFunctionReturnType_;
 
@@ -305,6 +357,25 @@ private:
 
   // 当前方法是否为 static（用于检查静态方法体内非法访问非静态成员）
   bool currentFuncIsStatic_ = false;
+
+  // 当前函数中引用的标签
+  std::set<std::string> currentFunctionLabels_;
+
+  // 当前函数中定义的标签
+  std::set<std::string> definedLabels_;
+
+  // 当前函数是否是协程
+  bool currentFunctionIsCoroutine_ = false;
+
+  // 检测语句中是否包含 await 或 yield
+  bool containsAwaitOrYield(ast::Statement *stmt);
+  bool containsAwaitOrYield(ast::Expression *expr);
+
+  // 检查类型是否符合 CoroutineHandle 接口
+  bool isCoroutineHandleType(const std::shared_ptr<types::Type> &type);
+
+  // 检查类型是否是 Awaitable 类型
+  bool isAwaitableType(const std::shared_ptr<types::Type> &type);
 
   // late 变量的初始化状态跟踪
   struct LateVariableStatus {

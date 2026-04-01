@@ -126,6 +126,10 @@ private:
   std::string
   generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
 
+  // 生成内置变量表达式代码
+  std::string
+  generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr);
+
   // 生成类型代码
   std::string generateType(std::unique_ptr<ast::Type> type);
 

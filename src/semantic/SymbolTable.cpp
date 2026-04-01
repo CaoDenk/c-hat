@@ -84,6 +84,27 @@ bool SymbolTable::hasSymbolInCurrentScope(const std::string &name) const {
   return symbolIt != currentScope.end() && !symbolIt->second.empty();
 }
 
+// 移除符号（用于方法重写时移除继承的方法）
+void SymbolTable::removeSymbol(const std::string &name,
+                                std::shared_ptr<Symbol> symbol) {
+  for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+    auto &scope = *it;
+    auto symbolIt = scope.find(name);
+    if (symbolIt != scope.end()) {
+      auto &symbols = symbolIt->second;
+      for (auto vecIt = symbols.begin(); vecIt != symbols.end(); ++vecIt) {
+        if (*vecIt == symbol) {
+          symbols.erase(vecIt);
+          if (symbols.empty()) {
+            scope.erase(symbolIt);
+          }
+          return;
+        }
+      }
+    }
+  }
+}
+
 // 获取上一级作用域中的所有符号
 std::vector<std::shared_ptr<Symbol>> SymbolTable::getSymbolsInParentScope() const {
   std::vector<std::shared_ptr<Symbol>> result;
@@ -96,6 +117,22 @@ std::vector<std::shared_ptr<Symbol>> SymbolTable::getSymbolsInParentScope() cons
     for (const auto &entry : parentScope) {
       for (const auto &symbol : entry.second) {
         result.push_back(symbol);
+      }
+    }
+  }
+
+  return result;
+}
+
+// 获取所有符号（用于模块导入）
+std::unordered_map<std::string, std::shared_ptr<Symbol>> SymbolTable::getAllSymbols() const {
+  std::unordered_map<std::string, std::shared_ptr<Symbol>> result;
+
+  // 从全局作用域开始收集符号
+  for (const auto &scope : scopes) {
+    for (const auto &entry : scope) {
+      if (!entry.second.empty()) {
+        result[entry.first] = entry.second[0];
       }
     }
   }

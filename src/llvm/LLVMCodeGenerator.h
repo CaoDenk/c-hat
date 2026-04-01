@@ -40,6 +40,17 @@ public:
     return generator_.emitAssemblyFile(filename);
   }
 
+  // JIT 执行
+  bool hasJIT() const { return generator_.hasJIT(); }
+  int runJIT(const std::string &entryPoint = "main") {
+    return generator_.runJIT(entryPoint);
+  }
+
+  // 添加外部函数符号
+  void addExternalSymbol(const std::string &name, void *address) {
+    generator_.addExternalSymbol(name, address);
+  }
+
   // 循环优化
   void optimizeLoops();
   bool isLoopInvariant(llvm::Instruction *inst, llvm::BasicBlock *loopHeader);
@@ -110,6 +121,14 @@ private:
 
   // 其他语句
   llvm::Value *generateDeferStmt(std::unique_ptr<ast::DeferStmt> deferStmt);
+
+  // 协程相关
+  llvm::Value *generateYieldStmt(std::unique_ptr<ast::YieldStmt> yieldStmt);
+  llvm::Value *generateAwaitExpr(std::unique_ptr<ast::UnaryExpr> awaitExpr);
+
+  // Goto 和 Label
+  llvm::Value *generateGotoStmt(std::unique_ptr<ast::GotoStmt> gotoStmt);
+  llvm::Value *generateLabelStmt(std::unique_ptr<ast::LabelStmt> labelStmt);
   llvm::Value *generateExpression(std::unique_ptr<ast::Expression> expr);
   llvm::Value *getExpressionLValue(std::unique_ptr<ast::Expression> expr);
   llvm::Value *generateBinaryExpr(std::unique_ptr<ast::BinaryExpr> binaryExpr);
@@ -198,6 +217,14 @@ private:
     ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableInfo> lateVariables_;
+
+  // 协程状态
+  bool currentFunctionIsCoroutine_ = false;
+  int coroutineStateIndex_ = 0;
+  llvm::AllocaInst *coroutineStateAlloca_ = nullptr;
+  llvm::AllocaInst *coroutinePromiseAlloca_ = nullptr;
+  std::unordered_map<std::string, llvm::BasicBlock *> labelBlocks_;
+  std::unordered_map<std::string, llvm::AllocaInst *> coroutineLocals_;
 };
 
 } // namespace llvm_codegen

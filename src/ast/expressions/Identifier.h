@@ -1,15 +1,20 @@
 #pragma once
 
 #include "Expression.h"
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace c_hat {
 namespace ast {
 
-// 标识符
 class Identifier : public Expression {
 public:
   Identifier(const std::string &name) : name(name) {}
+
+  Identifier(const std::string &name,
+             std::vector<std::unique_ptr<Node>> templateArgs)
+      : name(name), templateArgs(std::move(templateArgs)) {}
 
   NodeType getType() const override { return NodeType::Identifier; }
   std::string toString() const override;
@@ -18,6 +23,7 @@ public:
   }
 
   std::string name;
+  std::vector<std::unique_ptr<Node>> templateArgs;
 };
 
 } // namespace ast

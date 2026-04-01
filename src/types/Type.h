@@ -62,6 +62,9 @@ public:
   // 检查是否为只读类型
   virtual bool isReadonly() const { return false; }
 
+  // 检查是否为可空类型
+  virtual bool isNullable() const { return false; }
+
   // 如果是只读类型，获取基础类型（非只读的）
   virtual std::shared_ptr<Type> getBaseType() const { return nullptr; }
 

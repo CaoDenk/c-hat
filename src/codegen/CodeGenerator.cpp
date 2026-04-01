@@ -266,6 +266,9 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::ArrayInitExpr:
     return generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr>(
         static_cast<ast::ArrayInitExpr *>(expression.release())));
+  case ast::NodeType::BuiltinVarExpr:
+    return generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr>(
+        static_cast<ast::BuiltinVarExpr *>(expression.release())));
   default:
     return "";
   }
@@ -509,6 +512,30 @@ std::string CodeGenerator::generateExpansionExpr(
   return code;
 }
 
+std::string CodeGenerator::generateBuiltinVarExpr(
+    std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr) {
+  const std::string &name = builtinVarExpr->name;
+
+  if (name == "__line") {
+    return "__LINE__";
+  } else if (name == "__column") {
+    return "__COLUMN__";
+  } else if (name == "__file") {
+    return "__FILE__";
+  } else if (name == "__function") {
+    return "__FUNCTION__";
+  } else if (name == "__module") {
+    return "\"__module__\"";
+  } else if (name == "__compiler_version") {
+    return "\"1.0.0\"";
+  } else if (name == "__timestamp") {
+    return "__TIMESTAMP__";
+  } else if (name == "__build_mode") {
+    return "0";
+  }
+  return name;
+}
+
 std::string CodeGenerator::indent() {
   return std::string(indentLevel * 2, ' ');
 }
@@ -536,7 +563,8 @@ CodeGenerator::generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt) {
   return code;
 }
 
-std::string CodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
+std::string
+CodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
   std::string code = indent();
   code += "for (";
   if (forStmt->init) {

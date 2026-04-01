@@ -56,6 +56,9 @@ std::shared_ptr<ClassType> ClassType::instantiate(
   auto instantiatedClass =
       std::make_shared<ClassType>(name, instantiatedTypeParams);
 
+  // 存储实际的类型参数
+  instantiatedClass->setTypeArguments(typeArguments);
+
   // 复制基类和接口
   for (const auto &baseClass : baseClasses) {
     instantiatedClass->addBaseClass(baseClass);

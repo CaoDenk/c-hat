@@ -18,7 +18,22 @@ namespace fs = std::filesystem;
 
 class ModuleLoader {
 public:
-  ModuleLoader(const std::string &stdlibPath) : stdlibPath_(stdlibPath) {}
+  ModuleLoader(const std::string &stdlibPath) : stdlibPath_(stdlibPath) {
+    if (!stdlibPath.empty()) {
+      modulePaths_.push_back(stdlibPath);
+    }
+  }
+
+  ModuleLoader(const std::vector<std::string> &modulePaths)
+      : modulePaths_(modulePaths) {
+    if (!modulePaths.empty()) {
+      stdlibPath_ = modulePaths[0];
+    }
+  }
+
+  void addModulePath(const std::string &path) {
+    modulePaths_.push_back(path);
+  }
 
   std::unique_ptr<ast::Program>
   loadModule(const std::vector<std::string> &modulePath);
@@ -34,6 +49,7 @@ public:
 
 private:
   std::string stdlibPath_;
+  std::vector<std::string> modulePaths_;
   std::unordered_set<std::string> loadedModules_;
   std::unordered_set<std::string> loadingModules_;
 

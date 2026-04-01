@@ -7,14 +7,14 @@
 namespace c_hat {
 namespace types {
 
-std::string LiteralViewType::toString() const { return "LiteralView"; }
+std::string LiteralViewType::toString() const { return "literalview"; }
 
 bool LiteralViewType::isCompatibleWithImpl(const Type &other) const {
   if (this == &other) {
     return true;
   }
 
-  // 与其他 LiteralView 兼容
+  // 与其他 literalview 兼容
   if (other.isLiteralView()) {
     return true;
   }
@@ -50,7 +50,7 @@ bool LiteralViewType::isCompatibleWithImpl(const Type &other) const {
 }
 
 bool LiteralViewType::isSubtypeOfImpl(const Type &other) const {
-  // LiteralView 是 byte![] 的子类型
+  // literalview 是 byte![] 的子类型
   return isCompatibleWithImpl(other);
 }
 

@@ -16,9 +16,9 @@ public:
   VariableDecl(const std::string &specifiers, bool isLate, VariableKind kind,
                std::unique_ptr<Node> type, const std::string &name,
                std::unique_ptr<Expression> initializer = nullptr,
-               bool isConst = false)
+               bool isConst = false, bool isStatic = false)
       : specifiers(specifiers), isLate(isLate), kind(kind), isConst(isConst),
-        type(std::move(type)), name(name), initializer(std::move(initializer)) {
+        isStatic(isStatic), type(std::move(type)), name(name), initializer(std::move(initializer)) {
   }
 
   NodeType getType() const override { return NodeType::VariableDecl; }
@@ -28,6 +28,7 @@ public:
   bool isLate;
   VariableKind kind;
   bool isConst;
+  bool isStatic;
   std::unique_ptr<Node> type;
   std::string name;
   std::unique_ptr<Expression> initializer;

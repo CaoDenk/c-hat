@@ -7,6 +7,7 @@
 // 表达式
 #include "expressions/ArrayInitExpr.h"
 #include "expressions/BinaryExpr.h"
+#include "expressions/BuiltinVarExpr.h"
 #include "expressions/CallExpr.h"
 #include "expressions/DeleteExpr.h"
 #include "expressions/ExpansionExpr.h"
@@ -17,17 +18,19 @@
 #include "expressions/Literal.h"
 #include "expressions/MemberExpr.h"
 #include "expressions/NewExpr.h"
+#include "expressions/ReflectionExpr.h"
 #include "expressions/SelfExpr.h"
 #include "expressions/StructInitExpr.h"
 #include "expressions/SubscriptExpr.h"
 #include "expressions/SuperExpr.h"
 #include "expressions/ThisExpr.h"
 #include "expressions/TupleExpr.h"
-#include "expressions/ReflectionExpr.h"
 #include "expressions/UnaryExpr.h"
 
 // 声明
+#include "declarations/AttributeDecl.h"
 #include "declarations/ClassDecl.h"
+#include "declarations/ConceptDecl.h"
 #include "declarations/Declaration.h"
 #include "declarations/EnumDecl.h"
 #include "declarations/EnumMember.h"
@@ -76,6 +79,7 @@
 #include "types/FunctionType.h"
 #include "types/GenericType.h"
 #include "types/NamedType.h"
+#include "types/NullableType.h"
 #include "types/PointerType.h"
 #include "types/PrimitiveType.h"
 #include "types/ReadonlyType.h"
@@ -87,6 +91,7 @@
 #include "types/Type.h"
 
 // 其他
+#include "others/AttributeApplication.h"
 #include "others/Parameter.h"
 #include "others/Program.h"
 #include "templates/Requirement.h"

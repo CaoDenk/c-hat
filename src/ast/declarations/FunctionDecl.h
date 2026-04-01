@@ -21,12 +21,14 @@ public:
                  std::unique_ptr<Node> body,
                  std::unique_ptr<Expression> arrowExpr = nullptr,
                  bool isImmutable = false,
-                 std::unique_ptr<Expression> superCall = nullptr)
+                 std::unique_ptr<Expression> superCall = nullptr,
+                 bool isVariadic = false,
+                 bool isStatic = false)
         : specifiers(specifiers), name(name), templateParams(std::move(templateParams)),
           params(std::move(params)), returnType(std::move(returnType)),
           whereClause(std::move(whereClause)), requiresClause(std::move(requiresClause)),
           body(std::move(body)), arrowExpr(std::move(arrowExpr)), isImmutable(isImmutable),
-          superCall(std::move(superCall)) {}
+          superCall(std::move(superCall)), isVariadic(isVariadic), isStatic(isStatic) {}
     
     NodeType getType() const override { return NodeType::FunctionDecl; }
     std::string toString() const override;
@@ -42,6 +44,8 @@ public:
     std::unique_ptr<Expression> arrowExpr;
     bool isImmutable;
     std::unique_ptr<Expression> superCall;
+    bool isVariadic;
+    bool isStatic;
 };
 
 } // namespace ast

@@ -26,6 +26,7 @@ enum class NodeType {
   TupleExpr,
   LambdaExpr,
   ReflectionExpr,
+  BuiltinVarExpr,
 
   // 声明
   Declaration,
@@ -45,6 +46,8 @@ enum class NodeType {
   SetterDecl,
   TypeAliasDecl,
   ExternDecl,
+  ConceptDecl,
+  AttributeDecl,
 
   // 语句
   Statement,
@@ -84,6 +87,7 @@ enum class NodeType {
   GenericType,
   ReadonlyType,
   TupleType,
+  NullableType,
 
   // 其他
   Program,

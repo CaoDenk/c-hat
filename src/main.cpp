@@ -12,6 +12,19 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+#ifdef USE_LLD
+#include <lld/Common/Driver.h>
+#include <lld/Common/ErrorHandler.h>
+
+LLD_HAS_DRIVER(coff)
+#endif
+
 namespace fs = std::filesystem;
 
 fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
@@ -31,6 +44,10 @@ fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
   filePath += ".ch";
 
   return filePath;
+}
+
+extern "C" {
+int c_hat_printf(const char *format, ...);
 }
 
 int main(int argc, char *argv[]) {
@@ -64,9 +81,17 @@ int main(int argc, char *argv[]) {
       .help("Emit assembly file")
       .default_value(false)
       .implicit_value(true);
+  argParser.add_argument("--run")
+      .help("Run the program directly using JIT (no linking required)")
+      .default_value(false)
+      .implicit_value(true);
   argParser.add_argument("--stdlib-path")
       .help("Path to the standard library")
       .default_value(std::string(""));
+  argParser.add_argument("-M", "--module-path")
+      .help("Additional module search paths (can be specified multiple times)")
+      .default_value(std::vector<std::string>())
+      .append();
   argParser.add_argument("-l", "--library")
       .help("Libraries to link")
       .default_value(std::vector<std::string>())
@@ -94,7 +119,10 @@ int main(int argc, char *argv[]) {
   bool emitLLVM = argParser.get<bool>("--emit-llvm");
   bool emitObj = argParser.get<bool>("--emit-obj");
   bool emitAsm = argParser.get<bool>("--emit-asm");
+  bool runJIT = argParser.get<bool>("--run");
   std::string stdlibPath = argParser.get<std::string>("--stdlib-path");
+  std::vector<std::string> modulePaths =
+      argParser.get<std::vector<std::string>>("--module-path");
   std::vector<std::string> libraries =
       argParser.get<std::vector<std::string>>("--library");
   std::string cLibPath = argParser.get<std::string>("--c-lib-path");
@@ -144,8 +172,15 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // 语义分析
-    c_hat::semantic::SemanticAnalyzer semanticAnalyzer(stdlibPath);
+    std::vector<std::string> allModulePaths;
+    if (!stdlibPath.empty()) {
+      allModulePaths.push_back(stdlibPath);
+    }
+    for (const auto &path : modulePaths) {
+      allModulePaths.push_back(path);
+    }
+
+    c_hat::semantic::SemanticAnalyzer semanticAnalyzer(allModulePaths);
     std::cout << "Debug: Before semantic analysis" << std::endl;
     semanticAnalyzer.analyze(*program);
     std::cout << "Debug: After semantic analysis" << std::endl;
@@ -174,16 +209,23 @@ int main(int argc, char *argv[]) {
       codeGen.printIR();
     }
 
-    // 确定输出文件名
-    std::filesystem::path inputPath(inputFile);
+    fs::path inputPath(inputFile);
     std::string baseName = inputPath.stem().string();
 
-    // 确定输出文件名
+    if (runJIT) {
+      std::println("\n=== Running with JIT ===");
+
+      codeGen.addExternalSymbol("printf", (void *)&printf);
+
+      int result = codeGen.runJIT("main");
+      std::println("\n✓ Program exited with code: {}", result);
+      return result;
+    }
+
     std::string objOutputFile = baseName + ".obj";
     std::string exeOutputFile =
         outputFile.empty() ? (baseName + ".exe") : outputFile;
 
-    // 生成输出文件
     if (emitLLVM) {
       std::string llvmOutputFile =
           outputFile.empty() ? (baseName + ".ll") : outputFile;
@@ -211,13 +253,10 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // 默认：如果没有指定 --emit-llvm/--emit-obj/--emit-asm，则生成可执行文件
     if (!emitLLVM && !emitObj && !emitAsm) {
-      // 1. 先生成目标文件
       if (codeGen.emitObjectFile(objOutputFile)) {
         std::println("\n✓ Object file written to: {}", objOutputFile);
 
-        // 2. 准备链接器参数 - 注意：字符串必须保持在作用域内
         std::string outArg = std::format("/OUT:{}", exeOutputFile);
 
         std::vector<std::string> argsStr;
@@ -226,14 +265,12 @@ int main(int argc, char *argv[]) {
         argsStr.push_back("/DEFAULTLIB:libcmt");
         argsStr.push_back("/DEFAULTLIB:oldnames");
 
-        // 添加库文件路径 - 使用与 clang 相同的路径
         std::vector<std::string> libPaths = {
             "C:/Program Files/Microsoft Visual "
             "Studio/2022/Community/VC/Tools/MSVC/14.44.35207/lib/x64",
             "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/ucrt/x64",
             "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/x64"};
 
-        // 添加用户指定的 C 标准库路径
         if (!cLibPath.empty()) {
           libPaths.push_back(cLibPath);
         }
@@ -244,44 +281,54 @@ int main(int argc, char *argv[]) {
 
         argsStr.push_back(objOutputFile);
 
-        // 添加用户指定的 C 标准库文件
         if (!cLibFile.empty()) {
           argsStr.push_back(cLibFile);
         }
 
-        // 添加用户指定的库文件
         for (const auto &lib : libraries) {
-          argsStr.push_back(
-              lib); // 直接使用用户指定的库文件名，不添加 .lib 后缀
+          argsStr.push_back(lib);
         }
 
-        // 3. 使用系统链接器进行链接
-        std::println("\nLinking with system linker...");
+        std::println("\nLinking with LLD...");
 
-        // 构建链接命令
+#ifdef USE_LLD
+        std::vector<const char *> args;
+        for (const auto &arg : argsStr) {
+          args.push_back(arg.c_str());
+        }
+
+        std::vector<lld::DriverDef> drivers = {
+            {lld::WinLink, &lld::coff::link}};
+
+        lld::Result result =
+            lld::lldMain(llvm::ArrayRef<const char *>(args.data(), args.size()),
+                         llvm::outs(), llvm::errs(), drivers);
+
+        if (result.retCode == 0) {
+          std::println("\n✓ Executable generated: {}", exeOutputFile);
+        } else {
+          std::println("\n✗ Linking failed with code: {}", result.retCode);
+        }
+#else
         std::string linkCommand = "link.exe";
         linkCommand += " /OUT:" + exeOutputFile;
         linkCommand += " /DEFAULTLIB:libcmt";
         linkCommand += " /DEFAULTLIB:oldnames";
 
-        // 添加库文件路径
         for (const auto &path : libPaths) {
           linkCommand += " /LIBPATH:" + path;
         }
 
         linkCommand += " " + objOutputFile;
 
-        // 添加用户指定的 C 标准库文件
         if (!cLibFile.empty()) {
           linkCommand += " " + cLibFile;
         }
 
-        // 添加用户指定的库文件
         for (const auto &lib : libraries) {
           linkCommand += " " + lib;
         }
 
-        // 执行链接命令
         int linkResult = std::system(linkCommand.c_str());
 
         if (linkResult == 0) {
@@ -289,6 +336,7 @@ int main(int argc, char *argv[]) {
         } else {
           std::println("\n✗ Linking failed with code: {}", linkResult);
         }
+#endif
       }
     }
 

@@ -9,6 +9,9 @@ GenericType::GenericType(std::string name,
     : name(name), typeArguments(typeArguments) {}
 
 std::string GenericType::toString() const {
+  if (typeArguments.empty()) {
+    return name;
+  }
   std::string argsStr;
   for (size_t i = 0; i < typeArguments.size(); i++) {
     if (i > 0) {

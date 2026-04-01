@@ -20,7 +20,13 @@ public:
     Await,
     Move,
     Immutable,
-    At
+    At,
+    ForceUnwrap,
+    NullablePropagation,
+    PreIncrement,
+    PreDecrement,
+    PostIncrement,
+    PostDecrement
   };
 
   UnaryExpr(Op op, std::unique_ptr<Expression> expr)

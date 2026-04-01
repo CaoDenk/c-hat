@@ -92,7 +92,8 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"typeof", TokenType::Typeof},
     {"extern", TokenType::Extern},
     {"literalview", TokenType::LiteralView},
-    {"namespace", TokenType::Namespace}};
+    {"namespace", TokenType::Namespace},
+    {"attribute", TokenType::Attribute}};
 
 // Token 转字符串
 std::string Token::toString() const {
@@ -338,8 +339,14 @@ std::string Token::toString() const {
   case TokenType::Namespace:
     typeStr = "Namespace";
     break;
+  case TokenType::Attribute:
+    typeStr = "Attribute";
+    break;
   case TokenType::Identifier:
     typeStr = "Identifier";
+    break;
+  case TokenType::BuiltinVar:
+    typeStr = "BuiltinVar";
     break;
   case TokenType::IntegerLiteral:
     typeStr = "IntegerLiteral";
@@ -650,10 +657,13 @@ std::optional<Token> Lexer::processIdentifier() {
     }
   }
 
-  // 检查是否为关键字
   auto it = keywordMap.find(identifier);
   if (it != keywordMap.end()) {
     return Token(it->second, identifier, startLine, startColumn);
+  }
+
+  if (identifier.size() >= 3 && identifier[0] == '_' && identifier[1] == '_') {
+    return Token(TokenType::BuiltinVar, identifier, startLine, startColumn);
   }
 
   return Token(TokenType::Identifier, identifier, startLine, startColumn);
@@ -862,6 +872,11 @@ std::optional<Token> Lexer::processOperator() {
   case '+': {
     advance();
     column++;
+    if (!isEOF() && currentChar() == '+') {
+      advance();
+      column++;
+      return Token(TokenType::Increment, "++", startLine, startColumn);
+    }
     if (!isEOF() && currentChar() == '=') {
       advance();
       column++;
@@ -872,6 +887,11 @@ std::optional<Token> Lexer::processOperator() {
   case '-': {
     advance();
     column++;
+    if (!isEOF() && currentChar() == '-') {
+      advance();
+      column++;
+      return Token(TokenType::Decrement, "--", startLine, startColumn);
+    }
     if (!isEOF() && currentChar() == '=') {
       advance();
       column++;

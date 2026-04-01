@@ -93,7 +93,18 @@ public:
   const std::vector<std::string> &getTypeParameters() const {
     return typeParameters;
   }
+  void setTypeParameters(const std::vector<std::string> &params) {
+    typeParameters = params;
+  }
   bool isGeneric() const { return !typeParameters.empty(); }
+
+  // 获取实例化后的类型参数
+  const std::vector<std::shared_ptr<Type>> &getTypeArguments() const {
+    return typeArguments;
+  }
+  void setTypeArguments(const std::vector<std::shared_ptr<Type>> &args) {
+    typeArguments = args;
+  }
 
   // 实例化泛型类型
   std::shared_ptr<ClassType>
@@ -182,7 +193,8 @@ protected:
 
 private:
   std::string name;
-  std::vector<std::string> typeParameters; // 泛型参数
+  std::vector<std::string> typeParameters;          // 泛型参数名
+  std::vector<std::shared_ptr<Type>> typeArguments; // 实例化后的类型参数
   std::vector<std::shared_ptr<ClassType>> baseClasses;
   std::vector<std::shared_ptr<InterfaceType>> interfaces;
   std::unordered_map<std::string, ClassMethod> methods;      // 方法列表

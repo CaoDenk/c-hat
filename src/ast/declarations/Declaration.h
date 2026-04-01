@@ -1,14 +1,17 @@
 #pragma once
 
 #include "../Node.h"
+#include "../others/AttributeApplication.h"
+#include <vector>
 
 namespace c_hat {
 namespace ast {
 
-// 声明节点
 class Declaration : public Node {
 public:
   NodeType getType() const override { return NodeType::Declaration; }
+
+  std::vector<std::unique_ptr<AttributeApplication>> attributes;
 };
 
 } // namespace ast

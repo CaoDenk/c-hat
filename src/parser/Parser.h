@@ -18,6 +18,15 @@ public:
   // 解析整个程序
   std::unique_ptr<ast::Program> parseProgram();
 
+  // 解析单个表达式（用于单元测试）
+  std::unique_ptr<ast::Expression> parseExpressionOnly();
+
+  // 解析单个语句（用于单元测试）
+  std::unique_ptr<ast::Statement> parseStatementOnly();
+
+  // 解析单个声明（用于单元测试）
+  std::unique_ptr<ast::Declaration> parseDeclarationOnly();
+
 private:
   // 词法分析器
   lexer::Lexer lexer;
@@ -48,6 +57,9 @@ private:
   // 解析变量声明
   std::unique_ptr<ast::VariableDecl> parseVariableDecl();
 
+  // 解析 for 循环中的变量声明（不消费分号）
+  std::unique_ptr<ast::VariableDecl> parseVariableDeclForFor();
+
   // 解析元组解构声明
   std::unique_ptr<ast::TupleDestructuringDecl>
   parseTupleDestructuringDecl(const std::string &specifiers, bool isLate,
@@ -67,6 +79,15 @@ private:
 
   // 解析接口声明
   std::unique_ptr<ast::InterfaceDecl> parseInterfaceDecl();
+
+  // 解析 concept 声明
+  std::unique_ptr<ast::ConceptDecl> parseConceptDecl();
+
+  // 解析 attribute 声明
+  std::unique_ptr<ast::AttributeDecl> parseAttributeDecl();
+
+  // 解析 attribute 应用
+  std::unique_ptr<ast::AttributeApplication> parseAttributeApplication();
 
   // 解析结构体声明
   std::unique_ptr<ast::StructDecl> parseStructDecl();
@@ -107,6 +128,9 @@ private:
 
   // 解析返回语句
   std::unique_ptr<ast::ReturnStmt> parseReturnStmt();
+
+  // 解析 yield 语句
+  std::unique_ptr<ast::YieldStmt> parseYieldStmt();
 
   // 解析复合语句
   std::unique_ptr<ast::CompoundStmt> parseCompoundStmt();

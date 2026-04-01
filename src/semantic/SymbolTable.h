@@ -42,8 +42,14 @@ public:
   // 检查当前作用域是否已存在该符号
   bool hasSymbolInCurrentScope(const std::string &name) const;
 
+  // 移除符号（用于方法重写时移除继承的方法）
+  void removeSymbol(const std::string &name, std::shared_ptr<Symbol> symbol);
+
   // 获取上一级作用域中的所有符号
   std::vector<std::shared_ptr<Symbol>> getSymbolsInParentScope() const;
+
+  // 获取所有符号（用于模块导入）
+  std::unordered_map<std::string, std::shared_ptr<Symbol>> getAllSymbols() const;
 
 private:
   // 当前作用域级别

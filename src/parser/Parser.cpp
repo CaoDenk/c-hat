@@ -24,6 +24,24 @@ std::unique_ptr<ast::Program> Parser::parseProgram() {
   return std::make_unique<ast::Program>(std::move(declarations));
 }
 
+std::unique_ptr<ast::Expression> Parser::parseExpressionOnly() {
+  advance();
+  auto expr = parseExpression();
+  return expr;
+}
+
+std::unique_ptr<ast::Statement> Parser::parseStatementOnly() {
+  advance();
+  auto stmt = parseStatement();
+  return stmt;
+}
+
+std::unique_ptr<ast::Declaration> Parser::parseDeclarationOnly() {
+  advance();
+  auto decl = parseDeclaration();
+  return decl;
+}
+
 // 错误处理
 void Parser::error(const std::string &message) {
   std::string errorMsg = message;
@@ -69,14 +87,32 @@ void Parser::expect(lexer::TokenType type, const std::string &message) {
 
 // 解析声明
 std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
+  // 解析属性列表
+  std::vector<std::unique_ptr<ast::AttributeApplication>> attributes;
+  while (check(lexer::TokenType::LBracket)) {
+    auto attr = parseAttributeApplication();
+    if (attr) {
+      attributes.push_back(std::move(attr));
+    }
+  }
+
+  // 辅助函数：将属性附加到声明
+  auto attachAttributes = [&attributes](std::unique_ptr<ast::Declaration> decl)
+      -> std::unique_ptr<ast::Declaration> {
+    if (decl && !attributes.empty()) {
+      decl->attributes = std::move(attributes);
+    }
+    return decl;
+  };
+
   // 模块声明必须在最前面
   if (match(lexer::TokenType::Module)) {
-    return parseModuleDecl();
+    return attachAttributes(parseModuleDecl());
   }
 
   // 外部声明块
   if (match(lexer::TokenType::Extern)) {
-    return parseExternDecl();
+    return attachAttributes(parseExternDecl());
   }
 
   // 检查是否是 public import 或普通 import
@@ -101,12 +137,23 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   // 直接尝试解析各种声明，用 saveState 和 restoreState
   // 注意：各 parseXxx 内部可能调用 error() 抛出异常，必须用 try-catch
   // 确保异常安全
+
+  // 0. 尝试解析扩展声明（直接检查关键字，避免被其他声明干扰）
+  if (check(lexer::TokenType::Extension)) {
+    return attachAttributes(parseExtensionDecl());
+  }
+
+  // 0.5. 尝试解析函数声明（直接检查 func 关键字）
+  if (check(lexer::TokenType::Func)) {
+    return attachAttributes(parseFunctionDecl());
+  }
+
   ParserState tryState = saveState();
   // -1. 尝试解析 Getter 声明
   try {
     auto getterDecl = parseGetterDecl();
     if (getterDecl) {
-      return getterDecl;
+      return attachAttributes(std::move(getterDecl));
     }
   } catch (...) {
   }
@@ -117,18 +164,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto setterDecl = parseSetterDecl();
     if (setterDecl) {
-      return setterDecl;
-    }
-  } catch (...) {
-  }
-  restoreState(tryState);
-
-  tryState = saveState();
-  // 0. 尝试解析扩展声明
-  try {
-    auto extensionDecl = parseExtensionDecl();
-    if (extensionDecl) {
-      return extensionDecl;
+      return attachAttributes(std::move(setterDecl));
     }
   } catch (...) {
   }
@@ -139,18 +175,28 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto funcDecl = parseFunctionDecl();
     if (funcDecl) {
-      return funcDecl;
+      return attachAttributes(std::move(funcDecl));
     }
   } catch (...) {
   }
   restoreState(tryState);
+
+  // 1.5. 尝试解析 concept 声明
+  if (check(lexer::TokenType::Concept)) {
+    return attachAttributes(parseConceptDecl());
+  }
+
+  // 1.6. 尝试解析 attribute 声明
+  if (check(lexer::TokenType::Attribute)) {
+    return attachAttributes(parseAttributeDecl());
+  }
 
   // 2. 尝试解析命名空间声明
   tryState = saveState();
   try {
     auto namespaceDecl = parseNamespaceDecl();
     if (namespaceDecl) {
-      return namespaceDecl;
+      return attachAttributes(std::move(namespaceDecl));
     }
   } catch (...) {
   }
@@ -161,7 +207,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto classDecl = parseClassDecl();
     if (classDecl) {
-      return classDecl;
+      return attachAttributes(std::move(classDecl));
     }
   } catch (...) {
   }
@@ -172,7 +218,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto interfaceDecl = parseInterfaceDecl();
     if (interfaceDecl) {
-      return interfaceDecl;
+      return attachAttributes(std::move(interfaceDecl));
     }
   } catch (...) {
   }
@@ -183,7 +229,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto structDecl = parseStructDecl();
     if (structDecl) {
-      return structDecl;
+      return attachAttributes(std::move(structDecl));
     }
   } catch (...) {
   }
@@ -194,7 +240,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto enumDecl = parseEnumDecl();
     if (enumDecl) {
-      return enumDecl;
+      return attachAttributes(std::move(enumDecl));
     }
   } catch (...) {
   }
@@ -205,13 +251,13 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
   try {
     auto usingDecl = parseTypeAliasDecl();
     if (usingDecl) {
-      return usingDecl;
+      return attachAttributes(std::move(usingDecl));
     }
   } catch (...) {
   }
   restoreState(tryState);
 
-  // 7. 尝试解析 const 声明
+  // 7. 尝试解析 const 声明（编译期常量，类似 constexpr）
   if (check(lexer::TokenType::Const)) {
     advance(); // 消费 Const
 
@@ -243,9 +289,10 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
 
     expect(lexer::TokenType::Semicolon, "Expected ';' after const declaration");
 
-    return std::make_unique<ast::VariableDecl>(
+    // const 声明创建编译期常量，isConst = true
+    return attachAttributes(std::make_unique<ast::VariableDecl>(
         specifiers, false, ast::VariableKind::Let, std::move(type), name,
-        std::move(initializer), true);
+        std::move(initializer), true, false));
   }
 
   // 8. 尝试解析函数声明（类成员方法，无 func 关键字）
@@ -257,7 +304,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
     try {
       auto funcDecl = parseFunctionDecl();
       if (funcDecl) {
-        return funcDecl;
+        return attachAttributes(std::move(funcDecl));
       }
     } catch (...) {
     }
@@ -307,7 +354,7 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
       auto tupleDestructuringDecl =
           parseTupleDestructuringDecl(specifiers, isLate, kind);
       if (tupleDestructuringDecl) {
-        return tupleDestructuringDecl;
+        return attachAttributes(std::move(tupleDestructuringDecl));
       }
     }
 
@@ -315,11 +362,11 @@ std::unique_ptr<ast::Declaration> Parser::parseDeclaration() {
     restoreState(tempState);
     auto varDecl = tryParseVariableDecl();
     if (varDecl) {
-      return varDecl;
+      return attachAttributes(std::move(varDecl));
     }
 
     // tryParse 失败，直接调用 parseVariableDecl 来解析，这样能正确解析 {} 语法
-    return parseVariableDecl();
+    return attachAttributes(parseVariableDecl());
   }
 
   error("Expected declaration");
@@ -517,8 +564,81 @@ std::unique_ptr<ast::VariableDecl> Parser::parseVariableDecl() {
   expect(lexer::TokenType::Semicolon,
          "Expected ';' after variable declaration");
 
+  // 检查是否是静态变量
+  bool isStatic = specifiers.find("static") != std::string::npos;
+
   return std::make_unique<ast::VariableDecl>(
-      specifiers, isLate, kind, std::move(type), name, std::move(initializer));
+      specifiers, isLate, kind, std::move(type), name, std::move(initializer),
+      false, isStatic);
+}
+
+std::unique_ptr<ast::VariableDecl> Parser::parseVariableDeclForFor() {
+  std::string specifiers = "";
+
+  while (true) {
+    if (match(lexer::TokenType::Public)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("public");
+      if (match(lexer::TokenType::Colon)) {
+      }
+    } else if (match(lexer::TokenType::Private)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("private");
+      if (match(lexer::TokenType::Colon)) {
+      }
+    } else if (match(lexer::TokenType::Protected)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("protected");
+      if (match(lexer::TokenType::Colon)) {
+      }
+    } else if (match(lexer::TokenType::Internal)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("internal");
+      if (match(lexer::TokenType::Colon)) {
+      }
+    } else if (match(lexer::TokenType::Static)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("static");
+    } else {
+      break;
+    }
+  }
+
+  bool isLate = match(lexer::TokenType::Late);
+
+  ast::VariableKind kind = ast::VariableKind::Explicit;
+
+  if (match(lexer::TokenType::Var)) {
+    kind = ast::VariableKind::Var;
+  } else if (match(lexer::TokenType::Let)) {
+    kind = ast::VariableKind::Let;
+  }
+
+  std::unique_ptr<ast::Node> type;
+  if (kind == ast::VariableKind::Explicit) {
+    if (auto parsedType = parseType()) {
+      type = std::move(parsedType);
+    }
+  }
+
+  if (!check(lexer::TokenType::Identifier)) {
+    return nullptr;
+  }
+  std::string name = currentToken->getValue();
+  advance();
+
+  std::unique_ptr<ast::Expression> initializer;
+  if (match(lexer::TokenType::Assign)) {
+    initializer = parseExpression();
+  } else if (check(lexer::TokenType::LBrace)) {
+    if (type) {
+      auto *typePtr = static_cast<ast::Type *>(type.get());
+      initializer = parseStructInit(typePtr->clone());
+    } else {
+      initializer = parseStructInit();
+    }
+  }
+
+  bool isStatic = specifiers.find("static") != std::string::npos;
+
+  return std::make_unique<ast::VariableDecl>(
+      specifiers, isLate, kind, std::move(type), name, std::move(initializer),
+      false, isStatic);
 }
 
 // 尝试解析变量声明（失败时返回 nullptr，不抛异常）
@@ -594,11 +714,7 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
 
     std::unique_ptr<ast::Expression> initializer;
     if (match(lexer::TokenType::Assign)) {
-      std::cerr << "Debug: Parsing initializer for variable: " << name
-                << std::endl;
       initializer = parseExpression();
-      std::cerr << "Debug: Initializer parsed: "
-                << (initializer ? "not null" : "null") << std::endl;
     } else if (check(lexer::TokenType::LBrace)) {
       if (type) {
         auto *typePtr = static_cast<ast::Type *>(type.get());
@@ -614,12 +730,12 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
     }
     advance();
 
-    std::cerr << "Debug: Creating VariableDecl for: " << name
-              << " with initializer: " << (initializer ? "not null" : "null")
-              << std::endl;
-    return std::make_unique<ast::VariableDecl>(specifiers, isLate, kind,
-                                               std::move(type), name,
-                                               std::move(initializer));
+    // 检查是否是静态变量
+    bool isStatic = specifiers.find("static") != std::string::npos;
+
+    return std::make_unique<ast::VariableDecl>(
+        specifiers, isLate, kind, std::move(type), name, std::move(initializer),
+        false, isStatic);
   } catch (...) {
     restoreState(state);
     return nullptr;
@@ -770,6 +886,9 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
         } else if (check(lexer::TokenType::Modulus)) {
           name = "operator%";
           advance();
+        } else if (check(lexer::TokenType::Power)) {
+          name = "operator**";
+          advance();
         } else if (check(lexer::TokenType::Eq)) {
           name = "operator==";
           advance();
@@ -798,6 +917,45 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
           advance();
           expect(lexer::TokenType::RParen,
                  "Expected ')' after '(' in operator()");
+        } else if (check(lexer::TokenType::AddAssign)) {
+          name = "operator+=";
+          advance();
+        } else if (check(lexer::TokenType::SubAssign)) {
+          name = "operator-=";
+          advance();
+        } else if (check(lexer::TokenType::MulAssign)) {
+          name = "operator*=";
+          advance();
+        } else if (check(lexer::TokenType::DivAssign)) {
+          name = "operator/=";
+          advance();
+        } else if (check(lexer::TokenType::ModAssign)) {
+          name = "operator%=";
+          advance();
+        } else if (check(lexer::TokenType::And)) {
+          name = "operator&";
+          advance();
+        } else if (check(lexer::TokenType::Bar)) {
+          name = "operator|";
+          advance();
+        } else if (check(lexer::TokenType::Tilde)) {
+          name = "operator~";
+          advance();
+        } else if (check(lexer::TokenType::Not)) {
+          name = "operator!";
+          advance();
+        } else if (check(lexer::TokenType::LogicAnd)) {
+          name = "operator&&";
+          advance();
+        } else if (check(lexer::TokenType::LogicOr)) {
+          name = "operator||";
+          advance();
+        } else if (check(lexer::TokenType::Shl)) {
+          name = "operator<<";
+          advance();
+        } else if (check(lexer::TokenType::Shr)) {
+          name = "operator>>";
+          advance();
         } else {
           error("Expected operator symbol after 'operator'");
           return nullptr;
@@ -821,6 +979,99 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
       }
       name = "~" + currentToken->getValue();
       advance();
+    }
+    // 情况2.5: 操作符重载（无 func 关键字，直接 operator）
+    else if (check(lexer::TokenType::Operator)) {
+      advance();
+      if (check(lexer::TokenType::Plus)) {
+        name = "operator+";
+        advance();
+      } else if (check(lexer::TokenType::Minus)) {
+        name = "operator-";
+        advance();
+      } else if (check(lexer::TokenType::Multiply)) {
+        name = "operator*";
+        advance();
+      } else if (check(lexer::TokenType::Divide)) {
+        name = "operator/";
+        advance();
+      } else if (check(lexer::TokenType::Modulus)) {
+        name = "operator%";
+        advance();
+      } else if (check(lexer::TokenType::Power)) {
+        name = "operator**";
+        advance();
+      } else if (check(lexer::TokenType::Eq)) {
+        name = "operator==";
+        advance();
+      } else if (check(lexer::TokenType::Ne)) {
+        name = "operator!=";
+        advance();
+      } else if (check(lexer::TokenType::Lt)) {
+        name = "operator<";
+        advance();
+      } else if (check(lexer::TokenType::Le)) {
+        name = "operator<=";
+        advance();
+      } else if (check(lexer::TokenType::Gt)) {
+        name = "operator>";
+        advance();
+      } else if (check(lexer::TokenType::Ge)) {
+        name = "operator>=";
+        advance();
+      } else if (check(lexer::TokenType::LBracket)) {
+        name = "operator[]";
+        advance();
+        expect(lexer::TokenType::RBracket,
+               "Expected ']' after '[' in operator[]");
+      } else if (check(lexer::TokenType::LParen)) {
+        name = "operator()";
+        advance();
+        expect(lexer::TokenType::RParen,
+               "Expected ')' after '(' in operator()");
+      } else if (check(lexer::TokenType::AddAssign)) {
+        name = "operator+=";
+        advance();
+      } else if (check(lexer::TokenType::SubAssign)) {
+        name = "operator-=";
+        advance();
+      } else if (check(lexer::TokenType::MulAssign)) {
+        name = "operator*=";
+        advance();
+      } else if (check(lexer::TokenType::DivAssign)) {
+        name = "operator/=";
+        advance();
+      } else if (check(lexer::TokenType::ModAssign)) {
+        name = "operator%=";
+        advance();
+      } else if (check(lexer::TokenType::And)) {
+        name = "operator&";
+        advance();
+      } else if (check(lexer::TokenType::Bar)) {
+        name = "operator|";
+        advance();
+      } else if (check(lexer::TokenType::Tilde)) {
+        name = "operator~";
+        advance();
+      } else if (check(lexer::TokenType::Not)) {
+        name = "operator!";
+        advance();
+      } else if (check(lexer::TokenType::LogicAnd)) {
+        name = "operator&&";
+        advance();
+      } else if (check(lexer::TokenType::LogicOr)) {
+        name = "operator||";
+        advance();
+      } else if (check(lexer::TokenType::Shl)) {
+        name = "operator<<";
+        advance();
+      } else if (check(lexer::TokenType::Shr)) {
+        name = "operator>>";
+        advance();
+      } else {
+        error("Expected operator symbol after 'operator'");
+        return nullptr;
+      }
     }
     // 情况3: 构造函数 Name（无 func，无 ~，但跟着 (）
     else if (check(lexer::TokenType::Identifier)) {
@@ -938,10 +1189,25 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
            "Expected ';' after function declaration");
   }
 
+  // 检查参数列表中是否有可变参数
+  bool isVariadic = false;
+  for (const auto &param : params) {
+    if (auto *p = dynamic_cast<ast::Parameter *>(param.get())) {
+      if (p->isVariadic) {
+        isVariadic = true;
+        break;
+      }
+    }
+  }
+
+  // 检查是否是静态函数
+  bool isStatic = specifiers.find("static") != std::string::npos;
+
   return std::make_unique<ast::FunctionDecl>(
       specifiers, name, std::move(templateParams), std::move(params),
       std::move(returnType), std::move(whereClause), std::move(requiresClause),
-      std::move(body), std::move(arrowExpr), isImmutable, std::move(superCall));
+      std::move(body), std::move(arrowExpr), isImmutable, std::move(superCall),
+      isVariadic, isStatic);
 }
 
 // 解析类声明
@@ -1144,6 +1410,200 @@ std::unique_ptr<ast::InterfaceDecl> Parser::parseInterfaceDecl() {
       specifiers, name, std::move(baseInterfaces), std::move(members));
 }
 
+// 解析 concept 声明
+std::unique_ptr<ast::ConceptDecl> Parser::parseConceptDecl() {
+  // 消费 concept 关键字
+  if (!match(lexer::TokenType::Concept)) {
+    return nullptr;
+  }
+
+  if (!check(lexer::TokenType::Identifier)) {
+    error("Expected concept name");
+    return nullptr;
+  }
+
+  std::string name = currentToken->getValue();
+  advance();
+
+  // 解析模板参数 <T, U, ...>
+  std::vector<std::unique_ptr<ast::Node>> templateParams;
+  if (match(lexer::TokenType::Lt)) {
+    do {
+      if (!check(lexer::TokenType::Identifier)) {
+        error("Expected template parameter name");
+        return nullptr;
+      }
+      std::string paramName = currentToken->getValue();
+      advance();
+      templateParams.push_back(
+          std::make_unique<ast::TemplateParameter>(paramName));
+    } while (match(lexer::TokenType::Comma));
+
+    if (!check(lexer::TokenType::Gt)) {
+      error("Expected '>' after template parameters");
+      return nullptr;
+    }
+    advance(); // 消费 '>'
+  }
+
+  // 解析约束（可选）
+  std::vector<std::unique_ptr<ast::Node>> constraints;
+  if (match(lexer::TokenType::Where)) {
+    // 简化处理：跳过 where 子句内容直到 { 或 ;
+    while (!check(lexer::TokenType::LBrace) &&
+           !check(lexer::TokenType::Semicolon) &&
+           !check(lexer::TokenType::EndOfFile)) {
+      advance();
+    }
+  }
+
+  // 解析 body
+  if (match(lexer::TokenType::LBrace)) {
+    // 有 body 的 concept
+    while (!check(lexer::TokenType::RBrace) &&
+           !check(lexer::TokenType::EndOfFile)) {
+      advance(); // 简化处理，跳过 body 内容
+    }
+    expect(lexer::TokenType::RBrace, "Expected '}' after concept body");
+  } else {
+    // 无 body 的 concept（只有 where 子句）
+    expect(lexer::TokenType::Semicolon,
+           "Expected ';' or '{' after concept declaration");
+  }
+
+  return std::make_unique<ast::ConceptDecl>(name, std::move(templateParams),
+                                            std::move(constraints));
+}
+
+// 解析 attribute 声明
+std::unique_ptr<ast::AttributeDecl> Parser::parseAttributeDecl() {
+  if (!match(lexer::TokenType::Attribute)) {
+    return nullptr;
+  }
+
+  if (!check(lexer::TokenType::Identifier)) {
+    error("Expected attribute name");
+    return nullptr;
+  }
+
+  std::string name = currentToken->getValue();
+  advance();
+
+  auto attrDecl = std::make_unique<ast::AttributeDecl>(name);
+
+  if (!match(lexer::TokenType::LBrace)) {
+    error("Expected '{' after attribute name");
+    return nullptr;
+  }
+
+  while (!check(lexer::TokenType::RBrace) &&
+         !check(lexer::TokenType::EndOfFile)) {
+    if (!check(lexer::TokenType::Identifier)) {
+      error("Expected field name in attribute");
+      return nullptr;
+    }
+
+    std::string fieldName = currentToken->getValue();
+    advance();
+
+    std::unique_ptr<ast::Type> fieldType;
+    if (match(lexer::TokenType::Colon)) {
+      fieldType = parseType();
+      if (!fieldType) {
+        error("Expected type after ':'");
+        return nullptr;
+      }
+    }
+
+    std::unique_ptr<ast::Expression> defaultValue;
+    if (match(lexer::TokenType::Assign)) {
+      defaultValue = parseExpression();
+      if (!defaultValue) {
+        error("Expected default value after '='");
+        return nullptr;
+      }
+    }
+
+    auto field = std::make_unique<ast::AttributeField>(
+        fieldName, std::move(fieldType), std::move(defaultValue));
+    attrDecl->addField(std::move(field));
+
+    if (!match(lexer::TokenType::Comma)) {
+      break;
+    }
+  }
+
+  if (!match(lexer::TokenType::RBrace)) {
+    error("Expected '}' after attribute fields");
+    return nullptr;
+  }
+
+  return attrDecl;
+}
+
+// 解析 attribute 应用
+std::unique_ptr<ast::AttributeApplication> Parser::parseAttributeApplication() {
+  if (!match(lexer::TokenType::LBracket)) {
+    return nullptr;
+  }
+
+  if (!check(lexer::TokenType::Identifier)) {
+    error("Expected attribute name");
+    return nullptr;
+  }
+
+  std::string name = currentToken->getValue();
+  advance();
+
+  auto attrApp = std::make_unique<ast::AttributeApplication>(name);
+
+  // 解析参数列表
+  if (match(lexer::TokenType::LParen)) {
+    while (!check(lexer::TokenType::RParen) &&
+           !check(lexer::TokenType::EndOfFile)) {
+      std::string argName = "";
+      ParserState state = saveState();
+
+      // 检查是否是命名参数 (name = value)
+      if (check(lexer::TokenType::Identifier)) {
+        std::string potentialName = currentToken->getValue();
+        advance();
+        if (match(lexer::TokenType::Assign)) {
+          argName = potentialName;
+        } else {
+          restoreState(state);
+        }
+      }
+
+      auto value = parseExpression();
+      if (!value) {
+        error("Expected attribute argument value");
+        return nullptr;
+      }
+
+      auto arg =
+          std::make_unique<ast::AttributeArgument>(argName, std::move(value));
+      attrApp->addArgument(std::move(arg));
+
+      if (!match(lexer::TokenType::Comma)) {
+        break;
+      }
+    }
+
+    if (!match(lexer::TokenType::RParen)) {
+      error("Expected ')' after attribute arguments");
+      return nullptr;
+    }
+  }
+
+  if (!match(lexer::TokenType::RBracket)) {
+    error("Expected ']' after attribute");
+    return nullptr;
+  }
+
+  return attrApp;
+}
+
 // 解析结构体声明
 std::unique_ptr<ast::StructDecl> Parser::parseStructDecl() {
   std::string specifiers = "";
@@ -1276,32 +1736,36 @@ std::unique_ptr<ast::Declaration> Parser::parseExtensionDecl() {
 
 // 解析 Getter 声明
 std::unique_ptr<ast::GetterDecl> Parser::parseGetterDecl() {
-  // 先检查是否是 getter 声明（必须有 get 关键字）
+  // 先解析访问修饰符和 static（可能在 get 关键字之前）
+  std::string specifiers = "";
+  while (true) {
+    if (check(lexer::TokenType::Public)) {
+      specifiers += "public ";
+      advance();
+    } else if (check(lexer::TokenType::Private)) {
+      specifiers += "private ";
+      advance();
+    } else if (check(lexer::TokenType::Protected)) {
+      specifiers += "protected ";
+      advance();
+    } else if (check(lexer::TokenType::Internal)) {
+      specifiers += "internal ";
+      advance();
+    } else if (check(lexer::TokenType::Static)) {
+      specifiers += "static ";
+      advance();
+    } else {
+      break;
+    }
+  }
+
+  // 检查是否是 getter 声明（必须有 get 关键字）
   if (!check(lexer::TokenType::Get)) {
     return nullptr;
   }
 
   // 消费 Get 关键字
   advance();
-
-  std::string specifiers = "";
-
-  // 解析访问修饰符和 static
-  while (true) {
-    if (match(lexer::TokenType::Public)) {
-      specifiers += "public ";
-    } else if (match(lexer::TokenType::Private)) {
-      specifiers += "private ";
-    } else if (match(lexer::TokenType::Protected)) {
-      specifiers += "protected ";
-    } else if (match(lexer::TokenType::Internal)) {
-      specifiers += "internal ";
-    } else if (match(lexer::TokenType::Static)) {
-      specifiers += "static ";
-    } else {
-      break;
-    }
-  }
 
   // Getter 名称必须存在；若后续不是标识符，则回退，不视为 GetterDecl
   if (!check(lexer::TokenType::Identifier)) {
@@ -1343,32 +1807,36 @@ std::unique_ptr<ast::GetterDecl> Parser::parseGetterDecl() {
 
 // 解析 Setter 声明
 std::unique_ptr<ast::SetterDecl> Parser::parseSetterDecl() {
-  // 先检查是否是 setter 声明（必须有 set 关键字）
+  // 先解析访问修饰符和 static（可能在 set 关键字之前）
+  std::string specifiers = "";
+  while (true) {
+    if (check(lexer::TokenType::Public)) {
+      specifiers += "public ";
+      advance();
+    } else if (check(lexer::TokenType::Private)) {
+      specifiers += "private ";
+      advance();
+    } else if (check(lexer::TokenType::Protected)) {
+      specifiers += "protected ";
+      advance();
+    } else if (check(lexer::TokenType::Internal)) {
+      specifiers += "internal ";
+      advance();
+    } else if (check(lexer::TokenType::Static)) {
+      specifiers += "static ";
+      advance();
+    } else {
+      break;
+    }
+  }
+
+  // 检查是否是 setter 声明（必须有 set 关键字）
   if (!check(lexer::TokenType::Set)) {
     return nullptr;
   }
 
   // 消费 Set 关键字
   advance();
-
-  std::string specifiers = "";
-
-  // 解析访问修饰符和 static
-  while (true) {
-    if (match(lexer::TokenType::Public)) {
-      specifiers += "public ";
-    } else if (match(lexer::TokenType::Private)) {
-      specifiers += "private ";
-    } else if (match(lexer::TokenType::Protected)) {
-      specifiers += "protected ";
-    } else if (match(lexer::TokenType::Internal)) {
-      specifiers += "internal ";
-    } else if (match(lexer::TokenType::Static)) {
-      specifiers += "static ";
-    } else {
-      break;
-    }
-  }
 
   if (!check(lexer::TokenType::Identifier)) {
     error("Expected setter name");
@@ -1445,35 +1913,86 @@ std::unique_ptr<ast::TypeAliasDecl> Parser::parseTypeAliasDecl() {
     return nullptr;
   }
 
+  // 检查是否有类型集合约束 (int | long | float | ...)
+  bool isTypeSet = false;
+  while (match(lexer::TokenType::Bar)) {
+    isTypeSet = true;
+    auto nextType = parseType();
+    if (!nextType) {
+      error("Expected type after '|'");
+      return nullptr;
+    }
+    // 简化处理：忽略后续类型，只保留第一个类型
+    // TODO: 实现完整的类型集合约束
+  }
+
   expect(lexer::TokenType::Semicolon,
          "Expected ';' after type alias declaration");
 
-  return std::make_unique<ast::TypeAliasDecl>(specifiers, name,
-                                              std::move(type));
+  return std::make_unique<ast::TypeAliasDecl>(specifiers, name, std::move(type),
+                                              isTypeSet);
 }
 
 // 解析语句
 std::unique_ptr<ast::Statement> Parser::parseStatement() {
+  // 解析属性列表
+  std::vector<std::unique_ptr<ast::AttributeApplication>> attributes;
+  while (check(lexer::TokenType::LBracket)) {
+    // 检查是否是属性应用（后面跟着标识符，然后是 ] 或 (）
+    ParserState state = saveState();
+    advance(); // 消费 [
+    if (check(lexer::TokenType::Identifier)) {
+      std::string name = currentToken->getValue();
+      advance();
+      // 如果后面是 ] 或 (，则是属性应用
+      if (check(lexer::TokenType::RBracket) ||
+          check(lexer::TokenType::LParen)) {
+        restoreState(state);
+        auto attr = parseAttributeApplication();
+        if (attr) {
+          attributes.push_back(std::move(attr));
+        }
+        continue;
+      }
+    }
+    // 不是属性应用，恢复状态，让表达式解析处理
+    restoreState(state);
+    break;
+  }
+
+  // 辅助函数：将属性附加到语句
+  auto attachAttributes = [&attributes](std::unique_ptr<ast::Statement> stmt)
+      -> std::unique_ptr<ast::Statement> {
+    if (stmt && !attributes.empty()) {
+      stmt->attributes = std::move(attributes);
+    }
+    return stmt;
+  };
+
   if (check(lexer::TokenType::LBrace)) {
-    return parseCompoundStmt();
+    return attachAttributes(parseCompoundStmt());
+  } else if (match(lexer::TokenType::Semicolon)) {
+    return nullptr;
   } else if (match(lexer::TokenType::If)) {
-    return parseIfStmt();
+    return attachAttributes(parseIfStmt());
   } else if (match(lexer::TokenType::While)) {
-    return parseWhileStmt();
+    return attachAttributes(parseWhileStmt());
   } else if (match(lexer::TokenType::Return)) {
-    return parseReturnStmt();
+    return attachAttributes(parseReturnStmt());
+  } else if (match(lexer::TokenType::Yield)) {
+    return attachAttributes(parseYieldStmt());
   } else if (match(lexer::TokenType::For)) {
-    return parseForStmt();
+    return attachAttributes(parseForStmt());
   } else if (match(lexer::TokenType::Foreach)) {
-    return parseForeachStmt();
+    return attachAttributes(parseForeachStmt());
   } else if (match(lexer::TokenType::Comptime)) {
-    return parseComptimeStmt();
+    return attachAttributes(parseComptimeStmt());
   } else if (match(lexer::TokenType::Break)) {
     expect(lexer::TokenType::Semicolon, "Expected ';' after break");
-    return std::make_unique<ast::BreakStmt>();
+    return attachAttributes(std::make_unique<ast::BreakStmt>());
   } else if (match(lexer::TokenType::Continue)) {
     expect(lexer::TokenType::Semicolon, "Expected ';' after continue");
-    return std::make_unique<ast::ContinueStmt>();
+    return attachAttributes(std::make_unique<ast::ContinueStmt>());
   } else if (match(lexer::TokenType::Goto)) {
     if (!check(lexer::TokenType::Identifier)) {
       error("Expected label name after goto");
@@ -1482,17 +2001,17 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     std::string label = currentToken->getValue();
     advance();
     expect(lexer::TokenType::Semicolon, "Expected ';' after goto label");
-    return std::make_unique<ast::GotoStmt>(std::move(label));
+    return attachAttributes(std::make_unique<ast::GotoStmt>(std::move(label)));
   } else if (match(lexer::TokenType::Try)) {
-    return parseTryStmt();
+    return attachAttributes(parseTryStmt());
   } else if (match(lexer::TokenType::Throw)) {
-    return parseThrowStmt();
+    return attachAttributes(parseThrowStmt());
   } else if (match(lexer::TokenType::Defer)) {
-    return parseDeferStmt();
+    return attachAttributes(parseDeferStmt());
   } else if (match(lexer::TokenType::Match)) {
     auto matchStmt = parseMatchStmt();
     match(lexer::TokenType::Semicolon); // 消费可选的分号
-    return matchStmt;
+    return attachAttributes(std::move(matchStmt));
   } else if (check(lexer::TokenType::Const)) {
     advance(); // 消费 Const
 
@@ -1527,10 +2046,27 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     auto varDecl = std::make_unique<ast::VariableDecl>(
         specifiers, false, ast::VariableKind::Let, std::move(type), name,
         std::move(initializer), true);
-    return std::make_unique<ast::VariableStmt>(std::move(varDecl));
-  } else if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let) ||
-             check(lexer::TokenType::Late) || isTypeStart() ||
-             check(lexer::TokenType::Static)) {
+    auto stmt = std::make_unique<ast::VariableStmt>(std::move(varDecl));
+    if (!attributes.empty()) {
+      stmt->attributes = std::move(attributes);
+    }
+    return stmt;
+  } else if (check(lexer::TokenType::Identifier)) {
+    // 检查是否是标签（后面跟着冒号）
+    auto state = saveState();
+    std::string label = currentToken->getValue();
+    advance();
+    if (match(lexer::TokenType::Colon)) {
+      return attachAttributes(
+          std::make_unique<ast::LabelStmt>(std::move(label)));
+    }
+    // 不是标签，回滚并继续解析
+    restoreState(state);
+  }
+
+  if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let) ||
+      check(lexer::TokenType::Late) || isTypeStart() ||
+      check(lexer::TokenType::Static)) {
     // 先尝试解析 tuple 解构声明
     ParserState tempState = saveState();
     std::string specifiers = "";
@@ -1553,8 +2089,12 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
       auto tupleDestructuringDecl =
           parseTupleDestructuringDecl(specifiers, isLate, kind);
       if (tupleDestructuringDecl) {
-        return std::make_unique<ast::TupleDestructuringStmt>(
+        auto stmt = std::make_unique<ast::TupleDestructuringStmt>(
             std::move(tupleDestructuringDecl));
+        if (!attributes.empty()) {
+          stmt->attributes = std::move(attributes);
+        }
+        return stmt;
       }
     }
 
@@ -1562,22 +2102,16 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     restoreState(tempState);
     auto varDecl = tryParseVariableDecl();
     if (varDecl) {
-      return std::make_unique<ast::VariableStmt>(std::move(varDecl));
+      auto stmt = std::make_unique<ast::VariableStmt>(std::move(varDecl));
+      if (!attributes.empty()) {
+        stmt->attributes = std::move(attributes);
+      }
+      return stmt;
     }
-  } else if (check(lexer::TokenType::Identifier)) {
-    // 检查是否是标签（后面跟着冒号）
-    auto state = saveState();
-    std::string label = currentToken->getValue();
-    advance();
-    if (match(lexer::TokenType::Colon)) {
-      return std::make_unique<ast::LabelStmt>(std::move(label));
-    }
-    // 不是标签，回滚并解析表达式语句
-    restoreState(state);
   }
 
   // 默认解析表达式语句
-  return parseExprStmt();
+  return attachAttributes(parseExprStmt());
 }
 
 // 解析表达式语句
@@ -1597,6 +2131,15 @@ std::unique_ptr<ast::ReturnStmt> Parser::parseReturnStmt() {
   return std::make_unique<ast::ReturnStmt>(std::move(value));
 }
 
+std::unique_ptr<ast::YieldStmt> Parser::parseYieldStmt() {
+  std::unique_ptr<ast::Expression> value;
+  if (!check(lexer::TokenType::Semicolon)) {
+    value = parseExpression();
+  }
+  expect(lexer::TokenType::Semicolon, "Expected ';' after yield");
+  return std::make_unique<ast::YieldStmt>(std::move(value));
+}
+
 // 解析复合语句
 std::unique_ptr<ast::CompoundStmt> Parser::parseCompoundStmt() {
   expect(lexer::TokenType::LBrace, "Expected '{'");
@@ -1604,7 +2147,10 @@ std::unique_ptr<ast::CompoundStmt> Parser::parseCompoundStmt() {
   std::vector<std::unique_ptr<ast::Node>> statements;
   while (!check(lexer::TokenType::RBrace) &&
          !check(lexer::TokenType::EndOfFile)) {
-    statements.push_back(parseStatement());
+    auto stmt = parseStatement();
+    if (stmt) {
+      statements.push_back(std::move(stmt));
+    }
   }
 
   expect(lexer::TokenType::RBrace, "Expected '}'");
@@ -1647,22 +2193,12 @@ std::unique_ptr<ast::ForStmt> Parser::parseForStmt() {
   // 检测 foreach 语法: for (var/let x : collection) 或 for (Type x :
   // collection) 通过保存状态来判断：如果 init 后面紧跟 ':' 而非 ';'，则是
   // foreach
-  ParserState savedState = saveState();
+  ParserState foreachState = saveState();
   bool isForeach = false;
 
   // 尝试解析迭代变量
   std::unique_ptr<ast::Node> iterVar;
   if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let)) {
-    auto varDecl = parseVariableDecl();
-    // parseVariableDecl 会吃掉分号；如果没有初始化器（只有类型和名字），
-    // 则前一个 token 可能是名字，而当前 token 可能是 ':' 或 ';'
-    // 检查是否解析了完整声明后面跟 ':'
-    // 注意：parseVariableDecl 在 foreach 场景中解析 "var x"
-    // 就停止（无初始化器） 此时还没消费分号，但它可能会消费。
-    // 更可靠：先保存状态，只判断 var/let 后面是否 identifier 后面是 ':'
-    restoreState(savedState);
-    // 重新手动解析 foreach 变量
-    // for (var name : ...) 或 for (let name : ...)
     advance(); // 消费 var/let
     std::string varKind =
         (previousToken->getType() == lexer::TokenType::Var) ? "var" : "let";
@@ -1688,12 +2224,9 @@ std::unique_ptr<ast::ForStmt> Parser::parseForStmt() {
                                               std::move(collection),
                                               std::move(body), true);
       }
-      // 不是 foreach，回退
-      restoreState(savedState);
-    } else {
-      // 不是 foreach，回退
-      restoreState(savedState);
     }
+    // 不是 foreach，回退
+    restoreState(foreachState);
   }
 
   // 普通 for 语句
@@ -1772,9 +2305,8 @@ std::unique_ptr<ast::ForStmt> Parser::parseForeachStmt() {
         std::move(body), true);
   }
 
-  return std::make_unique<ast::ForStmt>(std::move(iterVarDecl),
-                                        std::move(collection), std::move(body),
-                                        true);
+  return std::make_unique<ast::ForStmt>(
+      std::move(iterVarDecl), std::move(collection), std::move(body), true);
 }
 
 // 解析表达式
@@ -2057,6 +2589,14 @@ std::unique_ptr<ast::Expression> Parser::parseUnaryExpr() {
     auto expr = parseUnaryExpr();
     return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::Await,
                                             std::move(expr));
+  } else if (match(lexer::TokenType::Increment)) {
+    auto expr = parseUnaryExpr();
+    return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::PreIncrement,
+                                            std::move(expr));
+  } else if (match(lexer::TokenType::Decrement)) {
+    auto expr = parseUnaryExpr();
+    return std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::PreDecrement,
+                                            std::move(expr));
   } else if (match(lexer::TokenType::At)) {
     // 解析反射表达式: @Type 或 @typeof(expr)
     if (check(lexer::TokenType::Typeof)) {
@@ -2121,6 +2661,9 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
     expr = std::make_unique<ast::Identifier>("base");
   } else if (match(lexer::TokenType::Super)) {
     expr = std::make_unique<ast::Identifier>("super");
+  } else if (match(lexer::TokenType::BuiltinVar)) {
+    std::string name = previousToken->getValue();
+    expr = std::make_unique<ast::BuiltinVarExpr>(name);
   } else if (check(lexer::TokenType::LBrace)) {
     expr = parseStructInit();
   } else if (check(lexer::TokenType::Identifier) || isTypeKeyword()) {
@@ -2229,6 +2772,40 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
   while (true) {
     if (match(lexer::TokenType::LParen)) {
       expr = parseCallExpr(std::move(expr));
+    } else if (check(lexer::TokenType::Lt)) {
+      // 可能是泛型参数 <Type1, Type2, ...>，也可能是比较运算符
+      // 保存状态以便回溯
+      ParserState templateState = saveState();
+      advance(); // 消费 '<'
+
+      // 尝试解析泛型参数
+      std::vector<std::unique_ptr<ast::Node>> templateArgs;
+      bool validTemplate = true;
+      if (!check(lexer::TokenType::Gt)) {
+        do {
+          auto argType = parseType();
+          if (argType) {
+            templateArgs.push_back(std::move(argType));
+          } else {
+            validTemplate = false;
+            break;
+          }
+        } while (match(lexer::TokenType::Comma));
+      }
+
+      if (validTemplate && check(lexer::TokenType::Gt)) {
+        advance(); // 消费 '>'
+        // 将泛型参数附加到标识符，然后继续解析可能的函数调用
+        if (auto *ident = dynamic_cast<ast::Identifier *>(expr.get())) {
+          expr = std::make_unique<ast::Identifier>(ident->name,
+                                                   std::move(templateArgs));
+        }
+      } else {
+        // 不是有效的泛型参数列表，恢复状态
+        // '<' 实际上是比较运算符，跳出循环让上层处理
+        restoreState(templateState);
+        break;
+      }
     } else if (match(lexer::TokenType::LBracket)) {
       expr = parseSubscriptExpr(std::move(expr));
     } else if (match(lexer::TokenType::Dot)) {
@@ -2242,7 +2819,16 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
       expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::Move,
                                               std::move(expr));
     } else if (match(lexer::TokenType::Question)) {
-      expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::Immutable,
+      expr = std::make_unique<ast::UnaryExpr>(
+          ast::UnaryExpr::Op::NullablePropagation, std::move(expr));
+    } else if (match(lexer::TokenType::Increment)) {
+      expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::PostIncrement,
+                                              std::move(expr));
+    } else if (match(lexer::TokenType::Decrement)) {
+      expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::PostDecrement,
+                                              std::move(expr));
+    } else if (match(lexer::TokenType::Not)) {
+      expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::ForceUnwrap,
                                               std::move(expr));
     } else if (match(lexer::TokenType::Range)) {
       expr = parseRangeExpr(std::move(expr));
@@ -2551,8 +3137,44 @@ Parser::parseStructInit(std::unique_ptr<ast::Type> type) {
 // 解析基本类型（不包括类型后缀）
 std::unique_ptr<ast::Type> Parser::parseBasicType() {
   if (!check(lexer::TokenType::Identifier) && !isTypeKeyword()) {
-    error("Expected type name");
     return nullptr;
+  }
+
+  // 处理函数指针类型: func(param_types) -> ret_type
+  if (check(lexer::TokenType::Func)) {
+    advance(); // 消费 'func'
+
+    expect(lexer::TokenType::LParen, "Expected '(' after 'func'");
+
+    std::vector<std::unique_ptr<ast::Type>> paramTypes;
+    if (!check(lexer::TokenType::RParen)) {
+      do {
+        auto paramType = parseType();
+        if (!paramType) {
+          error("Expected parameter type in function pointer type");
+          return nullptr;
+        }
+        paramTypes.push_back(std::move(paramType));
+      } while (match(lexer::TokenType::Comma));
+    }
+
+    expect(lexer::TokenType::RParen,
+           "Expected ')' after function parameter types");
+
+    std::unique_ptr<ast::Type> returnType;
+    if (match(lexer::TokenType::Arrow)) {
+      returnType = parseType();
+      if (!returnType) {
+        error("Expected return type after '->' in function pointer type");
+        return nullptr;
+      }
+    } else {
+      returnType =
+          std::make_unique<ast::PrimitiveType>(ast::PrimitiveType::Kind::Void);
+    }
+
+    return std::make_unique<ast::FunctionType>(std::move(paramTypes),
+                                               std::move(returnType));
   }
 
   std::string name = currentToken->getValue();
@@ -2597,9 +3219,38 @@ std::unique_ptr<ast::Type> Parser::parseBasicType() {
   } else if (name == "char") {
     type = std::make_unique<ast::PrimitiveType>(ast::PrimitiveType::Kind::Char);
   } else if (name == "literalview") {
-    type = std::make_unique<ast::NamedType>("LiteralView");
+    type = std::make_unique<ast::NamedType>("literalview");
   } else {
     type = std::make_unique<ast::NamedType>(name);
+  }
+
+  // 检查是否有泛型参数 <Type1, Type2, ...>
+  if (check(lexer::TokenType::Lt)) {
+    ParserState genericState = saveState();
+    advance(); // 消费 '<'
+
+    std::vector<std::unique_ptr<ast::Node>> arguments;
+    bool validGeneric = true;
+    if (!check(lexer::TokenType::Gt)) {
+      do {
+        auto argType = parseType();
+        if (argType) {
+          arguments.push_back(std::move(argType));
+        } else {
+          validGeneric = false;
+          break;
+        }
+      } while (match(lexer::TokenType::Comma));
+    }
+
+    if (validGeneric && check(lexer::TokenType::Gt)) {
+      advance(); // 消费 '>'
+      // 创建泛型类型实例
+      type = std::make_unique<ast::GenericType>(name, std::move(arguments));
+    } else {
+      // 不是有效的泛型参数列表，恢复状态
+      restoreState(genericState);
+    }
   }
 
   // 检查是否是只读类型
@@ -2653,9 +3304,13 @@ std::unique_ptr<ast::Type> Parser::parseType() {
     }
     expect(lexer::TokenType::RParen, "Expected ')' after function parameters");
 
-    expect(lexer::TokenType::Arrow, "Expected '->' after function parameters");
-
-    auto returnType = parseType();
+    std::unique_ptr<ast::Type> returnType;
+    if (match(lexer::TokenType::Arrow)) {
+      returnType = parseType();
+    } else {
+      returnType =
+          std::make_unique<ast::PrimitiveType>(ast::PrimitiveType::Kind::Void);
+    }
     return std::make_unique<ast::FunctionType>(std::move(parameterTypes),
                                                std::move(returnType));
   }
@@ -2665,10 +3320,12 @@ std::unique_ptr<ast::Type> Parser::parseType() {
     return nullptr;
   }
 
-  return parseTypeSuffix(std::move(type));
+  type = parseTypeSuffix(std::move(type));
+
+  return type;
 }
 
-// 解析类型后缀（指针、引用、数组、切片、泛型）
+// 解析类型后缀（指针、引用、数组、切片、泛型、可空、只读）
 std::unique_ptr<ast::Type>
 Parser::parseTypeSuffix(std::unique_ptr<ast::Type> type) {
   while (true) {
@@ -2676,6 +3333,11 @@ Parser::parseTypeSuffix(std::unique_ptr<ast::Type> type) {
       type = std::make_unique<ast::PointerType>(std::move(type), false);
     } else if (match(lexer::TokenType::And)) {
       type = std::make_unique<ast::ReferenceType>(std::move(type));
+    } else if (match(lexer::TokenType::Question)) {
+      type = std::make_unique<ast::NullableType>(std::move(type));
+    } else if (match(lexer::TokenType::Not)) {
+      // ! 是左绑定的不可变修饰符，修饰左边的类型
+      type = std::make_unique<ast::ReadonlyType>(std::move(type));
     } else if (match(lexer::TokenType::LBracket)) {
       // 解析 [ ... ] 中的内容，可能是多维的
       if (match(lexer::TokenType::RBracket)) {
@@ -2884,13 +3546,34 @@ std::vector<std::unique_ptr<ast::Node>> Parser::parseTemplateArguments() {
 
 // 解析where子句
 std::unique_ptr<ast::Node> Parser::parseWhereClause() {
-  if (!check(lexer::TokenType::Identifier)) {
-    error("Expected constraint in where clause");
-    return nullptr;
+  // where 子句可以包含多个约束，用逗号分隔
+  // 例如: where Integral<T>, Addable<T>
+  std::vector<std::unique_ptr<ast::Node>> constraints;
+
+  do {
+    if (!check(lexer::TokenType::Identifier)) {
+      error("Expected constraint in where clause");
+      return nullptr;
+    }
+
+    auto constraint = parseType();
+    if (constraint) {
+      constraints.push_back(std::move(constraint));
+    }
+  } while (match(lexer::TokenType::Comma));
+
+  // 如果只有一个约束，直接返回
+  if (constraints.size() == 1) {
+    return std::move(constraints[0]);
   }
 
-  auto constraint = parseType();
-  return constraint;
+  // 多个约束时，返回第一个（简化处理）
+  // TODO: 实现完整的约束列表
+  if (!constraints.empty()) {
+    return std::move(constraints[0]);
+  }
+
+  return nullptr;
 }
 
 // 解析requires子句
@@ -2968,6 +3651,7 @@ bool Parser::isTypeStart() const {
 
   return isTypeKeyword() ||
          currentToken->getType() == lexer::TokenType::Identifier ||
+         currentToken->getType() == lexer::TokenType::BuiltinVar ||
          currentToken->getType() == lexer::TokenType::LParen;
 }
 
@@ -2986,7 +3670,8 @@ bool Parser::isTypeKeyword() const {
          type == lexer::TokenType::Float || type == lexer::TokenType::Double ||
          type == lexer::TokenType::Fp16 || type == lexer::TokenType::Bf16 ||
          type == lexer::TokenType::Char ||
-         type == lexer::TokenType::LiteralView;
+         type == lexer::TokenType::LiteralView ||
+         type == lexer::TokenType::Func;
 }
 
 // 其他TODO函数
@@ -2997,8 +3682,10 @@ std::unique_ptr<ast::Node> Parser::parseForInit() {
   }
 
   if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let) ||
-      check(lexer::TokenType::Late)) {
-    return parseVariableDecl();
+      check(lexer::TokenType::Late) || isTypeStart()) {
+    auto decl = parseVariableDeclForFor();
+    expect(lexer::TokenType::Semicolon, "Expected ';' after for init");
+    return decl;
   }
 
   auto expr = parseExpression();

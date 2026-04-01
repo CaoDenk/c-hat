@@ -10,22 +10,25 @@ namespace types {
 // 函数类型
 class FunctionType : public Type {
 public:
-  // 构造函数
+  FunctionType() = default;
+  
   FunctionType(std::shared_ptr<Type> returnType,
                std::vector<std::shared_ptr<Type>> parameterTypes);
 
-  // 将类型转换为字符串表示
   std::string toString() const override;
 
-  // 检查是否为函数类型
   bool isFunction() const override { return true; }
 
-  // 获取返回类型
   std::shared_ptr<Type> getReturnType() const { return returnType; }
+  
+  void setReturnType(std::shared_ptr<Type> type) { returnType = type; }
 
-  // 获取参数类型列表
   const std::vector<std::shared_ptr<Type>> &getParameterTypes() const {
     return parameterTypes;
+  }
+  
+  void addParameterType(std::shared_ptr<Type> type) {
+    parameterTypes.push_back(type);
   }
 
 protected:

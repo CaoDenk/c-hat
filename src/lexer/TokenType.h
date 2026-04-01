@@ -89,9 +89,11 @@ enum class TokenType {
   Extern,
   LiteralView,
   Namespace,
+  Attribute,
 
   // 标识符
   Identifier,
+  BuiltinVar,
 
   // 字面量
   IntegerLiteral,
@@ -103,6 +105,8 @@ enum class TokenType {
   // 操作符
   Plus,
   Minus,
+  Increment, // ++
+  Decrement, // --
   Multiply,
   Divide,
   Modulus,

@@ -40,6 +40,12 @@ std::string UnaryExpr::toString() const {
   case Op::At:
     opStr = "At";
     break;
+  case Op::ForceUnwrap:
+    opStr = "ForceUnwrap";
+    break;
+  case Op::NullablePropagation:
+    opStr = "NullablePropagation";
+    break;
   default:
     opStr = "Unknown";
     break;

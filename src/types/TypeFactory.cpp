@@ -110,5 +110,10 @@ TypeFactory::getReferenceType(std::shared_ptr<Type> baseType) {
   return std::make_shared<ReferenceType>(std::move(baseType));
 }
 
+std::shared_ptr<Type>
+TypeFactory::getNullableType(std::shared_ptr<Type> baseType) {
+  return std::make_shared<NullableType>(std::move(baseType));
+}
+
 } // namespace types
 } // namespace c_hat

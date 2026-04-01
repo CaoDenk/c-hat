@@ -23,30 +23,47 @@ std::string ModuleLoader::modulePathToString(
 
 fs::path
 ModuleLoader::modulePathToFilePath(const std::vector<std::string> &modulePath) {
-  fs::path basePath;
-  if (!stdlibPath_.empty()) {
-    basePath = stdlibPath_;
+  std::vector<fs::path> searchPaths;
+
+  if (!modulePaths_.empty()) {
+    for (const auto &p : modulePaths_) {
+      searchPaths.push_back(fs::path(p));
+    }
   } else {
-    basePath = "stdlib";
+    searchPaths.push_back(fs::path("stdlib"));
   }
 
+  for (const auto &basePath : searchPaths) {
+    fs::path moduleBase = basePath;
+    for (const auto &part : modulePath) {
+      moduleBase /= part;
+    }
+
+    auto filePath1 = moduleBase;
+    filePath1 += ".ch";
+
+    auto filePath2 = moduleBase / "mod.ch";
+
+    if (fs::exists(filePath1)) {
+      return filePath1;
+    }
+    if (fs::exists(filePath2)) {
+      return filePath2;
+    }
+  }
+
+  fs::path defaultPath;
+  if (!modulePaths_.empty()) {
+    defaultPath = fs::path(modulePaths_[0]);
+  } else {
+    defaultPath = fs::path("stdlib");
+  }
   for (const auto &part : modulePath) {
-    basePath /= part;
+    defaultPath /= part;
   }
+  defaultPath += ".ch";
 
-  auto filePath1 = basePath;
-  filePath1 += ".ch";
-
-  auto filePath2 = basePath / "mod.ch";
-
-  if (fs::exists(filePath1)) {
-    return filePath1;
-  }
-  if (fs::exists(filePath2)) {
-    return filePath2;
-  }
-
-  return filePath1;
+  return defaultPath;
 }
 
 std::unique_ptr<ast::Program>

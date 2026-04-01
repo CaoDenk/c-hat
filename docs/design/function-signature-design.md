@@ -166,7 +166,99 @@ if (!paramTypes.empty()) {
 
 ### 6.2 复杂类型支持
 
-对于复杂类型（如泛型、数组、切片等），需要设计更完善的类型名称生成规则。
+对于复杂类型（如泛型、数组、切片等），需要设计更完善的类型名称生成规则：
+
+#### 6.2.1 泛型类型
+
+```cpp
+// 泛型类型的mangling规则
+List<int>        → List@int
+List<List<int>>  → List@List@int
+Map<string, int> → Map@string#int
+
+// 函数签名示例
+func process(List<int> data) → process@List@int
+func process(List<List<int>> data) → process@List@List@int
+```
+
+**设计原则：**
+- 使用 `@` 分隔类型名和泛型参数
+- 使用 `#` 分隔多个泛型参数
+- 支持嵌套泛型（递归应用规则）
+
+#### 6.2.2 数组与切片类型
+
+```cpp
+// 切片类型
+int[]       → int[]      // 使用 [] 表示切片
+int![]      → int![]     // 保留 ! 修饰符
+
+// 固定大小数组
+int[5]      → int[5]     // 保留数组大小
+int[$]      → int[$]     // 自动推导标记
+
+// 多维数组
+int[,]      → int[,]     // 矩形切片（逗号表示维度）
+int[][]     → int[][]    // 交错数组
+
+// 函数签名示例
+func sum(int[] data) → sum@int[]
+func process(int[5] arr) → process@int[5]
+func matrix(int[,] m) → matrix@int[,]
+```
+
+#### 6.2.3 指针与引用类型
+
+```cpp
+// 指针类型
+int^        → int^       // 裸指针
+int!^       → int!^      // 指向只读数据的指针
+
+// 引用类型
+int&        → int&       // 左值引用
+int!&       → int!&      // 只读引用
+int&~       → int&~      // 万能引用（仅泛型推导上下文）
+
+// 函数签名示例
+func get_ptr(int^ p) → get_ptr@int^
+func process(int& ref) → process@int&
+```
+
+#### 6.2.4 函数指针类型
+
+```cpp
+// 函数指针类型
+func(int, int) -> int  →  func@int#int@int
+
+// 函数签名示例
+func apply(func(int, int) -> int f) → apply@func@int#int@int
+```
+
+#### 6.2.5 元组类型
+
+```cpp
+// 元组类型
+(int, float)    → (int#float)     // 使用 # 分隔元素类型
+(int, string, bool) → (int#string#bool)
+
+// 函数签名示例
+func process((int, float) tuple) → process@(int#float)
+```
+
+### 6.3 类型名称映射完整表
+
+| C^ 类型 | 生成的类型名 | 说明 |
+|---------|-------------|------|
+| `int` | `int` | 基础类型 |
+| `int!` | `int!` | 只读类型 |
+| `int[]` | `int[]` | 切片 |
+| `int[5]` | `int[5]` | 固定大小数组 |
+| `int[,]` | `int[,]` | 多维切片 |
+| `int^` | `int^` | 指针 |
+| `int&` | `int&` | 引用 |
+| `List<int>` | `List@int` | 泛型 |
+| `(int, float)` | `(int#float)` | 元组 |
+| `func(int, int) -> int` | `func@int#int@int` | 函数指针 |
 
 ### 6.3 Name Mangling
 

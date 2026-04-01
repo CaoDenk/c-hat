@@ -12,7 +12,7 @@ bool analyzeSource(const std::string &source) {
     if (!program)
       return false;
 
-    semantic::SemanticAnalyzer analyzer;
+    semantic::SemanticAnalyzer analyzer("", false);
     analyzer.analyze(*program);
     return !analyzer.hasError();
   } catch (...) {
@@ -158,17 +158,25 @@ TEST_CASE("Pointer: Pointer as function parameter", "[pointer][function]") {
   }
 }
 
-TEST_CASE("Pointer: Const pointer", "[pointer][const]") {
-  SECTION("Const pointer") {
-    REQUIRE(analyzeSource("func test() { int x = 10; const int^ ptr = ^x; }") == true);
+TEST_CASE("Pointer: Readonly pointer", "[pointer][readonly]") {
+  SECTION("Pointer to readonly int") {
+    // int!^ = 指向不可变 int 的指针 (类似 const int*)
+    REQUIRE(analyzeSource("func test() { int x = 10; int!^ ptr = ^x; }") == true);
   }
 
-  SECTION("Pointer to const") {
-    REQUIRE(analyzeSource("func test() { const int x = 10; int^ ptr = ^x; }") == false);
+  SECTION("Readonly pointer cannot modify") {
+    // 通过 int!^ 修改值应该报错
+    REQUIRE(analyzeSource("func test() { int x = 10; int!^ ptr = ^x; ptr^ = 20; }") == false);
   }
 
-  SECTION("Const pointer cannot modify") {
-    REQUIRE(analyzeSource("func test() { int x = 10; const int^ ptr = ^x; ptr^ = 20; }") == false);
+  SECTION("Readonly variable address") {
+    // int! 变量的地址应该赋给 int!^
+    REQUIRE(analyzeSource("func test() { int! x = 10; int!^ ptr = ^x; }") == true);
+  }
+
+  SECTION("Readonly var address to mutable pointer") {
+    // int! 变量的地址不能赋给 int^（会绕过只读限制）
+    REQUIRE(analyzeSource("func test() { int! x = 10; int^ ptr = ^x; }") == false);
   }
 }
 
