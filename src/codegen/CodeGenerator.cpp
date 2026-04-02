@@ -516,21 +516,21 @@ std::string CodeGenerator::generateBuiltinVarExpr(
     std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr) {
   const std::string &name = builtinVarExpr->name;
 
-  if (name == "__line") {
+  if (name == "__line__") {
     return "__LINE__";
-  } else if (name == "__column") {
+  } else if (name == "__column__") {
     return "__COLUMN__";
-  } else if (name == "__file") {
+  } else if (name == "__file__") {
     return "__FILE__";
-  } else if (name == "__function") {
+  } else if (name == "__function__") {
     return "__FUNCTION__";
-  } else if (name == "__module") {
+  } else if (name == "__module__") {
     return "\"__module__\"";
-  } else if (name == "__compiler_version") {
+  } else if (name == "__compiler_version__") {
     return "\"1.0.0\"";
-  } else if (name == "__timestamp") {
+  } else if (name == "__timestamp__") {
     return "__TIMESTAMP__";
-  } else if (name == "__build_mode") {
+  } else if (name == "__build_mode__") {
     return "0";
   }
   return name;
