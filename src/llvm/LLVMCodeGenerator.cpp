@@ -2962,7 +2962,20 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
 // 生成扩展声明
 llvm::Value *LLVMCodeGenerator::generateExtensionDecl(
     std::unique_ptr<ast::ExtensionDecl> extensionDecl) {
-  warning("Extension declaration not implemented");
+  if (!extensionDecl->extendedType) {
+    warning("Extension without extended type");
+    return nullptr;
+  }
+
+  std::string structName = getTypeName(extensionDecl->extendedType.get());
+
+  for (auto &member : extensionDecl->members) {
+    if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      auto ownedFunc = std::unique_ptr<ast::FunctionDecl>(
+          static_cast<ast::FunctionDecl *>(member.release()));
+      generateExtensionMemberFunction(std::move(ownedFunc), structName);
+    }
+  }
   return nullptr;
 }
 
@@ -2987,8 +3000,91 @@ llvm::Value *LLVMCodeGenerator::generateTypeAliasDecl(
 llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
     std::unique_ptr<ast::FunctionDecl> funcDecl,
     const std::string &structName) {
-  warning("Extension member function not implemented");
-  return nullptr;
+  llvm::Type *selfType = nullptr;
+  if (auto *structTy = structTypes_[structName]) {
+    selfType = structTy->getPointerTo();
+  } else {
+    selfType = llvm::Type::getInt32Ty(context());
+  }
+
+  std::vector<llvm::Type *> paramTypes = {selfType};
+
+  for (auto &paramNode : funcDecl->params) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
+      if (param->type) {
+        if (auto *typeNode = dynamic_cast<ast::Type *>(param->type.get())) {
+          llvm::Type *pt = generateType(typeNode);
+          if (pt) paramTypes.push_back(pt);
+        }
+      }
+    }
+  }
+
+  llvm::Type *returnType = llvm::Type::getVoidTy(context());
+  if (funcDecl->returnType) {
+    if (auto *typeNode =
+            dynamic_cast<ast::Type *>(funcDecl->returnType.get())) {
+      llvm::Type *rt = generateType(typeNode);
+      if (rt) returnType = rt;
+    }
+  }
+
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(returnType, paramTypes, false);
+  std::string mangledName = "ext_" + structName + "_" + funcDecl->name;
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage, mangledName, module());
+
+  if (!funcDecl->body) return function;
+
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+
+  auto prevFunction = currentFunction_;
+  currentFunction_ = function;
+  namedValues_.clear();
+  deferExpressions_.clear();
+
+  auto argIt = function->args().begin();
+  llvm::Value *selfArg = &(*argIt++);
+  selfArg->setName("self");
+  llvm::AllocaInst *selfAlloca =
+      builder()->CreateAlloca(selfArg->getType(), nullptr, "self");
+  builder()->CreateStore(selfArg, selfAlloca);
+  namedValues_["self"] = selfAlloca;
+
+  size_t paramIndex = 0;
+  for (; argIt != function->args().end(); ++argIt, ++paramIndex) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(
+            funcDecl->params[paramIndex].get())) {
+      llvm::Value *arg = &(*argIt);
+      arg->setName(param->name);
+      llvm::AllocaInst *alloca =
+          builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+      builder()->CreateStore(arg, alloca);
+      namedValues_[param->name] = alloca;
+    }
+  }
+
+  if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+    generateStatement(std::unique_ptr<ast::Statement>(
+        static_cast<ast::Statement *>(funcDecl->body.release())));
+    if (!function->empty()) {
+      llvm::BasicBlock *lastBlock = &function->back();
+      if (!lastBlock->getTerminator()) {
+        builder()->SetInsertPoint(lastBlock);
+        if (returnType->isVoidTy()) {
+          builder()->CreateRetVoid();
+        } else {
+          builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+        }
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  return function;
 }
 
 // 获取表达式左值
