@@ -1202,6 +1202,14 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
   case ast::NodeType::LabelStmt:
     return generateLabelStmt(std::unique_ptr<ast::LabelStmt>(
         static_cast<ast::LabelStmt *>(stmt.release())));
+  case ast::NodeType::ComptimeStmt: {
+    auto comptime = std::unique_ptr<ast::ComptimeStmt>(
+        static_cast<ast::ComptimeStmt *>(stmt.release()));
+    if (comptime->stmt) {
+      return generateStatement(std::move(comptime->stmt));
+    }
+    return nullptr;
+  }
   default:
     return nullptr;
   }
@@ -1843,6 +1851,61 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     return nullptr;
   }
 
+  // 查找操作符重载
+  auto tryOperatorOverload = [&](const std::string &opName) -> llvm::Value * {
+    llvm::Type *lhsType = lhs->getType();
+    for (auto &[name, func] : functions_) {
+      if (name.size() > opName.size() + 1 &&
+          name.substr(name.size() - opName.size()) == opName &&
+          name[name.size() - opName.size() - 1] == '_') {
+        std::string className = name.substr(0, name.size() - opName.size() - 1);
+        auto structIt = structTypes_.find(className);
+        if (structIt != structTypes_.end()) {
+          llvm::StructType *structType = structIt->second;
+          if (lhsType == structType->getPointerTo() ||
+              lhsType == structType) {
+            std::vector<llvm::Value *> args;
+            if (lhsType == structType) {
+              llvm::AllocaInst *tmp =
+                  builder()->CreateAlloca(structType, nullptr, "tmp");
+              builder()->CreateStore(lhs, tmp);
+              args.push_back(tmp);
+            } else {
+              args.push_back(lhs);
+            }
+            args.push_back(rhs);
+            return builder()->CreateCall(func, args, "opoverload");
+          }
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  std::string opName;
+  switch (binaryExpr->op) {
+  case ast::BinaryExpr::Op::Add: opName = "operator+"; break;
+  case ast::BinaryExpr::Op::Sub: opName = "operator-"; break;
+  case ast::BinaryExpr::Op::Mul: opName = "operator*"; break;
+  case ast::BinaryExpr::Op::Div: opName = "operator/"; break;
+  case ast::BinaryExpr::Op::Mod: opName = "operator%"; break;
+  case ast::BinaryExpr::Op::Eq: opName = "operator=="; break;
+  case ast::BinaryExpr::Op::Ne: opName = "operator!="; break;
+  case ast::BinaryExpr::Op::Lt: opName = "operator<"; break;
+  case ast::BinaryExpr::Op::Le: opName = "operator<="; break;
+  case ast::BinaryExpr::Op::Gt: opName = "operator>"; break;
+  case ast::BinaryExpr::Op::Ge: opName = "operator>="; break;
+  case ast::BinaryExpr::Op::And: opName = "operator&&"; break;
+  case ast::BinaryExpr::Op::Or: opName = "operator||"; break;
+  default: break;
+  }
+
+  if (!opName.empty()) {
+    if (llvm::Value *result = tryOperatorOverload(opName)) {
+      return result;
+    }
+  }
+
   switch (binaryExpr->op) {
   case ast::BinaryExpr::Op::Add:
     if (lhs->getType()->isFloatingPointTy()) {
@@ -1920,6 +1983,43 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
   llvm::Value *operand = generateExpression(std::move(unaryExpr->expr));
   if (!operand) {
     return nullptr;
+  }
+
+  // 查找一元操作符重载
+  std::string unaryOpName;
+  switch (unaryExpr->op) {
+  case ast::UnaryExpr::Op::Minus: unaryOpName = "operator-"; break;
+  case ast::UnaryExpr::Op::Not: unaryOpName = "operator!"; break;
+  case ast::UnaryExpr::Op::Complement: unaryOpName = "operator~"; break;
+  default: break;
+  }
+
+  if (!unaryOpName.empty()) {
+    llvm::Type *opType = operand->getType();
+    for (auto &[name, func] : functions_) {
+      if (name.size() > unaryOpName.size() + 1 &&
+          name.substr(name.size() - unaryOpName.size()) == unaryOpName &&
+          name[name.size() - unaryOpName.size() - 1] == '_') {
+        std::string className =
+            name.substr(0, name.size() - unaryOpName.size() - 1);
+        auto structIt = structTypes_.find(className);
+        if (structIt != structTypes_.end()) {
+          llvm::StructType *structType = structIt->second;
+          if (opType == structType->getPointerTo() || opType == structType) {
+            std::vector<llvm::Value *> args;
+            if (opType == structType) {
+              llvm::AllocaInst *tmp =
+                  builder()->CreateAlloca(structType, nullptr, "tmp");
+              builder()->CreateStore(operand, tmp);
+              args.push_back(tmp);
+            } else {
+              args.push_back(operand);
+            }
+            return builder()->CreateCall(func, args, "unaryopoverload");
+          }
+        }
+      }
+    }
   }
 
   switch (unaryExpr->op) {
