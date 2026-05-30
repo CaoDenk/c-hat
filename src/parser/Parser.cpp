@@ -2526,6 +2526,8 @@ std::unique_ptr<ast::Expression> Parser::parseIsExpr() {
     std::unique_ptr<ast::Type> type;
     if (auto *ident = dynamic_cast<ast::Identifier *>(left.get())) {
       type = std::make_unique<ast::NamedType>(ident->name);
+    } else if (auto *namedType = dynamic_cast<ast::NamedType *>(left.get())) {
+      type = std::make_unique<ast::NamedType>(namedType->name);
     } else {
       type = std::make_unique<ast::NamedType>("unknown");
     }
@@ -3947,54 +3949,15 @@ std::unique_ptr<ast::Statement> Parser::parseDeferStmt() {
 std::unique_ptr<ast::ComptimeStmt> Parser::parseComptimeStmt() {
   // 检查是否是 comptime for
   if (check(lexer::TokenType::For)) {
-    ParserState state = saveState();
-    advance(); // consume 'for'
-
-    // 尝试解析 for 循环
-    if (check(lexer::TokenType::LParen)) {
-      // 解析 for 循环的初始化、条件、更新
-      advance(); // consume '('
-
-      // 解析初始化
-      std::unique_ptr<ast::Node> init;
-      if (!check(lexer::TokenType::Semicolon)) {
-        if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let)) {
-          init = parseVariableDecl();
-        } else {
-          init = parseExpression();
-        }
-      }
-      expect(lexer::TokenType::Semicolon, "Expected ';' after for init");
-
-      // 解析条件
-      std::unique_ptr<ast::Expression> condition;
-      if (!check(lexer::TokenType::Semicolon)) {
-        condition = parseExpression();
-      }
-      expect(lexer::TokenType::Semicolon, "Expected ';' after for condition");
-
-      // 解析更新
-      std::unique_ptr<ast::Expression> update;
-      if (!check(lexer::TokenType::RParen)) {
-        update = parseExpression();
-      }
-      expect(lexer::TokenType::RParen, "Expected ')' after for update");
-
-      // 解析循环体
-      auto body = parseStatement();
-
-      // 创建 ForStmt
-      auto forStmt = std::make_unique<ast::ForStmt>(
-          std::move(init), std::move(condition), std::move(update),
-          std::move(body));
-
-      // 返回 ComptimeForStmt 包装
-      auto comptimeFor = std::make_unique<ast::ComptimeForStmt>(std::move(forStmt));
+    // 直接解析 for 语句，然后包装成 ComptimeForStmt
+    auto stmt = parseStatement();
+    if (auto *forStmt = dynamic_cast<ast::ForStmt *>(stmt.get())) {
+      auto comptimeFor = std::make_unique<ast::ComptimeForStmt>(
+          std::unique_ptr<ast::ForStmt>(static_cast<ast::ForStmt *>(stmt.release())));
       return std::make_unique<ast::ComptimeStmt>(std::move(comptimeFor));
     }
-
-    // 如果解析失败，回退
-    restoreState(state);
+    // 如果不是 for 语句，包装成普通 ComptimeStmt
+    return std::make_unique<ast::ComptimeStmt>(std::move(stmt));
   }
 
   // 检查是否是 comptime if

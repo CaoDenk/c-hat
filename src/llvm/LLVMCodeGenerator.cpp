@@ -2026,7 +2026,7 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
   switch (unaryExpr->op) {
   case ast::UnaryExpr::Op::Minus: unaryOpName = "operator-"; break;
   case ast::UnaryExpr::Op::Not: unaryOpName = "operator!"; break;
-  case ast::UnaryExpr::Op::Complement: unaryOpName = "operator~"; break;
+  case ast::UnaryExpr::Op::BitNot: unaryOpName = "operator~"; break;
   default: break;
   }
 
@@ -2935,7 +2935,7 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
 
     if (catchStmt->param && catchStmt->param->name != "..." &&
         catchStmt->param->type) {
-      auto paramType = llvm::Type::getInt32Ty(context());
+      llvm::Type *paramType = llvm::Type::getInt32Ty(context());
       if (auto *typeNode =
               dynamic_cast<ast::Type *>(catchStmt->param->type.get())) {
         llvm::Type *pt = generateType(typeNode);
