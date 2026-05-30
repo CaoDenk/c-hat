@@ -201,6 +201,10 @@ private:
   // 类型缓存，用于提高代码生成效率
   std::unordered_map<ast::Type *, llvm::Type *> typeCache_;
 
+  // 循环 break/continue 目标
+  std::vector<llvm::BasicBlock *> breakTargets_;
+  std::vector<llvm::BasicBlock *> continueTargets_;
+
   // 错误处理
   int errorCount_ = 0;
   bool hasErrors_ = false;

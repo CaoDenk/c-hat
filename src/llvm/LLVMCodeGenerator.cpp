@@ -2398,7 +2398,11 @@ llvm::Value *LLVMCodeGenerator::generateWhileStmt(
   // 生成循环体
   func->insert(func->end(), bodyBB);
   builder()->SetInsertPoint(bodyBB);
+  breakTargets_.push_back(afterBB);
+  continueTargets_.push_back(condBB);
   generateStatement(std::move(whileStmt->body));
+  breakTargets_.pop_back();
+  continueTargets_.pop_back();
   builder()->CreateBr(condBB);
 
   // 生成 after 块
@@ -2445,7 +2449,11 @@ LLVMCodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
   // 生成循环体
   func->insert(func->end(), bodyBB);
   builder()->SetInsertPoint(bodyBB);
+  breakTargets_.push_back(afterBB);
+  continueTargets_.push_back(condBB);
   generateStatement(std::move(forStmt->body));
+  breakTargets_.pop_back();
+  continueTargets_.pop_back();
   if (forStmt->update) {
     generateExpression(std::move(forStmt->update));
   }
@@ -2461,16 +2469,28 @@ LLVMCodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
 // 生成 break 语句
 llvm::Value *LLVMCodeGenerator::generateBreakStmt(
     std::unique_ptr<ast::BreakStmt> breakStmt) {
-  // TODO: 实现 break 语句
-  warning("Break statement not fully implemented");
+  if (breakTargets_.empty()) {
+    error("break outside loop");
+    return nullptr;
+  }
+  builder()->CreateBr(breakTargets_.back());
+  llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
+      context(), "afterbreak", builder()->GetInsertBlock()->getParent());
+  builder()->SetInsertPoint(deadBB);
   return nullptr;
 }
 
 // 生成 continue 语句
 llvm::Value *LLVMCodeGenerator::generateContinueStmt(
     std::unique_ptr<ast::ContinueStmt> continueStmt) {
-  // TODO: 实现 continue 语句
-  warning("Continue statement not fully implemented");
+  if (continueTargets_.empty()) {
+    error("continue outside loop");
+    return nullptr;
+  }
+  builder()->CreateBr(continueTargets_.back());
+  llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
+      context(), "aftercontinue", builder()->GetInsertBlock()->getParent());
+  builder()->SetInsertPoint(deadBB);
   return nullptr;
 }
 
