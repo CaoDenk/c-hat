@@ -158,6 +158,10 @@ private:
   llvm::Value *generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
   llvm::Value *
   generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr> condExpr);
+  llvm::Value *
+  generateTypeIsExpr(std::unique_ptr<ast::TypeIsExpr> typeIsExpr);
+  llvm::Value *
+  generateTypeofExpr(std::unique_ptr<ast::TypeofExpr> typeofExpr);
   llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
   llvm::Value *
   generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr> reflectionExpr);

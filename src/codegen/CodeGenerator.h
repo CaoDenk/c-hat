@@ -130,6 +130,14 @@ private:
   std::string generateConditionalExpr(
       std::unique_ptr<ast::ConditionalExpr> condExpr);
 
+  // 生成 is 类型检查表达式代码
+  std::string generateTypeIsExpr(
+      std::unique_ptr<ast::TypeIsExpr> typeIsExpr);
+
+  // 生成 typeof 表达式代码
+  std::string generateTypeofExpr(
+      std::unique_ptr<ast::TypeofExpr> typeofExpr);
+
   // 生成内置变量表达式代码
   std::string
   generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr);

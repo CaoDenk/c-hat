@@ -165,6 +165,7 @@ enum class TokenType {
   Bar,         // |
   FatArrow,    // =>
   At,          // @
+  Is,          // is
 
   // 注释和空白
   LineComment,

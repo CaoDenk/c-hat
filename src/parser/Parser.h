@@ -204,6 +204,9 @@ private:
   // 解析相等表达式
   std::unique_ptr<ast::Expression> parseEqualityExpr();
 
+  // 解析 is 表达式
+  std::unique_ptr<ast::Expression> parseIsExpr();
+
   // 解析关系表达式
   std::unique_ptr<ast::Expression> parseRelationalExpr();
 

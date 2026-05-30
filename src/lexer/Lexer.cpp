@@ -93,7 +93,8 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"extern", TokenType::Extern},
     {"literalview", TokenType::LiteralView},
     {"namespace", TokenType::Namespace},
-    {"attribute", TokenType::Attribute}};
+    {"attribute", TokenType::Attribute},
+    {"is", TokenType::Is}};
 
 // Token 转字符串
 std::string Token::toString() const {

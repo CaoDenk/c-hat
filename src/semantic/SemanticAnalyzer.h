@@ -246,6 +246,14 @@ private:
   std::shared_ptr<types::Type>
   analyzeConditionalExpr(ast::ConditionalExpr *condExpr);
 
+  // 分析 is 类型检查表达式
+  std::shared_ptr<types::Type>
+  analyzeTypeIsExpr(ast::TypeIsExpr *typeIsExpr);
+
+  // 分析 typeof 表达式
+  std::shared_ptr<types::Type>
+  analyzeTypeofExpr(ast::TypeofExpr *typeofExpr);
+
   // 分析内置变量表达式
   std::shared_ptr<types::Type>
   analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr);

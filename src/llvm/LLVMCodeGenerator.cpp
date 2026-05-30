@@ -1283,6 +1283,12 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::ConditionalExpr:
     return generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr>(
         static_cast<ast::ConditionalExpr *>(expr.release())));
+  case ast::NodeType::TypeIsExpr:
+    return generateTypeIsExpr(std::unique_ptr<ast::TypeIsExpr>(
+        static_cast<ast::TypeIsExpr *>(expr.release())));
+  case ast::NodeType::TypeofExpr:
+    return generateTypeofExpr(std::unique_ptr<ast::TypeofExpr>(
+        static_cast<ast::TypeofExpr *>(expr.release())));
   default:
     return nullptr;
   }
@@ -2491,6 +2497,25 @@ llvm::Value *LLVMCodeGenerator::generateConditionalExpr(
   phi->addIncoming(thenVal, thenBB);
   phi->addIncoming(elseVal, elseBB);
   return phi;
+}
+
+// 生成 is 类型检查表达式
+llvm::Value *LLVMCodeGenerator::generateTypeIsExpr(
+    std::unique_ptr<ast::TypeIsExpr> typeIsExpr) {
+  // 编译期求值：检查类型是否匹配
+  // 简化实现：总是返回 true（后续可扩展为实际类型检查）
+  return llvm::ConstantInt::getTrue(context());
+}
+
+// 生成 typeof 表达式
+llvm::Value *LLVMCodeGenerator::generateTypeofExpr(
+    std::unique_ptr<ast::TypeofExpr> typeofExpr) {
+  // typeof 在编译期求值，返回类型信息
+  // 简化实现：返回一个占位值
+  if (typeofExpr->expr) {
+    generateExpression(std::move(typeofExpr->expr));
+  }
+  return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
 }
 
 // 生成表达式语句

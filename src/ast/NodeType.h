@@ -28,6 +28,8 @@ enum class NodeType {
   ReflectionExpr,
   BuiltinVarExpr,
   ConditionalExpr,
+  TypeIsExpr,
+  TypeofExpr,
 
   // 声明
   Declaration,

@@ -272,6 +272,12 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::ConditionalExpr:
     return generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr>(
         static_cast<ast::ConditionalExpr *>(expression.release())));
+  case ast::NodeType::TypeIsExpr:
+    return generateTypeIsExpr(std::unique_ptr<ast::TypeIsExpr>(
+        static_cast<ast::TypeIsExpr *>(expression.release())));
+  case ast::NodeType::TypeofExpr:
+    return generateTypeofExpr(std::unique_ptr<ast::TypeofExpr>(
+        static_cast<ast::TypeofExpr *>(expression.release())));
   default:
     return "";
   }
@@ -520,6 +526,36 @@ std::string CodeGenerator::generateConditionalExpr(
   return generateExpression(std::move(condExpr->condition)) + " ? " +
          generateExpression(std::move(condExpr->thenExpr)) + " : " +
          generateExpression(std::move(condExpr->elseExpr));
+}
+
+std::string CodeGenerator::generateTypeIsExpr(
+    std::unique_ptr<ast::TypeIsExpr> typeIsExpr) {
+  std::string kindStr;
+  switch (typeIsExpr->kind) {
+  case ast::TypeIsExpr::Kind::Struct: kindStr = "struct"; break;
+  case ast::TypeIsExpr::Kind::Class: kindStr = "class"; break;
+  case ast::TypeIsExpr::Kind::Enum: kindStr = "enum"; break;
+  case ast::TypeIsExpr::Kind::Interface: kindStr = "interface"; break;
+  case ast::TypeIsExpr::Kind::Integer: kindStr = "integer"; break;
+  case ast::TypeIsExpr::Kind::Float: kindStr = "float"; break;
+  case ast::TypeIsExpr::Kind::Bool: kindStr = "bool"; break;
+  case ast::TypeIsExpr::Kind::Char: kindStr = "char"; break;
+  case ast::TypeIsExpr::Kind::String: kindStr = "string"; break;
+  case ast::TypeIsExpr::Kind::Pointer: kindStr = "pointer"; break;
+  case ast::TypeIsExpr::Kind::Reference: kindStr = "reference"; break;
+  case ast::TypeIsExpr::Kind::Slice: kindStr = "slice"; break;
+  case ast::TypeIsExpr::Kind::Array: kindStr = "array"; break;
+  case ast::TypeIsExpr::Kind::Tuple: kindStr = "tuple"; break;
+  case ast::TypeIsExpr::Kind::Function: kindStr = "function"; break;
+  case ast::TypeIsExpr::Kind::Nullable: kindStr = "nullable"; break;
+  case ast::TypeIsExpr::Kind::Primitive: kindStr = "primitive"; break;
+  }
+  return typeIsExpr->type->toString() + " is " + kindStr;
+}
+
+std::string CodeGenerator::generateTypeofExpr(
+    std::unique_ptr<ast::TypeofExpr> typeofExpr) {
+  return "typeof(" + generateExpression(std::move(typeofExpr->expr)) + ")";
 }
 
 std::string CodeGenerator::generateBuiltinVarExpr(

@@ -2445,7 +2445,7 @@ std::unique_ptr<ast::Expression> Parser::parseAndExpr() {
 
 // 解析相等表达式
 std::unique_ptr<ast::Expression> Parser::parseEqualityExpr() {
-  auto left = parseRelationalExpr();
+  auto left = parseIsExpr();
 
   while (true) {
     ast::BinaryExpr::Op op;
@@ -2457,9 +2457,80 @@ std::unique_ptr<ast::Expression> Parser::parseEqualityExpr() {
       break;
     }
 
-    auto right = parseRelationalExpr();
+    auto right = parseIsExpr();
     left = std::make_unique<ast::BinaryExpr>(std::move(left), op,
                                              std::move(right));
+  }
+
+  return left;
+}
+
+// 解析 is 表达式
+std::unique_ptr<ast::Expression> Parser::parseIsExpr() {
+  auto left = parseRelationalExpr();
+
+  if (match(lexer::TokenType::Is)) {
+    ast::TypeIsExpr::Kind kind;
+    if (match(lexer::TokenType::Struct)) {
+      kind = ast::TypeIsExpr::Kind::Struct;
+    } else if (match(lexer::TokenType::Class)) {
+      kind = ast::TypeIsExpr::Kind::Class;
+    } else if (match(lexer::TokenType::Enum)) {
+      kind = ast::TypeIsExpr::Kind::Enum;
+    } else if (match(lexer::TokenType::Interface)) {
+      kind = ast::TypeIsExpr::Kind::Interface;
+    } else if (check(lexer::TokenType::Int) ||
+               check(lexer::TokenType::Long) ||
+               check(lexer::TokenType::Float) ||
+               check(lexer::TokenType::Double) ||
+               check(lexer::TokenType::Bool) ||
+               check(lexer::TokenType::Char)) {
+      // primitive type keywords
+      kind = ast::TypeIsExpr::Kind::Primitive;
+      advance();
+    } else if (check(lexer::TokenType::Identifier)) {
+      std::string kindStr = currentToken->getValue();
+      advance();
+      if (kindStr == "integer") {
+        kind = ast::TypeIsExpr::Kind::Integer;
+      } else if (kindStr == "float") {
+        kind = ast::TypeIsExpr::Kind::Float;
+      } else if (kindStr == "string") {
+        kind = ast::TypeIsExpr::Kind::String;
+      } else if (kindStr == "pointer") {
+        kind = ast::TypeIsExpr::Kind::Pointer;
+      } else if (kindStr == "reference") {
+        kind = ast::TypeIsExpr::Kind::Reference;
+      } else if (kindStr == "slice") {
+        kind = ast::TypeIsExpr::Kind::Slice;
+      } else if (kindStr == "array") {
+        kind = ast::TypeIsExpr::Kind::Array;
+      } else if (kindStr == "tuple") {
+        kind = ast::TypeIsExpr::Kind::Tuple;
+      } else if (kindStr == "function") {
+        kind = ast::TypeIsExpr::Kind::Function;
+      } else if (kindStr == "nullable") {
+        kind = ast::TypeIsExpr::Kind::Nullable;
+      } else if (kindStr == "primitive") {
+        kind = ast::TypeIsExpr::Kind::Primitive;
+      } else {
+        error("Unknown type kind: " + kindStr);
+        return left;
+      }
+    } else {
+      error("Expected type kind after 'is'");
+      return left;
+    }
+
+    // Extract type from left expression (should be a type reference)
+    std::unique_ptr<ast::Type> type;
+    if (auto *ident = dynamic_cast<ast::Identifier *>(left.get())) {
+      type = std::make_unique<ast::NamedType>(ident->name);
+    } else {
+      type = std::make_unique<ast::NamedType>("unknown");
+    }
+
+    return std::make_unique<ast::TypeIsExpr>(std::move(type), kind);
   }
 
   return left;
@@ -2642,10 +2713,7 @@ std::unique_ptr<ast::Expression> Parser::parseUnaryExpr() {
     }
     expect(lexer::TokenType::RParen,
            "Expected ')' after expression in typeof expression");
-    // 创建一个 TypeofExpr 表达式
-    return std::make_unique<ast::CallExpr>(
-        std::make_unique<ast::Identifier>("typeof"),
-        std::vector<std::unique_ptr<ast::Expression>>());
+    return std::make_unique<ast::TypeofExpr>(std::move(expr));
   }
 
   return parsePrimaryExpr();

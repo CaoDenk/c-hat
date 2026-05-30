@@ -2295,6 +2295,12 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
   case ast::NodeType::ConditionalExpr:
     return analyzeConditionalExpr(
         static_cast<ast::ConditionalExpr *>(expression));
+  case ast::NodeType::TypeIsExpr:
+    return analyzeTypeIsExpr(
+        static_cast<ast::TypeIsExpr *>(expression));
+  case ast::NodeType::TypeofExpr:
+    return analyzeTypeofExpr(
+        static_cast<ast::TypeofExpr *>(expression));
   case ast::NodeType::BuiltinVarExpr:
     return analyzeBuiltinVarExpr(
         static_cast<ast::BuiltinVarExpr *>(expression));
@@ -3681,6 +3687,23 @@ SemanticAnalyzer::analyzeConditionalExpr(ast::ConditionalExpr *condExpr) {
 }
 
 std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeTypeIsExpr(ast::TypeIsExpr *typeIsExpr) {
+  // type is kind 返回 bool
+  return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Bool);
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeTypeofExpr(ast::TypeofExpr *typeofExpr) {
+  // typeof(expr) 返回 Type 类型
+  if (typeofExpr->expr) {
+    analyzeExpression(typeofExpr->expr.get());
+  }
+  // 返回 typeinfo 类型
+  auto typeInfoType = std::make_shared<types::ClassType>("typeinfo");
+  return typeInfoType;
+}
+
+std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr) {
   const std::string &name = builtinVarExpr->name;
 
@@ -4800,6 +4823,15 @@ bool SemanticAnalyzer::containsAwaitOrYield(ast::Expression *expr) {
     if (containsAwaitOrYield(cond->thenExpr.get()))
       return true;
     return containsAwaitOrYield(cond->elseExpr.get());
+  }
+
+  case ast::NodeType::TypeIsExpr: {
+    return false;
+  }
+
+  case ast::NodeType::TypeofExpr: {
+    auto *typeofExpr = static_cast<ast::TypeofExpr *>(expr);
+    return containsAwaitOrYield(typeofExpr->expr.get());
   }
 
   default:
