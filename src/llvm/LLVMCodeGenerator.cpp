@@ -1261,6 +1261,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::ReflectionExpr:
     return generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr>(
         static_cast<ast::ReflectionExpr *>(expr.release())));
+  case ast::NodeType::ConditionalExpr:
+    return generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr>(
+        static_cast<ast::ConditionalExpr *>(expr.release())));
   default:
     return nullptr;
   }
@@ -2264,6 +2267,44 @@ llvm::Value *LLVMCodeGenerator::generateReflectionExpr(
     std::unique_ptr<ast::ReflectionExpr> reflectionExpr) {
   warning("Reflection expression not implemented");
   return nullptr;
+}
+
+// 生成条件表达式 (?:)
+llvm::Value *LLVMCodeGenerator::generateConditionalExpr(
+    std::unique_ptr<ast::ConditionalExpr> condExpr) {
+  llvm::Function *func = builder()->GetInsertBlock()->getParent();
+  llvm::Value *cond = generateExpression(std::move(condExpr->condition));
+  if (!cond) return nullptr;
+  cond = builder()->CreateICmpNE(
+      cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
+
+  llvm::BasicBlock *thenBB =
+      llvm::BasicBlock::Create(context(), "condthen", func);
+  llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(context(), "condelse");
+  llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context(), "condmerge");
+
+  builder()->CreateCondBr(cond, thenBB, elseBB);
+
+  builder()->SetInsertPoint(thenBB);
+  llvm::Value *thenVal = generateExpression(std::move(condExpr->thenExpr));
+  if (!thenVal) return nullptr;
+  builder()->CreateBr(mergeBB);
+  thenBB = builder()->GetInsertBlock();
+
+  func->insert(func->end(), elseBB);
+  builder()->SetInsertPoint(elseBB);
+  llvm::Value *elseVal = generateExpression(std::move(condExpr->elseExpr));
+  if (!elseVal) return nullptr;
+  builder()->CreateBr(mergeBB);
+  elseBB = builder()->GetInsertBlock();
+
+  func->insert(func->end(), mergeBB);
+  builder()->SetInsertPoint(mergeBB);
+
+  llvm::PHINode *phi = builder()->CreatePHI(thenVal->getType(), 2, "condphi");
+  phi->addIncoming(thenVal, thenBB);
+  phi->addIncoming(elseVal, elseBB);
+  return phi;
 }
 
 // 生成表达式语句

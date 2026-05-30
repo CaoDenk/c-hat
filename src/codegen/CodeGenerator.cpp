@@ -269,6 +269,9 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::BuiltinVarExpr:
     return generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr>(
         static_cast<ast::BuiltinVarExpr *>(expression.release())));
+  case ast::NodeType::ConditionalExpr:
+    return generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr>(
+        static_cast<ast::ConditionalExpr *>(expression.release())));
   default:
     return "";
   }
@@ -510,6 +513,13 @@ std::string CodeGenerator::generateExpansionExpr(
   std::string code = generateExpression(std::move(expansionExpr->expr));
   code += "...";
   return code;
+}
+
+std::string CodeGenerator::generateConditionalExpr(
+    std::unique_ptr<ast::ConditionalExpr> condExpr) {
+  return generateExpression(std::move(condExpr->condition)) + " ? " +
+         generateExpression(std::move(condExpr->thenExpr)) + " : " +
+         generateExpression(std::move(condExpr->elseExpr));
 }
 
 std::string CodeGenerator::generateBuiltinVarExpr(

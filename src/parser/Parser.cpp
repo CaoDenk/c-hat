@@ -2366,8 +2366,8 @@ std::unique_ptr<ast::Expression> Parser::parseConditionalExpr() {
     expect(lexer::TokenType::Colon, "Expected ':' in conditional expression");
     auto elseExpr = parseConditionalExpr();
 
-    // TODO: 创建ConditionalExpr节点
-    return thenExpr;
+    return std::make_unique<ast::ConditionalExpr>(
+        std::move(condition), std::move(thenExpr), std::move(elseExpr));
   }
 
   return condition;

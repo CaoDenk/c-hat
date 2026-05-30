@@ -2276,6 +2276,9 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
   case ast::NodeType::ReflectionExpr:
     return analyzeReflectionExpr(
         static_cast<ast::ReflectionExpr *>(expression));
+  case ast::NodeType::ConditionalExpr:
+    return analyzeConditionalExpr(
+        static_cast<ast::ConditionalExpr *>(expression));
   case ast::NodeType::BuiltinVarExpr:
     return analyzeBuiltinVarExpr(
         static_cast<ast::BuiltinVarExpr *>(expression));
@@ -3643,6 +3646,25 @@ SemanticAnalyzer::analyzeReflectionExpr(ast::ReflectionExpr *reflectionExpr) {
 }
 
 std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeConditionalExpr(ast::ConditionalExpr *condExpr) {
+  auto condType = analyzeExpression(condExpr->condition.get());
+  if (!condType) {
+    return nullptr;
+  }
+  auto thenType = analyzeExpression(condExpr->thenExpr.get());
+  auto elseType = analyzeExpression(condExpr->elseExpr.get());
+  if (!thenType || !elseType) {
+    return nullptr;
+  }
+  if (thenType->toString() != elseType->toString()) {
+    error("Conditional expression branches must have the same type",
+          *condExpr);
+    return nullptr;
+  }
+  return thenType;
+}
+
+std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr) {
   const std::string &name = builtinVarExpr->name;
 
@@ -4753,6 +4775,15 @@ bool SemanticAnalyzer::containsAwaitOrYield(ast::Expression *expr) {
         return true;
     }
     return false;
+  }
+
+  case ast::NodeType::ConditionalExpr: {
+    auto *cond = static_cast<ast::ConditionalExpr *>(expr);
+    if (containsAwaitOrYield(cond->condition.get()))
+      return true;
+    if (containsAwaitOrYield(cond->thenExpr.get()))
+      return true;
+    return containsAwaitOrYield(cond->elseExpr.get());
   }
 
   default:

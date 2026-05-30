@@ -9,6 +9,7 @@
 #include "expressions/BinaryExpr.h"
 #include "expressions/BuiltinVarExpr.h"
 #include "expressions/CallExpr.h"
+#include "expressions/ConditionalExpr.h"
 #include "expressions/DeleteExpr.h"
 #include "expressions/ExpansionExpr.h"
 #include "expressions/Expression.h"

@@ -152,6 +152,8 @@ private:
   llvm::Value *
   generateStructInitExpr(std::unique_ptr<ast::StructInitExpr> structInitExpr);
   llvm::Value *generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
+  llvm::Value *
+  generateConditionalExpr(std::unique_ptr<ast::ConditionalExpr> condExpr);
   llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
   llvm::Value *
   generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr> reflectionExpr);

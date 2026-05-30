@@ -242,6 +242,10 @@ private:
   std::shared_ptr<types::Type>
   analyzeReflectionExpr(ast::ReflectionExpr *reflectionExpr);
 
+  // 分析条件表达式
+  std::shared_ptr<types::Type>
+  analyzeConditionalExpr(ast::ConditionalExpr *condExpr);
+
   // 分析内置变量表达式
   std::shared_ptr<types::Type>
   analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr);

@@ -27,6 +27,7 @@ enum class NodeType {
   LambdaExpr,
   ReflectionExpr,
   BuiltinVarExpr,
+  ConditionalExpr,
 
   // 声明
   Declaration,
