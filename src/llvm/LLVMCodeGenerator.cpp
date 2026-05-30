@@ -1206,7 +1206,23 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
     auto comptime = std::unique_ptr<ast::ComptimeStmt>(
         static_cast<ast::ComptimeStmt *>(stmt.release()));
     if (comptime->stmt) {
+      // 检查是否是 ComptimeForStmt
+      if (auto *comptimeFor = dynamic_cast<ast::ComptimeForStmt *>(comptime->stmt.get())) {
+        if (comptimeFor->forStmt) {
+          return generateForStmt(std::unique_ptr<ast::ForStmt>(
+              static_cast<ast::ForStmt *>(comptimeFor->forStmt.release())));
+        }
+      }
       return generateStatement(std::move(comptime->stmt));
+    }
+    return nullptr;
+  }
+  case ast::NodeType::ComptimeForStmt: {
+    auto comptimeFor = std::unique_ptr<ast::ComptimeForStmt>(
+        static_cast<ast::ComptimeForStmt *>(stmt.release()));
+    if (comptimeFor->forStmt) {
+      return generateForStmt(std::unique_ptr<ast::ForStmt>(
+          static_cast<ast::ForStmt *>(comptimeFor->forStmt.release())));
     }
     return nullptr;
   }

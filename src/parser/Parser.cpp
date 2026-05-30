@@ -3937,7 +3937,59 @@ std::unique_ptr<ast::Statement> Parser::parseDeferStmt() {
 }
 
 std::unique_ptr<ast::ComptimeStmt> Parser::parseComptimeStmt() {
-  // 解析 comptime 后面的语句
+  // 检查是否是 comptime for
+  if (check(lexer::TokenType::For)) {
+    ParserState state = saveState();
+    advance(); // consume 'for'
+
+    // 尝试解析 for 循环
+    if (check(lexer::TokenType::LParen)) {
+      // 解析 for 循环的初始化、条件、更新
+      advance(); // consume '('
+
+      // 解析初始化
+      std::unique_ptr<ast::Node> init;
+      if (!check(lexer::TokenType::Semicolon)) {
+        if (check(lexer::TokenType::Var) || check(lexer::TokenType::Let)) {
+          init = parseVariableDecl();
+        } else {
+          init = parseExpression();
+        }
+      }
+      expect(lexer::TokenType::Semicolon, "Expected ';' after for init");
+
+      // 解析条件
+      std::unique_ptr<ast::Expression> condition;
+      if (!check(lexer::TokenType::Semicolon)) {
+        condition = parseExpression();
+      }
+      expect(lexer::TokenType::Semicolon, "Expected ';' after for condition");
+
+      // 解析更新
+      std::unique_ptr<ast::Expression> update;
+      if (!check(lexer::TokenType::RParen)) {
+        update = parseExpression();
+      }
+      expect(lexer::TokenType::RParen, "Expected ')' after for update");
+
+      // 解析循环体
+      auto body = parseStatement();
+
+      // 创建 ForStmt
+      auto forStmt = std::make_unique<ast::ForStmt>(
+          std::move(init), std::move(condition), std::move(update),
+          std::move(body));
+
+      // 返回 ComptimeForStmt 包装
+      auto comptimeFor = std::make_unique<ast::ComptimeForStmt>(std::move(forStmt));
+      return std::make_unique<ast::ComptimeStmt>(std::move(comptimeFor));
+    }
+
+    // 如果解析失败，回退
+    restoreState(state);
+  }
+
+  // 解析 comptime 后面的普通语句
   auto stmt = parseStatement();
   return std::make_unique<ast::ComptimeStmt>(std::move(stmt));
 }

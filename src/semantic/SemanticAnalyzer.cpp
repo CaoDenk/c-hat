@@ -1825,6 +1825,8 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStatement(
     return analyzeYieldStmt(static_cast<ast::YieldStmt *>(stmt));
   case ast::NodeType::ComptimeStmt:
     return analyzeComptimeStmt(static_cast<ast::ComptimeStmt *>(stmt));
+  case ast::NodeType::ComptimeForStmt:
+    return analyzeComptimeForStmt(static_cast<ast::ComptimeForStmt *>(stmt));
   case ast::NodeType::TupleDestructuringDecl: {
     auto *tupleDestrStmt = static_cast<ast::TupleDestructuringStmt *>(stmt);
     analyzeTupleDestructuringDecl(tupleDestrStmt->declaration.get());
@@ -2260,8 +2262,53 @@ SemanticAnalyzer::analyzeYieldStmt(ast::YieldStmt *yieldStmt) {
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeComptimeStmt(ast::ComptimeStmt *comptimeStmt) {
   if (comptimeStmt->stmt) {
+    // 检查是否是 ComptimeForStmt
+    if (auto *comptimeFor = dynamic_cast<ast::ComptimeForStmt *>(comptimeStmt->stmt.get())) {
+      return analyzeComptimeForStmt(comptimeFor);
+    }
     return analyzeStatement(comptimeStmt->stmt.get());
   }
+  return nullptr;
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeComptimeForStmt(ast::ComptimeForStmt *comptimeForStmt) {
+  if (!comptimeForStmt->forStmt) {
+    return nullptr;
+  }
+
+  auto *forStmt = comptimeForStmt->forStmt.get();
+
+  // 进入新作用域
+  symbolTable.enterScope();
+
+  // 分析初始化
+  if (forStmt->init) {
+    if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(forStmt->init.get())) {
+      analyzeVariableDecl(varDecl);
+    } else if (auto *expr = dynamic_cast<ast::Expression *>(forStmt->init.get())) {
+      analyzeExpression(expr);
+    }
+  }
+
+  // 分析条件
+  if (forStmt->condition) {
+    analyzeExpression(forStmt->condition.get());
+  }
+
+  // 分析更新
+  if (forStmt->update) {
+    analyzeExpression(forStmt->update.get());
+  }
+
+  // 分析循环体
+  if (forStmt->body) {
+    analyzeStatement(forStmt->body.get());
+  }
+
+  // 退出作用域
+  symbolTable.exitScope();
+
   return nullptr;
 }
 

@@ -72,6 +72,7 @@ enum class NodeType {
   DeferStmt,
   YieldStmt,
   ComptimeStmt,
+  ComptimeForStmt,
 
   // 类型
   Type,

@@ -178,6 +178,7 @@ private:
 
   // 分析comptime语句
   std::shared_ptr<types::Type> analyzeComptimeStmt(ast::ComptimeStmt *comptimeStmt);
+  std::shared_ptr<types::Type> analyzeComptimeForStmt(ast::ComptimeForStmt *comptimeForStmt);
 
   // 分析表达式
   std::shared_ptr<types::Type> analyzeExpression(ast::Expression *expression);
