@@ -2832,6 +2832,8 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
       expr = parseRangeExpr(std::move(expr));
     } else if (match(lexer::TokenType::DoubleColon)) {
       expr = parseNamespaceAccessExpr(std::move(expr));
+    } else if (match(lexer::TokenType::Ellipsis)) {
+      expr = std::make_unique<ast::ExpansionExpr>(std::move(expr));
     } else {
       break;
     }
@@ -2972,6 +2974,32 @@ Parser::parseLambdaExprWithCaptures(std::vector<ast::Capture> captures) {
 
 // 解析元组表达式或分组表达式
 std::unique_ptr<ast::Expression> Parser::parseTupleOrGrouping() {
+  // 检测折叠表达式: (... op pack)
+  if (check(lexer::TokenType::Ellipsis)) {
+    ParserState foldState = saveState();
+    advance();
+    std::string opStr;
+    if (match(lexer::TokenType::Plus)) {
+      opStr = "+";
+    } else if (match(lexer::TokenType::Minus)) {
+      opStr = "-";
+    } else if (match(lexer::TokenType::Multiply)) {
+      opStr = "*";
+    } else if (match(lexer::TokenType::Divide)) {
+      opStr = "/";
+    } else {
+      restoreState(foldState);
+    }
+    if (!opStr.empty() && !check(lexer::TokenType::RParen)) {
+      auto packExpr = parseExpression();
+      expect(lexer::TokenType::RParen,
+             "Expected ')' after fold expression");
+      return std::make_unique<ast::FoldExpr>(
+          ast::FoldExpr::FoldType::Left, std::move(packExpr), opStr);
+    }
+    restoreState(foldState);
+  }
+
   std::vector<std::unique_ptr<ast::Expression>> elements;
 
   if (!check(lexer::TokenType::RParen)) {

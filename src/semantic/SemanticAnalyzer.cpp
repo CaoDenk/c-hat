@@ -5,6 +5,7 @@
 #include "../types/TypeFactory.h"
 #include "ModuleSymbol.h"
 #include "ClassSymbol.h"
+#include "ConceptSymbol.h"
 #include <iostream>
 #include <map>
 #include <set>
@@ -731,10 +732,15 @@ void SemanticAnalyzer::analyzeFunctionDecl(
     }
   }
 
-  // 处理 where 子句（简化处理：只验证语法，不进行约束检查）
+  // 处理 where 子句
   if (funcDecl->whereClause) {
-    // where 子句中的类型约束，暂时只做语法验证
-    // TODO: 实现完整的约束检查
+    if (auto *namedType =
+            dynamic_cast<ast::NamedType *>(funcDecl->whereClause.get())) {
+      auto sym = symbolTable.lookupSymbol(namedType->name);
+      if (!sym) {
+        error("Unknown constraint: " + namedType->name, *funcDecl);
+      }
+    }
   }
 
   // 检测函数是否是协程（包含 await 或 yield）
@@ -1357,8 +1363,18 @@ void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
 }
 
 void SemanticAnalyzer::analyzeConceptDecl(ast::ConceptDecl *conceptDecl) {
-  // 简化处理：只注册 concept 名称到符号表
-  // TODO: 完整的 concept 语义分析
+  for (auto &param : conceptDecl->templateParams) {
+    if (auto *templateParam =
+            dynamic_cast<ast::TemplateParameter *>(param.get())) {
+      auto paramSym = std::make_shared<VariableSymbol>(
+          templateParam->name,
+          types::TypeFactory::getPrimitiveType(
+              types::PrimitiveType::Kind::Int));
+      symbolTable.addSymbol(paramSym);
+    }
+  }
+  auto conceptSym = std::make_shared<ConceptSymbol>(conceptDecl->name);
+  symbolTable.addSymbol(conceptSym);
 }
 
 void SemanticAnalyzer::analyzeAttributeDecl(ast::AttributeDecl *attributeDecl) {

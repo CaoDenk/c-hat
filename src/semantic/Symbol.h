@@ -24,7 +24,8 @@ enum class SymbolType {
   Enum,
   Union,
   TypeAlias,
-  Module
+  Module,
+  Concept
 };
 
 // 符号基类
