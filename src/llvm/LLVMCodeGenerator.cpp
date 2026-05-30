@@ -2613,7 +2613,114 @@ llvm::Value *LLVMCodeGenerator::generateContinueStmt(
 // 生成 match 语句
 llvm::Value *LLVMCodeGenerator::generateMatchStmt(
     std::unique_ptr<ast::MatchStmt> matchStmt) {
-  warning("Match statement not implemented");
+  llvm::Function *func = builder()->GetInsertBlock()->getParent();
+  llvm::Value *matchVal = generateExpression(std::move(matchStmt->expr));
+  if (!matchVal) return nullptr;
+
+  llvm::BasicBlock *mergeBB =
+      llvm::BasicBlock::Create(context(), "matchmerge", func);
+
+  std::vector<llvm::BasicBlock *> checkBBs;
+  std::vector<llvm::BasicBlock *> bodyBBs;
+  bool lastAlwaysMatch = false;
+
+  for (size_t i = 0; i < matchStmt->arms.size(); ++i) {
+    auto &arm = matchStmt->arms[i];
+    ast::Pattern *pattern = arm->pattern.get();
+    bool alwaysMatch = pattern->isDefault ||
+        (pattern->value &&
+         dynamic_cast<ast::Identifier *>(pattern->value.get()) != nullptr);
+    if (i == matchStmt->arms.size() - 1 && alwaysMatch && !arm->guard) {
+      lastAlwaysMatch = true;
+    } else {
+      checkBBs.push_back(
+          llvm::BasicBlock::Create(context(), "matchcheck" + std::to_string(i)));
+    }
+    bodyBBs.push_back(
+        llvm::BasicBlock::Create(context(), "matchbody" + std::to_string(i)));
+  }
+
+  if (!lastAlwaysMatch) {
+    checkBBs.push_back(
+        llvm::BasicBlock::Create(context(), "matchend"));
+  }
+
+  size_t checkIdx = 0;
+  for (size_t i = 0; i < matchStmt->arms.size(); ++i) {
+    auto &arm = matchStmt->arms[i];
+
+    if (i == matchStmt->arms.size() - 1 && lastAlwaysMatch) {
+      func->insert(func->end(), bodyBBs[i]);
+      builder()->SetInsertPoint(bodyBBs[i]);
+      generateStatement(std::move(arm->body));
+      if (!builder()->GetInsertBlock()->getTerminator()) {
+        builder()->CreateBr(mergeBB);
+      }
+      break;
+    }
+
+    llvm::BasicBlock *checkBB = checkBBs[checkIdx];
+    func->insert(func->end(), checkBB);
+    builder()->SetInsertPoint(checkBB);
+
+    ast::Pattern *pattern = arm->pattern.get();
+    bool alwaysMatch = pattern->isDefault ||
+        (pattern->value &&
+         dynamic_cast<ast::Identifier *>(pattern->value.get()) != nullptr);
+
+    llvm::Value *cond = nullptr;
+    if (!alwaysMatch && pattern->value) {
+      auto patternClone = pattern->value->clone();
+      llvm::Value *patternVal = generateExpression(std::move(patternClone));
+      if (patternVal && matchVal->getType() == patternVal->getType()) {
+        if (matchVal->getType()->isIntegerTy()) {
+          cond = builder()->CreateICmpEQ(matchVal, patternVal, "matchcmp");
+        } else if (matchVal->getType()->isFloatingPointTy()) {
+          cond = builder()->CreateFCmpOEQ(matchVal, patternVal, "matchcmp");
+        } else {
+          cond = llvm::ConstantInt::getTrue(context());
+        }
+      } else {
+        cond = llvm::ConstantInt::getFalse(context());
+      }
+    }
+
+    if (arm->guard) {
+      llvm::Value *guardVal = generateExpression(arm->guard->clone());
+      if (guardVal) {
+        guardVal = builder()->CreateICmpNE(
+            guardVal, llvm::ConstantInt::get(guardVal->getType(), 0), "guard");
+        cond = cond ? builder()->CreateAnd(cond, guardVal, "matchguard")
+                    : guardVal;
+      }
+    }
+
+    llvm::BasicBlock *nextBB = (checkIdx + 1 < checkBBs.size())
+                                   ? checkBBs[checkIdx + 1]
+                                   : mergeBB;
+    if (cond) {
+      builder()->CreateCondBr(cond, bodyBBs[i], nextBB);
+    } else {
+      builder()->CreateBr(bodyBBs[i]);
+    }
+
+    func->insert(func->end(), bodyBBs[i]);
+    builder()->SetInsertPoint(bodyBBs[i]);
+    generateStatement(std::move(arm->body));
+    if (!builder()->GetInsertBlock()->getTerminator()) {
+      builder()->CreateBr(mergeBB);
+    }
+    ++checkIdx;
+  }
+
+  if (!lastAlwaysMatch && checkIdx < checkBBs.size()) {
+    func->insert(func->end(), checkBBs[checkIdx]);
+    builder()->SetInsertPoint(checkBBs[checkIdx]);
+    builder()->CreateBr(mergeBB);
+  }
+
+  func->insert(func->end(), mergeBB);
+  builder()->SetInsertPoint(mergeBB);
   return nullptr;
 }
 

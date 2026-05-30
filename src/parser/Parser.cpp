@@ -3756,17 +3756,29 @@ std::unique_ptr<ast::Pattern> Parser::parsePattern() {
       return pattern;
     }
     advance();
-    return std::make_unique<ast::Pattern>();
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Identifier>(val));
   } else if (match(lexer::TokenType::IntegerLiteral)) {
-    return std::make_unique<ast::Pattern>();
+    std::string val = previousToken->getValue();
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::Integer, val));
   } else if (match(lexer::TokenType::StringLiteral)) {
-    return std::make_unique<ast::Pattern>();
-  } else if (match(lexer::TokenType::BooleanLiteral)) {
-    return std::make_unique<ast::Pattern>();
+    std::string val = previousToken->getValue();
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::String, val));
+  } else if (match(lexer::TokenType::True)) {
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::Boolean, "true"));
+  } else if (match(lexer::TokenType::False)) {
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::Boolean, "false"));
   } else if (match(lexer::TokenType::CharacterLiteral)) {
-    return std::make_unique<ast::Pattern>();
+    std::string val = previousToken->getValue();
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::Character, val));
   } else if (match(lexer::TokenType::Null)) {
-    return std::make_unique<ast::Pattern>();
+    return std::make_unique<ast::Pattern>(
+        std::make_unique<ast::Literal>(ast::Literal::Type::Null, "null"));
   }
 
   error("Expected pattern");
