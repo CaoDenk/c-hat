@@ -2258,8 +2258,83 @@ llvm::Value *LLVMCodeGenerator::generateTupleExpr(
 // 生成 lambda 表达式
 llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
     std::unique_ptr<ast::LambdaExpr> lambdaExpr) {
-  warning("Lambda expression not implemented");
-  return nullptr;
+  static int lambdaCounter = 0;
+  std::string funcName = "__lambda_" + std::to_string(lambdaCounter++);
+
+  std::vector<llvm::Type *> paramTypes;
+  for (auto &paramNode : lambdaExpr->params) {
+    if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
+      if (param->type) {
+        llvm::Type *pt = generateType(param->type.get());
+        if (pt) {
+          paramTypes.push_back(pt);
+        }
+      }
+    }
+  }
+  if (paramTypes.empty()) {
+    paramTypes.push_back(llvm::Type::getInt32Ty(context()));
+  }
+
+  llvm::FunctionType *funcType = llvm::FunctionType::get(
+      llvm::Type::getInt32Ty(context()), paramTypes, false);
+  llvm::Function *func = llvm::Function::Create(
+      funcType, llvm::Function::InternalLinkage, funcName, module());
+
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", func);
+  builder()->SetInsertPoint(entryBB);
+
+  auto prevFunction = currentFunction_;
+  currentFunction_ = func;
+
+  namedValues_.clear();
+  size_t paramIndex = 0;
+  for (auto argIt = func->args().begin();
+       argIt != func->args().end() && paramIndex < lambdaExpr->params.size();
+       ++argIt, ++paramIndex) {
+    if (auto *param =
+            dynamic_cast<ast::Parameter *>(
+                lambdaExpr->params[paramIndex].get())) {
+      argIt->setName(param->name);
+      llvm::AllocaInst *alloca =
+          builder()->CreateAlloca(argIt->getType(), nullptr, param->name);
+      builder()->CreateStore(argIt, alloca);
+      namedValues_[param->name] = alloca;
+    }
+  }
+
+  if (auto *stmt = lambdaExpr->body.get()) {
+    ast::Expression *bodyExpr = nullptr;
+    if (auto *exprStmt = dynamic_cast<ast::ExprStmt *>(stmt)) {
+      bodyExpr = exprStmt->expr.get();
+    }
+
+    if (bodyExpr) {
+      llvm::Value *retVal = generateExpression(bodyExpr->clone());
+      if (retVal) {
+        builder()->CreateRet(retVal);
+      } else {
+        builder()->CreateRet(llvm::ConstantInt::get(
+            llvm::Type::getInt32Ty(context()), 0));
+      }
+    } else {
+      generateStatement(std::unique_ptr<ast::Statement>(
+          static_cast<ast::Statement *>(lambdaExpr->body.release())));
+      if (!func->empty()) {
+        llvm::BasicBlock *lastBlock = &func->back();
+        if (!lastBlock->getTerminator()) {
+          builder()->SetInsertPoint(lastBlock);
+          builder()->CreateRet(llvm::ConstantInt::get(
+              llvm::Type::getInt32Ty(context()), 0));
+        }
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  return builder()->CreatePointerCast(func, llvm::PointerType::getUnqual(context()),
+                                      funcName + "_ptr");
 }
 
 // 生成反射表达式
