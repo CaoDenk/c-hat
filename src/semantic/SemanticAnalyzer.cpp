@@ -2473,6 +2473,9 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
   case ast::NodeType::TypeofExpr:
     return analyzeTypeofExpr(
         static_cast<ast::TypeofExpr *>(expression));
+  case ast::NodeType::MetaFieldAccessExpr:
+    return analyzeMetaFieldAccessExpr(
+        static_cast<ast::MetaFieldAccessExpr *>(expression));
   case ast::NodeType::BuiltinVarExpr:
     return analyzeBuiltinVarExpr(
         static_cast<ast::BuiltinVarExpr *>(expression));
@@ -3893,6 +3896,22 @@ SemanticAnalyzer::analyzeTypeofExpr(ast::TypeofExpr *typeofExpr) {
 }
 
 std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeMetaFieldAccessExpr(ast::MetaFieldAccessExpr *metaFieldExpr) {
+  // 分析对象
+  if (metaFieldExpr->object) {
+    analyzeExpression(metaFieldExpr->object.get());
+  }
+
+  // 分析字段
+  if (metaFieldExpr->field) {
+    analyzeExpression(metaFieldExpr->field.get());
+  }
+
+  // 返回字段类型（简化实现）
+  return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int);
+}
+
+std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr) {
   const std::string &name = builtinVarExpr->name;
 
@@ -5021,6 +5040,13 @@ bool SemanticAnalyzer::containsAwaitOrYield(ast::Expression *expr) {
   case ast::NodeType::TypeofExpr: {
     auto *typeofExpr = static_cast<ast::TypeofExpr *>(expr);
     return containsAwaitOrYield(typeofExpr->expr.get());
+  }
+
+  case ast::NodeType::MetaFieldAccessExpr: {
+    auto *metaField = static_cast<ast::MetaFieldAccessExpr *>(expr);
+    if (containsAwaitOrYield(metaField->object.get()))
+      return true;
+    return containsAwaitOrYield(metaField->field.get());
   }
 
   default:

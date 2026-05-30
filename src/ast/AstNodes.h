@@ -12,6 +12,7 @@
 #include "expressions/ConditionalExpr.h"
 #include "expressions/TypeIsExpr.h"
 #include "expressions/TypeofExpr.h"
+#include "expressions/MetaFieldAccessExpr.h"
 #include "expressions/DeleteExpr.h"
 #include "expressions/ExpansionExpr.h"
 #include "expressions/Expression.h"

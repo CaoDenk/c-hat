@@ -162,6 +162,8 @@ private:
   generateTypeIsExpr(std::unique_ptr<ast::TypeIsExpr> typeIsExpr);
   llvm::Value *
   generateTypeofExpr(std::unique_ptr<ast::TypeofExpr> typeofExpr);
+  llvm::Value *
+  generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr);
   llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
   llvm::Value *
   generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr> reflectionExpr);

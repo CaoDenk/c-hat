@@ -278,6 +278,9 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::TypeofExpr:
     return generateTypeofExpr(std::unique_ptr<ast::TypeofExpr>(
         static_cast<ast::TypeofExpr *>(expression.release())));
+  case ast::NodeType::MetaFieldAccessExpr:
+    return generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr>(
+        static_cast<ast::MetaFieldAccessExpr *>(expression.release())));
   default:
     return "";
   }
@@ -556,6 +559,13 @@ std::string CodeGenerator::generateTypeIsExpr(
 std::string CodeGenerator::generateTypeofExpr(
     std::unique_ptr<ast::TypeofExpr> typeofExpr) {
   return "typeof(" + generateExpression(std::move(typeofExpr->expr)) + ")";
+}
+
+std::string CodeGenerator::generateMetaFieldAccessExpr(
+    std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr) {
+  std::string result = generateExpression(std::move(metaFieldExpr->object));
+  result += ".[" + generateExpression(std::move(metaFieldExpr->field)) + "]";
+  return result;
 }
 
 std::string CodeGenerator::generateBuiltinVarExpr(

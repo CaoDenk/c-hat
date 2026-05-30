@@ -256,6 +256,10 @@ private:
   std::shared_ptr<types::Type>
   analyzeTypeofExpr(ast::TypeofExpr *typeofExpr);
 
+  // 分析编译期字段访问表达式
+  std::shared_ptr<types::Type>
+  analyzeMetaFieldAccessExpr(ast::MetaFieldAccessExpr *metaFieldExpr);
+
   // 分析内置变量表达式
   std::shared_ptr<types::Type>
   analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr);

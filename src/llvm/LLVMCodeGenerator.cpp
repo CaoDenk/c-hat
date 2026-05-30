@@ -1316,6 +1316,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::TypeofExpr:
     return generateTypeofExpr(std::unique_ptr<ast::TypeofExpr>(
         static_cast<ast::TypeofExpr *>(expr.release())));
+  case ast::NodeType::MetaFieldAccessExpr:
+    return generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr>(
+        static_cast<ast::MetaFieldAccessExpr *>(expr.release())));
   default:
     return nullptr;
   }
@@ -2542,6 +2545,26 @@ llvm::Value *LLVMCodeGenerator::generateTypeofExpr(
   if (typeofExpr->expr) {
     generateExpression(std::move(typeofExpr->expr));
   }
+  return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+}
+
+// 生成编译期字段访问表达式
+llvm::Value *LLVMCodeGenerator::generateMetaFieldAccessExpr(
+    std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr) {
+  // 生成对象
+  llvm::Value *object = nullptr;
+  if (metaFieldExpr->object) {
+    object = generateExpression(std::move(metaFieldExpr->object));
+  }
+
+  // 生成字段
+  llvm::Value *field = nullptr;
+  if (metaFieldExpr->field) {
+    field = generateExpression(std::move(metaFieldExpr->field));
+  }
+
+  // 简化实现：返回一个占位值
+  // 实际实现需要根据字段元对象进行编译期字段访问
   return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
 }
 

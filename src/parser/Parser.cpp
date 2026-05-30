@@ -2875,7 +2875,15 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
     } else if (match(lexer::TokenType::LBracket)) {
       expr = parseSubscriptExpr(std::move(expr));
     } else if (match(lexer::TokenType::Dot)) {
-      expr = parseMemberExpr(std::move(expr));
+      // 检查是否是 .[ 语法（编译期字段访问）
+      if (match(lexer::TokenType::LBracket)) {
+        auto field = parseExpression();
+        expect(lexer::TokenType::RBracket, "Expected ']' after field access");
+        expr = std::make_unique<ast::MetaFieldAccessExpr>(std::move(expr),
+                                                          std::move(field));
+      } else {
+        expr = parseMemberExpr(std::move(expr));
+      }
     } else if (match(lexer::TokenType::Arrow)) {
       expr = parsePointerMemberExpr(std::move(expr));
     } else if (match(lexer::TokenType::AddressOf)) {

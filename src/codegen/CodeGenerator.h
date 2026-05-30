@@ -138,6 +138,10 @@ private:
   std::string generateTypeofExpr(
       std::unique_ptr<ast::TypeofExpr> typeofExpr);
 
+  // 生成编译期字段访问表达式代码
+  std::string generateMetaFieldAccessExpr(
+      std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr);
+
   // 生成内置变量表达式代码
   std::string
   generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr);
