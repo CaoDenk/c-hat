@@ -93,7 +93,11 @@ private:
   llvm::Value *
   generateTypeAliasDecl(std::unique_ptr<ast::TypeAliasDecl> typeAliasDecl);
   llvm::Value *generateGetterDecl(std::unique_ptr<ast::GetterDecl> getterDecl);
+  llvm::Value *generateGetterDecl(std::unique_ptr<ast::GetterDecl> getterDecl,
+                                  const std::string &className);
   llvm::Value *generateSetterDecl(std::unique_ptr<ast::SetterDecl> setterDecl);
+  llvm::Value *generateSetterDecl(std::unique_ptr<ast::SetterDecl> setterDecl,
+                                  const std::string &className);
   llvm::Value *
   generateExtensionDecl(std::unique_ptr<ast::ExtensionDecl> extensionDecl);
 

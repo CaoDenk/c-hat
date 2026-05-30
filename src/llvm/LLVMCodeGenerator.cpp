@@ -930,6 +930,9 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
     } else if (auto *funcDecl =
                    dynamic_cast<ast::FunctionDecl *>(member.get())) {
       functions.push_back(std::move(member));
+    } else if (dynamic_cast<ast::GetterDecl *>(member.get()) ||
+               dynamic_cast<ast::SetterDecl *>(member.get())) {
+      functions.push_back(std::move(member));
     }
   }
 
@@ -943,14 +946,22 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   structInfo_[classDecl->name] = memberIndices;
 
   for (auto &funcNode : functions) {
-    auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
-        static_cast<ast::FunctionDecl *>(funcNode.release()));
-
-    bool isConstructor = (funcDecl->name == classDecl->name);
-    bool isDestructor = (!funcDecl->name.empty() && funcDecl->name[0] == '~');
-
-    generateClassMemberFunction(std::move(funcDecl), classDecl->name,
-                                isConstructor, isDestructor);
+    if (dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
+      auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
+          static_cast<ast::FunctionDecl *>(funcNode.release()));
+      bool isConstructor = (funcDecl->name == classDecl->name);
+      bool isDestructor = (!funcDecl->name.empty() && funcDecl->name[0] == '~');
+      generateClassMemberFunction(std::move(funcDecl), classDecl->name,
+                                  isConstructor, isDestructor);
+    } else if (dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
+      auto getterDecl = std::unique_ptr<ast::GetterDecl>(
+          static_cast<ast::GetterDecl *>(funcNode.release()));
+      generateGetterDecl(std::move(getterDecl), classDecl->name);
+    } else if (dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
+      auto setterDecl = std::unique_ptr<ast::SetterDecl>(
+          static_cast<ast::SetterDecl *>(funcNode.release()));
+      generateSetterDecl(std::move(setterDecl), classDecl->name);
+    }
   }
 
   return nullptr;
@@ -2773,18 +2784,179 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
   return nullptr;
 }
 
-// 生成 getter 声明
+// 生成 getter 声明（独立，无 class 上下文）
 llvm::Value *LLVMCodeGenerator::generateGetterDecl(
     std::unique_ptr<ast::GetterDecl> getterDecl) {
-  warning("Getter declaration not implemented");
-  return nullptr;
+  llvm::Type *returnType = llvm::Type::getInt32Ty(context());
+  if (getterDecl->returnType) {
+    if (auto *typeNode =
+            dynamic_cast<ast::Type *>(getterDecl->returnType.get())) {
+      llvm::Type *rt = generateType(typeNode);
+      if (rt) returnType = rt;
+    }
+  }
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(returnType, {}, false);
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage,
+      "get_" + getterDecl->name, module());
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+  builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+  return function;
 }
 
-// 生成 setter 声明
+// 生成 getter 声明（class 上下文）
+llvm::Value *LLVMCodeGenerator::generateGetterDecl(
+    std::unique_ptr<ast::GetterDecl> getterDecl,
+    const std::string &className) {
+  llvm::StructType *classType = structTypes_[className];
+  if (!classType) {
+    warning("Class type not found: " + className);
+    return nullptr;
+  }
+
+  std::vector<llvm::Type *> paramTypes = {classType->getPointerTo()};
+
+  llvm::Type *returnType = llvm::Type::getInt32Ty(context());
+  if (getterDecl->returnType) {
+    if (auto *typeNode =
+            dynamic_cast<ast::Type *>(getterDecl->returnType.get())) {
+      llvm::Type *rt = generateType(typeNode);
+      if (rt) returnType = rt;
+    }
+  }
+
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(returnType, paramTypes, false);
+  std::string mangledName = className + "_get_" + getterDecl->name;
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage, mangledName, module());
+
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+
+  auto prevFunction = currentFunction_;
+  currentFunction_ = function;
+  namedValues_.clear();
+
+  auto argIt = function->args().begin();
+  llvm::Value *thisArg = &(*argIt++);
+  thisArg->setName("this");
+
+  if (getterDecl->arrowExpr) {
+    llvm::Value *val = generateExpression(getterDecl->arrowExpr->clone());
+    if (val) {
+      builder()->CreateRet(val);
+    } else {
+      builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+    }
+  } else if (getterDecl->body) {
+    if (auto *stmt =
+            dynamic_cast<ast::Statement *>(getterDecl->body.get())) {
+      generateStatement(std::unique_ptr<ast::Statement>(
+          static_cast<ast::Statement *>(getterDecl->body.release())));
+      if (!function->empty()) {
+        llvm::BasicBlock *lastBlock = &function->back();
+        if (!lastBlock->getTerminator()) {
+          if (returnType->isVoidTy()) {
+            builder()->CreateRetVoid();
+          } else {
+            builder()->CreateRet(llvm::Constant::getNullValue(returnType));
+          }
+        }
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  return function;
+}
+
+// 生成 setter 声明（独立，无 class 上下文）
 llvm::Value *LLVMCodeGenerator::generateSetterDecl(
     std::unique_ptr<ast::SetterDecl> setterDecl) {
-  warning("Setter declaration not implemented");
-  return nullptr;
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context()), {}, false);
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage,
+      "set_" + setterDecl->name, module());
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+  builder()->CreateRetVoid();
+  return function;
+}
+
+// 生成 setter 声明（class 上下文）
+llvm::Value *LLVMCodeGenerator::generateSetterDecl(
+    std::unique_ptr<ast::SetterDecl> setterDecl,
+    const std::string &className) {
+  llvm::StructType *classType = structTypes_[className];
+  if (!classType) {
+    warning("Class type not found: " + className);
+    return nullptr;
+  }
+
+  llvm::Type *valueType = llvm::Type::getInt32Ty(context());
+  if (setterDecl->param && setterDecl->param->type) {
+    if (auto *typeNode =
+            dynamic_cast<ast::Type *>(setterDecl->param->type.get())) {
+      llvm::Type *vt = generateType(typeNode);
+      if (vt) valueType = vt;
+    }
+  }
+
+  std::vector<llvm::Type *> paramTypes = {classType->getPointerTo(),
+                                          valueType};
+  llvm::FunctionType *funcType =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context()), paramTypes, false);
+  std::string mangledName = className + "_set_" + setterDecl->name;
+  llvm::Function *function = llvm::Function::Create(
+      funcType, llvm::Function::ExternalLinkage, mangledName, module());
+
+  llvm::BasicBlock *entryBB =
+      llvm::BasicBlock::Create(context(), "entry", function);
+  builder()->SetInsertPoint(entryBB);
+
+  auto prevFunction = currentFunction_;
+  currentFunction_ = function;
+  namedValues_.clear();
+
+  auto argIt = function->args().begin();
+  llvm::Value *thisArg = &(*argIt++);
+  thisArg->setName("this");
+
+  if (setterDecl->param) {
+    llvm::Value *valArg = &(*argIt++);
+    valArg->setName(setterDecl->param->name);
+    llvm::AllocaInst *alloca = builder()->CreateAlloca(
+        valArg->getType(), nullptr, setterDecl->param->name);
+    builder()->CreateStore(valArg, alloca);
+    namedValues_[setterDecl->param->name] = alloca;
+  }
+
+  if (setterDecl->arrowExpr) {
+    generateExpression(setterDecl->arrowExpr->clone());
+    builder()->CreateRetVoid();
+  } else if (setterDecl->body) {
+    if (auto *stmt =
+            dynamic_cast<ast::Statement *>(setterDecl->body.get())) {
+      generateStatement(std::unique_ptr<ast::Statement>(
+          static_cast<ast::Statement *>(setterDecl->body.release())));
+      if (!function->empty()) {
+        llvm::BasicBlock *lastBlock = &function->back();
+        if (!lastBlock->getTerminator()) {
+          builder()->CreateRetVoid();
+        }
+      }
+    }
+  }
+
+  currentFunction_ = prevFunction;
+  return function;
 }
 
 // 生成扩展声明
