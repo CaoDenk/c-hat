@@ -176,6 +176,9 @@ private:
   // 分析yield语句
   std::shared_ptr<types::Type> analyzeYieldStmt(ast::YieldStmt *yieldStmt);
 
+  // 分析comptime语句
+  std::shared_ptr<types::Type> analyzeComptimeStmt(ast::ComptimeStmt *comptimeStmt);
+
   // 分析表达式
   std::shared_ptr<types::Type> analyzeExpression(ast::Expression *expression);
 

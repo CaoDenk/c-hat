@@ -1,8 +1,9 @@
 # C^ 编译器测试覆盖报告
 
-> 最后更新：2026-03-28  
+> 最后更新：2026-05-30  
 > 测试集总数：24  
-> 修复：所有测试统一使用 `SemanticAnalyzer("", false)` 无 main 模式，消除 BUG-01 误报
+> 修复：所有测试统一使用 `SemanticAnalyzer("", false)` 无 main 模式，消除 BUG-01 误报  
+> 修复：immutable_method 测试集全部通过（填充 semantic 分析桩 analyzeStructInitExpr/analyzeNewExpr 等）
 
 ---
 
@@ -29,7 +30,7 @@
 | `variadic` | 2 | 4 | ⚠️ 1/2 | 1 用例失败（extern"C"变参语义） |
 | `foreach` | 4 | — | ❌ 全失败 | foreach 语句未实现 |
 | `generics` | 5 | — | ❌ 全失败 | 泛型参数作用域未实现 |
-| `immutable_method` | 5 | — | ❌ 全失败 | `func foo()!` / `self!` 未实现 |
+| `immutable_method` | 5 | 10 | ✅ 全通过 | 语义分析桩填充后通过 |
 | `match` | 2 | — | ❌ 全失败 | match 表达式未实现 |
 | `nullable` | 5 | — | ❌ 全失败 | 可空类型 `?` 传播未实现 |
 | `reference` | 4 | — | ❌ 全失败 | 引用类型 `int&` 语法未实现 |
@@ -37,9 +38,9 @@
 | `result_type` | 4 | — | ❌ 全失败 | Result<T,E> 泛型类语义 |
 
 **汇总：**
-- ✅ 全通过：9 个测试集（array / defer / exception / lambda / late / module / new_delete / parser / types）
+- ✅ 全通过：10 个测试集（array / defer / exception / immutable_method / lambda / late / module / new_delete / parser / types）
 - ⚠️ 部分通过：8 个测试集
-- ❌ 全部失败：7 个测试集
+- ❌ 全部失败：6 个测试集
 
 ---
 
@@ -54,10 +55,6 @@
 #### `generics` — 全 5 用例失败
 **根因**：Parser 能解析泛型函数签名，但泛型类型参数 `T` 未注入到函数内部作用域，语义分析时 `T` 为 unknown symbol。  
 **修复方向**：SemanticAnalyzer::visitFunctionDecl 中，解析泛型参数列表后将 `T` 作为 TypeSymbol 注册到当前作用域。
-
-#### `immutable_method` — 全 5 用例失败
-**根因**：Parser 未实现函数名后缀 `!` 语法（`func foo()!`），以及 `self!` 不可变 self 参数。  
-**修复方向**：Parser 在解析函数声明时检测 `)` 后的 `!` token。
 
 #### `match` — 全 2 用例失败
 **根因**：Parser 未实现 `match` 语句，无对应 AST 节点。  
@@ -123,7 +120,6 @@
 | 功能 | 涉及测试 | 复杂度 |
 |------|----------|--------|
 | `match` 表达式/语句 | `match` | 中 |
-| 不可变方法 `func foo()!` / `self!` | `immutable_method` | 低 |
 | `foreach` 语句 | `foreach` | 中 |
 | 引用类型 `int&` / `int!&` | `reference` | 低 |
 | 泛型参数注入作用域 | `generics` | 低 |

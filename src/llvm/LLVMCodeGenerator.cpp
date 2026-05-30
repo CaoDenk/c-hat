@@ -1981,8 +1981,44 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     return nullptr;
   }
 
-  // TODO: 实现成员访问表达式生成
-  warning("Member expression not fully implemented");
+  unsigned idx = memberExpr->memberIndex;
+  const std::string &memberName = memberExpr->member;
+
+  // case 1: AllocaInst — know the allocated type
+  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+    llvm::Type *allocatedTy = alloca->getAllocatedType();
+    llvm::Value *ptr = builder()->CreateStructGEP(allocatedTy, alloca, idx,
+                                                   memberName + ".ptr");
+    llvm::Type *fieldTy = allocatedTy->getStructElementType(idx);
+    return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
+  }
+
+  // case 2: the value itself is a struct — alloca, store, GEP, load
+  llvm::Type *valTy = object->getType();
+  if (valTy->isStructTy()) {
+    llvm::AllocaInst *tmpAlloca = builder()->CreateAlloca(valTy, nullptr,
+                                                           memberName + ".alloca");
+    builder()->CreateStore(object, tmpAlloca);
+    llvm::Value *ptr = builder()->CreateStructGEP(valTy, tmpAlloca, idx,
+                                                   memberName + ".ptr");
+    llvm::Type *fieldTy = valTy->getStructElementType(idx);
+    return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
+  }
+
+  // case 3: opaque pointer (e.g. this) — look up struct type by name
+  if (!memberExpr->structName.empty()) {
+    llvm::StructType *structTy =
+        llvm::StructType::getTypeByName(context(), memberExpr->structName);
+    if (structTy) {
+      llvm::Value *ptr = builder()->CreateStructGEP(structTy, object, idx,
+                                                     memberName + ".ptr");
+      llvm::Type *fieldTy = structTy->getElementType(idx);
+      return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
+    }
+  }
+
+  warning("Member expression: cannot determine struct type for '" +
+          memberName + "'");
   return nullptr;
 }
 

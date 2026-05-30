@@ -4,6 +4,7 @@
 #include "../types/InterfaceType.h"
 #include "../types/TypeFactory.h"
 #include "ModuleSymbol.h"
+#include "ClassSymbol.h"
 #include <iostream>
 #include <map>
 #include <set>
@@ -1380,8 +1381,63 @@ void SemanticAnalyzer::analyzeAttributeDecl(ast::AttributeDecl *attributeDecl) {
   symbolTable.addSymbol(attrSymbol);
 }
 
-void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {}
-void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {}
+void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
+  // 创建结构体类型（值类型，复用 ClassType 基础设施）
+  auto structType = std::make_shared<types::ClassType>(structDecl->name);
+  auto structSymbol = std::make_shared<ClassSymbol>(structDecl->name, structType);
+  symbolTable.addSymbol(structSymbol);
+
+  // 进入结构体作用域
+  symbolTable.enterScope();
+
+  // 分析成员
+  for (auto &member : structDecl->members) {
+    if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
+      std::shared_ptr<types::Type> fieldType;
+      if (varDecl->type) {
+        if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
+          fieldType = analyzeType(typeNode);
+        }
+      }
+      auto visibility = parseVisibility({varDecl->specifiers});
+      auto access = visibilityToAccessModifier(visibility);
+      types::ClassField field(varDecl->name, fieldType, access);
+      structType->addField(field);
+
+      auto varSymbol = std::make_shared<VariableSymbol>(varDecl->name, fieldType);
+      symbolTable.addSymbol(varSymbol);
+    } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      analyzeFunctionDecl(funcDecl, structType);
+    }
+  }
+
+  symbolTable.exitScope();
+}
+
+void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
+  // 枚举底层使用 int 类型
+  auto intType = types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int);
+  auto enumType = std::make_shared<types::ClassType>(enumDecl->name);
+  auto enumSymbol = std::make_shared<ClassSymbol>(enumDecl->name, enumType);
+  symbolTable.addSymbol(enumSymbol);
+
+  int currentValue = 0;
+  for (auto &member : enumDecl->members) {
+    if (auto *enumMember = dynamic_cast<ast::EnumMember *>(member.get())) {
+      if (enumMember->value) {
+        if (auto *literal = dynamic_cast<ast::Literal *>(enumMember->value.get())) {
+          if (literal->type == ast::Literal::Type::Integer) {
+            currentValue = std::stoi(literal->value);
+          }
+        }
+      }
+      auto constSymbol = std::make_shared<VariableSymbol>(
+          enumMember->name, intType, ast::VariableKind::Let, true);
+      symbolTable.addSymbol(constSymbol);
+      currentValue++;
+    }
+  }
+}
 void SemanticAnalyzer::analyzeTypeAliasDecl(ast::TypeAliasDecl *typeAliasDecl) {
   // 分析类型别名的目标类型
   if (typeAliasDecl->type) {
@@ -1608,6 +1664,19 @@ void SemanticAnalyzer::analyzeExternDecl(ast::ExternDecl *externDecl) {
   }
 }
 void SemanticAnalyzer::analyzeNamespaceDecl(ast::NamespaceDecl *namespaceDecl) {
+  auto namespaceSymbol = std::make_shared<ModuleSymbol>(namespaceDecl->name);
+  symbolTable.addSymbol(namespaceSymbol);
+
+  // 进入命名空间作用域
+  symbolTable.enterScope();
+
+  for (auto &member : namespaceDecl->members) {
+    if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
+      analyzeDeclaration(decl);
+    }
+  }
+
+  symbolTable.exitScope();
 }
 
 std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStatement(
@@ -1644,6 +1713,8 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStatement(
     return analyzeLabelStmt(static_cast<ast::LabelStmt *>(stmt));
   case ast::NodeType::YieldStmt:
     return analyzeYieldStmt(static_cast<ast::YieldStmt *>(stmt));
+  case ast::NodeType::ComptimeStmt:
+    return analyzeComptimeStmt(static_cast<ast::ComptimeStmt *>(stmt));
   case ast::NodeType::TupleDestructuringDecl: {
     auto *tupleDestrStmt = static_cast<ast::TupleDestructuringStmt *>(stmt);
     analyzeTupleDestructuringDecl(tupleDestrStmt->declaration.get());
@@ -2072,6 +2143,14 @@ SemanticAnalyzer::analyzeYieldStmt(ast::YieldStmt *yieldStmt) {
   }
   if (yieldStmt->expr) {
     return analyzeExpression(yieldStmt->expr.get());
+  }
+  return nullptr;
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeComptimeStmt(ast::ComptimeStmt *comptimeStmt) {
+  if (comptimeStmt->stmt) {
+    return analyzeStatement(comptimeStmt->stmt.get());
   }
   return nullptr;
 }
@@ -3297,31 +3376,118 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNewExpr(ast::NewExpr *newExpr) {
+  // 分析类型
+  if (!newExpr->type) {
+    error("new expression requires a type", *newExpr);
+    return nullptr;
+  }
+  if (auto *typeNode = dynamic_cast<ast::Type *>(newExpr->type.get())) {
+    auto allocatedType = analyzeType(typeNode);
+    if (!allocatedType) {
+      error("Invalid type in new expression", *newExpr);
+      return nullptr;
+    }
+    // 分析构造函数参数
+    bool hasConstructor = false;
+    for (auto &arg : newExpr->args) {
+      if (!analyzeExpression(arg.get())) {
+        error("Invalid constructor argument", *newExpr);
+        return nullptr;
+      }
+      hasConstructor = true;
+    }
+    (void)hasConstructor;
+    // 返回指针类型
+    return types::TypeFactory::getPointerType(allocatedType, false);
+  }
+  error("Invalid type in new expression", *newExpr);
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeDeleteExpr(ast::DeleteExpr *deleteExpr) {
-  return nullptr;
+  if (!deleteExpr->expr) {
+    error("delete expression requires an expression", *deleteExpr);
+    return nullptr;
+  }
+  auto exprType = analyzeExpression(deleteExpr->expr.get());
+  if (!exprType) {
+    return nullptr;
+  }
+  if (!exprType->isPointer()) {
+    error("delete can only be applied to pointers", *deleteExpr);
+    return nullptr;
+  }
+  return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeThisExpr(ast::ThisExpr *thisExpr) {
+  if (!currentClassName_.empty()) {
+    auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+        symbolTable.lookupSymbol(currentClassName_));
+    if (classSymbol) {
+      return classSymbol->getType();
+    }
+  }
+  error("'this' can only be used inside a class", *thisExpr);
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeSuperExpr(ast::SuperExpr *superExpr) {
+  // super 关键字返回当前类的基类类型
+  if (!currentClassName_.empty()) {
+    auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+        symbolTable.lookupSymbol(currentClassName_));
+    if (classSymbol) {
+      auto classType = std::dynamic_pointer_cast<types::ClassType>(classSymbol->getType());
+      if (classType) {
+        auto baseClasses = classType->getBaseClasses();
+        if (!baseClasses.empty()) {
+          return baseClasses[0];
+        }
+      }
+    }
+  }
+  error("'super' can only be used inside a class with a base class", *superExpr);
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeSelfExpr(ast::SelfExpr *selfExpr) {
+  if (!currentClassName_.empty()) {
+    auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+        symbolTable.lookupSymbol(currentClassName_));
+    if (classSymbol) {
+      return classSymbol->getType();
+    }
+  }
+  error("'self' can only be used inside a class", *selfExpr);
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeExpansionExpr(ast::ExpansionExpr *expansionExpr) {
-  return nullptr;
+  if (!expansionExpr->expr) {
+    error("Expansion expression requires a sub-expression", *expansionExpr);
+    return nullptr;
+  }
+  return analyzeExpression(expansionExpr->expr.get());
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr) {
-  return nullptr;
+  std::vector<std::shared_ptr<types::Type>> paramTypes;
+  for (auto &param : lambdaExpr->params) {
+    if (auto *paramNode = dynamic_cast<ast::Parameter *>(param.get())) {
+      if (paramNode->type) {
+        if (auto *typeNode = dynamic_cast<ast::Type *>(paramNode->type.get())) {
+          auto paramType = analyzeType(typeNode);
+          if (paramType) {
+            paramTypes.push_back(paramType);
+          }
+        }
+      }
+    }
+  }
+
+  auto returnType = types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
+  return std::make_shared<types::FunctionType>(returnType, paramTypes);
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeArrayInitExpr(ast::ArrayInitExpr *arrayInitExpr) {
@@ -3358,7 +3524,55 @@ SemanticAnalyzer::analyzeArrayInitExpr(ast::ArrayInitExpr *arrayInitExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeStructInitExpr(ast::StructInitExpr *structInitExpr) {
-  return nullptr;
+  // 如果有显式类型，解析类型并验证字段
+  if (structInitExpr->type) {
+    auto structType = analyzeType(structInitExpr->type.get());
+    if (!structType) {
+      error("Invalid struct type in struct initializer", *structInitExpr);
+      return nullptr;
+    }
+
+    // 验证类型是类/结构体类型
+    if (structType->isClass()) {
+      auto classType = std::dynamic_pointer_cast<types::ClassType>(structType);
+
+      // 验证每个字段
+      for (const auto &field : structInitExpr->fields) {
+        auto fieldType = analyzeExpression(field.second.get());
+        if (!fieldType) {
+          error("Invalid initializer for field", *structInitExpr);
+          return nullptr;
+        }
+
+        // 对命名字段检查是否存在
+        if (!field.first.empty() && classType && !classType->hasField(field.first)) {
+          error("Struct has no field: " + field.first, *structInitExpr);
+          return nullptr;
+        }
+      }
+      return structType;
+    }
+
+    return structType;
+  }
+
+  // 无显式类型：分析所有字段表达式，尝试构造匿名结构体类型
+  if (structInitExpr->fields.empty()) {
+    error("Empty struct initializer", *structInitExpr);
+    return nullptr;
+  }
+
+  std::vector<std::shared_ptr<types::Type>> fieldTypes;
+  for (const auto &field : structInitExpr->fields) {
+    auto fieldType = analyzeExpression(field.second.get());
+    if (!fieldType) {
+      return nullptr;
+    }
+    fieldTypes.push_back(fieldType);
+  }
+
+  // 返回 TupleType 作为匿名结构体的近似类型
+  return std::make_shared<types::TupleType>(fieldTypes);
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeTupleExpr(ast::TupleExpr *tupleExpr) {
@@ -3398,8 +3612,8 @@ SemanticAnalyzer::analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr) {
   if (name == "__line__" || name == "__column__") {
     return types::TypeFactory::getPrimitiveType(
         types::PrimitiveType::Kind::Int);
-  } else if (name == "__file__" || name == "__function__" || name == "__module__" ||
-             name == "__compiler_version__") {
+  } else if (name == "__file__" || name == "__function__" ||
+             name == "__module__" || name == "__compiler_version__") {
     // 返回 const char* 类型，而不是依赖 literalview
     return types::TypeFactory::getPointerType(
         types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Char),
@@ -3706,6 +3920,23 @@ bool SemanticAnalyzer::isTypeCompatible(
   // 处理空类型
   if (!expected || !actual) {
     return false;
+  }
+
+  // 检查是否都是 void 类型
+  if (expected->isPrimitive() && actual->isPrimitive()) {
+    auto expectedPrim =
+        std::dynamic_pointer_cast<types::PrimitiveType>(expected);
+    auto actualPrim = std::dynamic_pointer_cast<types::PrimitiveType>(actual);
+    if (expectedPrim && actualPrim &&
+        expectedPrim->getKind() == types::PrimitiveType::Kind::Void &&
+        actualPrim->getKind() == types::PrimitiveType::Kind::Void) {
+      return true;
+    }
+  }
+
+  // 检查是否都是 void 类型（通过字符串比较）
+  if (expected->toString() == "void" && actual->toString() == "void") {
+    return true;
   }
 
   // null 字面量（void 类型）可以赋给任何可空类型
@@ -4187,8 +4418,21 @@ void SemanticAnalyzer::checkInterfaceImplementation(
         const auto *classMethod = classType->getMethod(methodName);
         if (classMethod) {
           // 检查返回类型是否兼容
-          if (!isTypeCompatible(interfaceMethod.returnType,
-                                classMethod->returnType)) {
+          bool returnTypeCompatible = false;
+
+          // 特殊处理 void 类型
+          std::string interfaceReturnTypeName =
+              interfaceMethod.returnType->toString();
+          std::string classReturnTypeName = classMethod->returnType->toString();
+          if (interfaceReturnTypeName == "void" &&
+              classReturnTypeName == "void") {
+            returnTypeCompatible = true;
+          } else {
+            returnTypeCompatible = isTypeCompatible(interfaceMethod.returnType,
+                                                    classMethod->returnType);
+          }
+
+          if (!returnTypeCompatible) {
             error("Method " + methodName + " in class " + classDecl->name +
                       " has incompatible return type with interface " +
                       interface->toString(),
@@ -4203,8 +4447,18 @@ void SemanticAnalyzer::checkInterfaceImplementation(
                   *classDecl);
           } else {
             for (size_t i = 0; i < interfaceMethod.paramTypes.size(); ++i) {
-              if (!isTypeCompatible(interfaceMethod.paramTypes[i],
-                                    classMethod->paramTypes[i])) {
+              bool paramTypeCompatible = false;
+
+              // 特殊处理 void 类型参数
+              if (interfaceMethod.paramTypes[i]->toString() == "void" &&
+                  classMethod->paramTypes[i]->toString() == "void") {
+                paramTypeCompatible = true;
+              } else {
+                paramTypeCompatible = isTypeCompatible(
+                    interfaceMethod.paramTypes[i], classMethod->paramTypes[i]);
+              }
+
+              if (!paramTypeCompatible) {
                 error("Method " + methodName + " in class " + classDecl->name +
                           " has incompatible parameter types with interface " +
                           interface->toString(),

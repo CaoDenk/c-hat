@@ -2219,7 +2219,7 @@ std::unique_ptr<ast::ForStmt> Parser::parseForStmt() {
         auto iterVarDecl = std::make_unique<ast::VariableDecl>(
             varKind, false,
             varKind == "var" ? ast::VariableKind::Var : ast::VariableKind::Let,
-            nullptr, varName, nullptr, false);
+            nullptr, varName, nullptr, false, false);
         return std::make_unique<ast::ForStmt>(std::move(iterVarDecl),
                                               std::move(collection),
                                               std::move(body), true);
@@ -2272,7 +2272,7 @@ std::unique_ptr<ast::VariableDecl> Parser::parseForeachVariableDecl() {
   return std::make_unique<ast::VariableDecl>(
       varKind, false,
       varKind == "var" ? ast::VariableKind::Var : ast::VariableKind::Let,
-      nullptr, varName, nullptr, false);
+      nullptr, varName, nullptr, false, false);
 }
 
 // 解析 foreach 语句: foreach (var/let name : collection) body

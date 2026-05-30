@@ -41,7 +41,7 @@ TEST_CASE("Result: Result with ? operator", "[result][question_mark]") {
             "class Result<T, E> { } "
             "func parse(string s) -> Result<int, string> { return Result<int, "
             "string>(); } "
-            "func process(string s) -> Result<int, string> { int val = "
+            "func process(string s) -> int { int val = "
             "parse(s)?; return val; }") == true);
   }
 }
