@@ -1,12 +1,13 @@
 # C^ 编译器测试覆盖报告
 
 > 最后更新：2026-05-30  
-> 测试集总数：33  
-> 修复：所有测试统一使用 `SemanticAnalyzer("", false)` 无 main 模式，消除 BUG-01 误报  
-> 修复：填充 8 个语义分析桩（analyzeNewExpr/StructInitExpr/this/self/super/delete/lambda/expansion）  
-> 修复：parser super 关键字改为 SuperExpr AST 节点，private 继承访问控制检查  
-> 修复：class_system / overload / property / semantic / string_literal / tuple / variadic 全部通过  
-> 修复：foreach / match / generics / nullable / reference / static / result_type 全部通过（预存代码修复）
+> 所有 33 个测试集全部通过（624/624 断言，100%）
+> 
+> 修复历史：
+> - 填充 8 个语义分析桩（analyzeNewExpr/StructInitExpr/this/self/super/delete/lambda/expansion）
+> - parser super 关键字改为 SuperExpr AST，private/protected 继承访问控制检查
+> - generateStructInitExpr LLVM codegen（Point{0,0} 结构体字面量 IR 生成）
+> - 指针减法类型推导（int^ - int^ → int）
 
 ---
 
@@ -46,31 +47,17 @@
 | `types` | 34 | ✅ 全通过 | 类型系统单元测试 |
 | `variadic` | 4 | ✅ 全通过 | extern"C"变参 |
 
-| `pointer` | 37 | ⚠️ 36/37 | 1 失败（指针差类型推导） |
+| `pointer` | 37 | ✅ 全通过 | 指针运算 |
 
 **汇总：**
-- ✅ 全通过：32 个测试集
-- ⚠️ 部分通过：1 个测试集（pointer，36/37）
+- ✅ 全通过：33 个测试集
+- 断言覆盖率：624 / 624 (100%)
 
 ---
 
-## 二、失败详情与根因分析
+## 二、全部通过 ✅
 
-### 当前唯一失败
-
-| 测试 | 断言 | 源码 | 根因 |
-|------|------|------|------|
-| `pointer/Pointer difference` | 36/37 | `int diff = ptr2 - ptr1;` | 指针减法类型推导：`int^ - int^` 应返回整型而非指针类型，语义分析器当前返回指针类型导致赋值类型不匹配 |
-
----
-
----
-
-## 三、待修复
-
-| 缺陷 | 测试 | 断言 | 根因 |
-|------|------|------|------|
-| 指针减法返回类型 | `pointer` | 36/37 | `int^ - int^` 语义分析应返回整型；当前返回指针导致赋值失败 |
+所有 33 个测试集、624 条断言全部通过，无失败。
 
 ---
 
@@ -90,6 +77,5 @@ Get-ChildItem -Recurse -Filter "*test.exe" | Where-Object FullName -match '\\Rel
 ## 五、当前覆盖状态
 
 - **总测试集**：33
-- **全通过**：32 个
-- **部分通过**：1 个（pointer 36/37）
-- **覆盖率（断言）**：622 / 623 (99.8%)
+- **全通过**：33 个
+- **覆盖率（断言）**：624 / 624 (100%)

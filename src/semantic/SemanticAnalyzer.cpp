@@ -2552,6 +2552,12 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
     if (leftType->isPrimitive() && rightType->isPrimitive()) {
       return leftType;
     }
+    // 指针减法：int^ - int^ → ptrdiff_t (int)
+    if (binaryExpr->op == ast::BinaryExpr::Op::Sub &&
+        leftType->isPointer() && rightType->isPointer()) {
+      return types::TypeFactory::getPrimitiveType(
+          types::PrimitiveType::Kind::Int);
+    }
     break;
   case ast::BinaryExpr::Op::Lt:
   case ast::BinaryExpr::Op::Le:
