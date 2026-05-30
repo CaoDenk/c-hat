@@ -2660,7 +2660,7 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
   } else if (match(lexer::TokenType::Base)) {
     expr = std::make_unique<ast::Identifier>("base");
   } else if (match(lexer::TokenType::Super)) {
-    expr = std::make_unique<ast::Identifier>("super");
+    expr = std::make_unique<ast::SuperExpr>();
   } else if (match(lexer::TokenType::BuiltinVar)) {
     std::string name = previousToken->getValue();
     expr = std::make_unique<ast::BuiltinVarExpr>(name);

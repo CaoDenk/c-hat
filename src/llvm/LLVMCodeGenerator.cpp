@@ -2180,9 +2180,56 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
 // 生成结构体初始化表达式
 llvm::Value *LLVMCodeGenerator::generateStructInitExpr(
     std::unique_ptr<ast::StructInitExpr> structInitExpr) {
-  // TODO: 实现结构体初始化表达式生成
-  warning("Struct initialization expression not fully implemented");
-  return nullptr;
+  // 从类型节点中提取结构体名称
+  std::string structName;
+  if (structInitExpr->type) {
+    if (auto *namedTy = dynamic_cast<ast::NamedType *>(structInitExpr->type.get())) {
+      structName = namedTy->name;
+    }
+  }
+
+  llvm::StructType *structTy = nullptr;
+  if (!structName.empty()) {
+    auto it = structTypes_.find(structName);
+    if (it != structTypes_.end()) {
+      structTy = it->second;
+    }
+    if (!structTy) {
+      structTy = llvm::StructType::getTypeByName(context(), structName);
+    }
+  }
+
+  if (!structTy) {
+    // 尝试从 field 类型推断：创建匿名结构体
+    std::vector<llvm::Type *> fieldTypes;
+    for (auto &field : structInitExpr->fields) {
+      llvm::Value *val = generateExpression(std::move(field.second));
+      if (!val) {
+        warning("Struct init field could not be generated");
+        return nullptr;
+      }
+      fieldTypes.push_back(val->getType());
+    }
+    structTy = llvm::StructType::create(context(), fieldTypes, "anon.struct");
+  }
+
+  // 分配结构体
+  llvm::AllocaInst *alloca = builder()->CreateAlloca(structTy, nullptr,
+                                                      structName.empty() ? "anon" : structName);
+
+  // 填充字段
+  for (size_t i = 0; i < structInitExpr->fields.size(); ++i) {
+    auto &field = structInitExpr->fields[i];
+    llvm::Value *val = generateExpression(std::move(field.second));
+    if (!val) {
+      return nullptr;
+    }
+    llvm::Value *ptr = builder()->CreateStructGEP(structTy, alloca, i,
+                                                   structName + ".field" + std::to_string(i));
+    builder()->CreateStore(val, ptr);
+  }
+
+  return alloca;
 }
 
 // 生成元组表达式

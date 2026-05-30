@@ -2794,6 +2794,24 @@ SemanticAnalyzer::analyzeIdentifierExpr(ast::Identifier *identifier) {
                   *identifier);
               return nullptr;
             }
+            // 检查访问权限：确定字段的实际所属类
+            if (field->access != types::AccessModifier::Public) {
+              const types::ClassType *fieldOwner = nullptr;
+              if (classType->getFields().count(identifier->name)) {
+                fieldOwner = classType.get();
+              } else {
+                for (const auto &base : classType->getBaseClasses()) {
+                  if (base->hasField(identifier->name)) {
+                    fieldOwner = base.get();
+                    break;
+                  }
+                }
+              }
+              if (fieldOwner && !checkAccessControl(field->access, fieldOwner)) {
+                error("Access denied to field: " + identifier->name, *identifier);
+                return nullptr;
+              }
+            }
             return field->type;
           }
         }
@@ -3210,10 +3228,23 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
             return nullptr;
           }
         }
-        // 检查访问权限
-        if (!checkAccessControl(field->access, classType.get())) {
-          error("Access denied to field: " + memberExpr->member, *memberExpr);
-          return nullptr;
+        // 检查访问权限：确定字段的实际所属类
+        if (field->access != types::AccessModifier::Public) {
+          const types::ClassType *fieldOwner = nullptr;
+          if (classType->getFields().count(memberExpr->member)) {
+            fieldOwner = classType.get();
+          } else {
+            for (const auto &base : classType->getBaseClasses()) {
+              if (base->hasField(memberExpr->member)) {
+                fieldOwner = base.get();
+                break;
+              }
+            }
+          }
+          if (fieldOwner && !checkAccessControl(field->access, fieldOwner)) {
+            error("Access denied to field: " + memberExpr->member, *memberExpr);
+            return nullptr;
+          }
         }
         return field->type;
       }
