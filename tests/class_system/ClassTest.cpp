@@ -199,7 +199,7 @@ TEST_CASE("Class: super keyword", "[class][inheritance][super]") {
   SECTION("Call base class method") {
     REQUIRE(analyzeSource(
                 "class Animal { public void speak() { } } class Dog : Animal { "
-                "public void speak() { super.speak(); } }") == true);
+                "public void speak() { base.speak(); } }") == true);
   }
 }
 
