@@ -6,6 +6,7 @@
 #include "ModuleSymbol.h"
 #include "ClassSymbol.h"
 #include "ConceptSymbol.h"
+#include "TypeMetadata.h"
 #include <iostream>
 #include <map>
 #include <set>
@@ -1276,6 +1277,42 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     }
   }
 
+  // 收集类元数据
+  TypeMetadata metadata;
+  metadata.name = classDecl->name;
+  metadata.isStruct = false;
+  metadata.isClass = true;
+  metadata.isEnum = false;
+  metadata.isPrimitive = false;
+  metadata.size = 0;
+  metadata.align = 8;
+
+  for (auto &member : classDecl->members) {
+    if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
+      FieldMetadata fieldMeta;
+      fieldMeta.name = varDecl->name;
+      fieldMeta.typeName = varDecl->type ? varDecl->type->toString() : "unknown";
+      fieldMeta.offset = metadata.size;
+      auto visibility = parseVisibility({varDecl->specifiers});
+      fieldMeta.isPublic = (visibilityToAccessModifier(visibility) == types::AccessModifier::Public);
+      fieldMeta.isMutable = true;
+      metadata.fields.push_back(fieldMeta);
+      metadata.size += 8;
+    } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      MethodMetadata methodMeta;
+      methodMeta.name = funcDecl->name;
+      methodMeta.returnTypeName = funcDecl->returnType ? funcDecl->returnType->toString() : "void";
+      methodMeta.paramCount = funcDecl->params.size();
+      auto visibility = parseVisibility({funcDecl->specifiers});
+      methodMeta.isPublic = (visibilityToAccessModifier(visibility) == types::AccessModifier::Public);
+      methodMeta.isStatic = funcDecl->isStatic;
+      methodMeta.isVirtual = (funcDecl->specifiers.find("virtual") != std::string::npos);
+      metadata.methods.push_back(methodMeta);
+    }
+  }
+
+  MetadataRegistry::instance().registerType(classDecl->name, std::move(metadata));
+
   // 恢复当前的类名
   currentClassName_ = oldClassName;
 }
@@ -1403,6 +1440,16 @@ void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
   auto structSymbol = std::make_shared<ClassSymbol>(structDecl->name, structType);
   symbolTable.addSymbol(structSymbol);
 
+  // 收集元数据
+  TypeMetadata metadata;
+  metadata.name = structDecl->name;
+  metadata.isStruct = true;
+  metadata.isClass = false;
+  metadata.isEnum = false;
+  metadata.isPrimitive = false;
+  metadata.size = 0;
+  metadata.align = 8;
+
   // 进入结构体作用域
   symbolTable.enterScope();
 
@@ -1422,12 +1469,35 @@ void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
 
       auto varSymbol = std::make_shared<VariableSymbol>(varDecl->name, fieldType);
       symbolTable.addSymbol(varSymbol);
+
+      // 收集字段元数据
+      FieldMetadata fieldMeta;
+      fieldMeta.name = varDecl->name;
+      fieldMeta.typeName = fieldType ? fieldType->toString() : "unknown";
+      fieldMeta.offset = metadata.size;
+      fieldMeta.isPublic = (access == types::AccessModifier::Public);
+      fieldMeta.isMutable = true;
+      metadata.fields.push_back(fieldMeta);
+      metadata.size += 8;
     } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
       analyzeFunctionDecl(funcDecl, structType);
+
+      // 收集方法元数据
+      MethodMetadata methodMeta;
+      methodMeta.name = funcDecl->name;
+      methodMeta.returnTypeName = funcDecl->returnType ? funcDecl->returnType->toString() : "void";
+      methodMeta.paramCount = funcDecl->params.size();
+      methodMeta.isPublic = true;
+      methodMeta.isStatic = false;
+      methodMeta.isVirtual = false;
+      metadata.methods.push_back(methodMeta);
     }
   }
 
   symbolTable.exitScope();
+
+  // 注册元数据
+  MetadataRegistry::instance().registerType(structDecl->name, std::move(metadata));
 }
 
 void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
@@ -1453,6 +1523,30 @@ void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
       currentValue++;
     }
   }
+
+  // 收集枚举元数据
+  TypeMetadata metadata;
+  metadata.name = enumDecl->name;
+  metadata.isStruct = false;
+  metadata.isClass = false;
+  metadata.isEnum = true;
+  metadata.isPrimitive = false;
+  metadata.size = sizeof(int);
+  metadata.align = alignof(int);
+
+  for (auto &member : enumDecl->members) {
+    if (auto *enumMember = dynamic_cast<ast::EnumMember *>(member.get())) {
+      FieldMetadata fieldMeta;
+      fieldMeta.name = enumMember->name;
+      fieldMeta.typeName = enumDecl->name;
+      fieldMeta.offset = 0;
+      fieldMeta.isPublic = true;
+      fieldMeta.isMutable = false;
+      metadata.fields.push_back(fieldMeta);
+    }
+  }
+
+  MetadataRegistry::instance().registerType(enumDecl->name, std::move(metadata));
 }
 void SemanticAnalyzer::analyzeTypeAliasDecl(ast::TypeAliasDecl *typeAliasDecl) {
   // 分析类型别名的目标类型
