@@ -3758,6 +3758,23 @@ SemanticAnalyzer::analyzeReflectionExpr(ast::ReflectionExpr *reflectionExpr) {
     return nullptr;
   }
 
+  // 验证反射目标类型是否存在
+  if (reflectionExpr->kind == ast::ReflectionExpr::TargetKind::Type) {
+    if (reflectionExpr->type) {
+      if (auto *namedType = dynamic_cast<ast::NamedType *>(reflectionExpr->type.get())) {
+        auto typeName = namedType->name;
+        if (!MetadataRegistry::instance().hasType(typeName) &&
+            !symbolTable.lookupSymbol(typeName)) {
+          error("Unknown type in reflection: " + typeName, *reflectionExpr);
+        }
+      }
+    }
+  } else if (reflectionExpr->kind == ast::ReflectionExpr::TargetKind::Typeof) {
+    if (reflectionExpr->expression) {
+      analyzeExpression(reflectionExpr->expression.get());
+    }
+  }
+
   return typeinfoClassSymbol->getType();
 }
 
