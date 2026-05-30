@@ -3989,6 +3989,29 @@ std::unique_ptr<ast::ComptimeStmt> Parser::parseComptimeStmt() {
     restoreState(state);
   }
 
+  // 检查是否是 comptime if
+  if (check(lexer::TokenType::If)) {
+    advance(); // consume 'if'
+
+    // 解析条件
+    expect(lexer::TokenType::LParen, "Expected '(' after 'if'");
+    auto condition = parseExpression();
+    expect(lexer::TokenType::RParen, "Expected ')' after condition");
+
+    // 解析 then 分支
+    auto thenBranch = parseStatement();
+
+    // 解析可选的 else 分支
+    std::unique_ptr<ast::Statement> elseBranch;
+    if (match(lexer::TokenType::Else)) {
+      elseBranch = parseStatement();
+    }
+
+    auto comptimeIf = std::make_unique<ast::ComptimeIfStmt>(
+        std::move(condition), std::move(thenBranch), std::move(elseBranch));
+    return std::make_unique<ast::ComptimeStmt>(std::move(comptimeIf));
+  }
+
   // 解析 comptime 后面的普通语句
   auto stmt = parseStatement();
   return std::make_unique<ast::ComptimeStmt>(std::move(stmt));

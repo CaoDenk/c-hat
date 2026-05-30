@@ -57,6 +57,7 @@
 #include "statements/CompoundStmt.h"
 #include "statements/ComptimeStmt.h"
 #include "statements/ComptimeForStmt.h"
+#include "statements/ComptimeIfStmt.h"
 #include "statements/ContinueStmt.h"
 #include "statements/DoWhileStmt.h"
 #include "statements/ExprStmt.h"

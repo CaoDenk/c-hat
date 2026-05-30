@@ -1827,6 +1827,8 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStatement(
     return analyzeComptimeStmt(static_cast<ast::ComptimeStmt *>(stmt));
   case ast::NodeType::ComptimeForStmt:
     return analyzeComptimeForStmt(static_cast<ast::ComptimeForStmt *>(stmt));
+  case ast::NodeType::ComptimeIfStmt:
+    return analyzeComptimeIfStmt(static_cast<ast::ComptimeIfStmt *>(stmt));
   case ast::NodeType::TupleDestructuringDecl: {
     auto *tupleDestrStmt = static_cast<ast::TupleDestructuringStmt *>(stmt);
     analyzeTupleDestructuringDecl(tupleDestrStmt->declaration.get());
@@ -2308,6 +2310,35 @@ SemanticAnalyzer::analyzeComptimeForStmt(ast::ComptimeForStmt *comptimeForStmt) 
 
   // 退出作用域
   symbolTable.exitScope();
+
+  return nullptr;
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeComptimeIfStmt(ast::ComptimeIfStmt *comptimeIfStmt) {
+  if (!comptimeIfStmt->condition) {
+    return nullptr;
+  }
+
+  // 分析条件
+  auto condType = analyzeExpression(comptimeIfStmt->condition.get());
+  if (!condType) {
+    return nullptr;
+  }
+
+  // 分析 then 分支
+  symbolTable.enterScope();
+  if (comptimeIfStmt->thenBranch) {
+    analyzeStatement(comptimeIfStmt->thenBranch.get());
+  }
+  symbolTable.exitScope();
+
+  // 分析 else 分支（如果有）
+  if (comptimeIfStmt->elseBranch) {
+    symbolTable.enterScope();
+    analyzeStatement(comptimeIfStmt->elseBranch.get());
+    symbolTable.exitScope();
+  }
 
   return nullptr;
 }

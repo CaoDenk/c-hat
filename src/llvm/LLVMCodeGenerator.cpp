@@ -1226,6 +1226,17 @@ LLVMCodeGenerator::generateStatement(std::unique_ptr<ast::Statement> stmt) {
     }
     return nullptr;
   }
+  case ast::NodeType::ComptimeIfStmt: {
+    auto comptimeIf = std::unique_ptr<ast::ComptimeIfStmt>(
+        static_cast<ast::ComptimeIfStmt *>(stmt.release()));
+    if (comptimeIf->condition && comptimeIf->thenBranch) {
+      return generateIfStmt(std::make_unique<ast::IfStmt>(
+          std::move(comptimeIf->condition),
+          std::move(comptimeIf->thenBranch),
+          std::move(comptimeIf->elseBranch)));
+    }
+    return nullptr;
+  }
   default:
     return nullptr;
   }
