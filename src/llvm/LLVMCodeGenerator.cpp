@@ -2738,42 +2738,66 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
 // 生成 try 语句
 llvm::Value *
 LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
-  warning("Try statement not implemented");
-
-  // 保存当前函数
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
 
-  // 创建一个新的块，我们会在 try 块处理后使用它
-  llvm::BasicBlock *safeBB = llvm::BasicBlock::Create(context(), "trysafe");
+  llvm::BasicBlock *tryBB =
+      llvm::BasicBlock::Create(context(), "trybody", func);
+  llvm::BasicBlock *tryEndBB =
+      llvm::BasicBlock::Create(context(), "tryend");
 
-  // 生成 try 块
+  builder()->CreateBr(tryBB);
+  builder()->SetInsertPoint(tryBB);
   generateStatement(std::move(tryStmt->tryBlock));
-
-  // 插入 safeBB 到函数中
-  func->insert(func->end(), safeBB);
-
-  // 检查当前块是否有终止指令
-  llvm::BasicBlock *afterTryBB = builder()->GetInsertBlock();
-  if (!afterTryBB->getTerminator()) {
-    // 如果没有终止指令，跳转到 safe 块
-    builder()->CreateBr(safeBB);
+  if (!builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateBr(tryEndBB);
   }
 
-  // 无论如何，都设置插入点到 safeBB，这样可以确保 builder 的插入点是有效的
-  builder()->SetInsertPoint(safeBB);
+  for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
+    auto &catchStmt = tryStmt->catchStmts[i];
+    llvm::BasicBlock *catchBB =
+        llvm::BasicBlock::Create(context(), "catch" + std::to_string(i), func);
+    builder()->SetInsertPoint(catchBB);
 
-  // 生成 catch 块（暂时跳过）
-  for (auto &catchStmt : tryStmt->catchStmts) {
-    // 暂时跳过 catch 块
+    if (catchStmt->param && catchStmt->param->name != "..." &&
+        catchStmt->param->type) {
+      auto paramType = llvm::Type::getInt32Ty(context());
+      if (auto *typeNode =
+              dynamic_cast<ast::Type *>(catchStmt->param->type.get())) {
+        llvm::Type *pt = generateType(typeNode);
+        if (pt) paramType = pt;
+      }
+      llvm::AllocaInst *catchAlloca =
+          builder()->CreateAlloca(paramType, nullptr, catchStmt->param->name);
+      builder()->CreateStore(
+          llvm::Constant::getNullValue(paramType), catchAlloca);
+      namedValues_[catchStmt->param->name] = catchAlloca;
+    }
+
+    if (catchStmt->body) {
+      generateStatement(std::move(catchStmt->body));
+    }
+    if (!builder()->GetInsertBlock()->getTerminator()) {
+      builder()->CreateBr(tryEndBB);
+    }
   }
 
+  func->insert(func->end(), tryEndBB);
+  builder()->SetInsertPoint(tryEndBB);
   return nullptr;
 }
 
 // 生成 throw 语句
 llvm::Value *LLVMCodeGenerator::generateThrowStmt(
     std::unique_ptr<ast::ThrowStmt> throwStmt) {
-  warning("Throw statement not implemented");
+  if (throwStmt->expr) {
+    generateExpression(std::move(throwStmt->expr));
+  }
+
+  llvm::BasicBlock *unreachBB = llvm::BasicBlock::Create(
+      context(), "throwunreach",
+      builder()->GetInsertBlock()->getParent());
+  builder()->CreateBr(unreachBB);
+  builder()->SetInsertPoint(unreachBB);
   return nullptr;
 }
 
