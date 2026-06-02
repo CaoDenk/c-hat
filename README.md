@@ -310,18 +310,42 @@ var (x, y) = get_coords();
 
 ### 测试覆盖
 
-| 测试模块         | 断言数  | 状态 |
-| ---------------- | ------- | ---- |
-| Parser 测试      | 64      | ✅    |
-| Semantic 测试    | 29      | ✅    |
-| Class 测试       | 11      | ✅    |
-| Exception 测试   | 3       | ✅    |
-| Array 测试       | 7       | ✅    |
-| Defer 测试       | 4       | ✅    |
-| Tuple 测试       | 2       | ✅    |
-| Type System 测试 | 34      | ✅    |
-| New/Delete 测试  | 13      | ✅    |
-| **总计**         | **167** | ✅    |
+| 测试模块            | 断言数  | 状态 |
+| ------------------- | ------- | ---- |
+| Access Control      | 3       | ✅    |
+| Array               | 27      | ✅    |
+| Attribute           | 40      | ✅    |
+| Builtin Vars        | 11      | ✅    |
+| Class               | 34      | ✅    |
+| Coroutine           | 13      | ✅    |
+| Defer               | 4       | ✅    |
+| Exception           | 3       | ✅    |
+| Extension           | 6       | ✅    |
+| FFI                 | 9       | ✅    |
+| Foreach             | 9       | ✅    |
+| Generics            | 13      | ✅    |
+| Goto                | 8       | ✅    |
+| Immutable Method    | 10      | ✅    |
+| Lambda              | 2       | ✅    |
+| Late                | 10      | ✅    |
+| Match               | 2       | ✅    |
+| Module              | 10      | ✅    |
+| New/Delete          | 13      | ✅    |
+| Nullable            | 12      | ✅    |
+| Overload            | 31      | ✅    |
+| Parser              | 64      | ✅    |
+| Pointer             | 37      | ✅    |
+| Property            | 5       | ✅    |
+| Reference           | 7       | ✅    |
+| Reflection          | 15      | ✅    |
+| Result Type         | 6       | ✅    |
+| Semantic            | 29      | ✅    |
+| Static              | 8       | ✅    |
+| String Literal      | 12      | ✅    |
+| Tuple               | 13      | ✅    |
+| Type System         | 34      | ✅    |
+| Variadic            | 4       | ✅    |
+| **总计**            | **504** | ✅    |
 
 ### 构建和运行测试
 
@@ -368,24 +392,32 @@ tests/semantic/Debug/semantic_catch2_test.exe
 - [x] 类系统语义分析（访问修饰符、构造/析构函数识别）
 - [x] defer 机制语义分析
 
-### 第三阶段：代码生成 🚧
+### 第三阶段：代码生成 ✅
 - [x] LLVM IR 基础代码生成
 - [x] 变量声明和函数代码生成
 - [x] 类系统代码生成
 - [x] defer 机制完整实现（收集和执行）
 - [x] 切片功能实现（属性访问和下标访问）
 - [x] 表达式生成函数实现（Self、Expansion、StructInit、Tuple、Lambda、Reflection、Fold）
-- [x] 异常处理 LLVM 代码生成（invoke/landingpad）
-- [x] 构造函数和析构函数代码生成
+- [x] 异常处理 LLVM 代码生成（landingpad + personality + throw）
+- [x] 构造函数、析构函数代码生成
 - [x] new/delete 代码生成
 
-### 第四阶段：优化 📋
+### 第四阶段：优化 🚧
 - [ ] 基础优化
 - [ ] 高级优化
 - [ ] 性能分析
 - [ ] 优化反馈
 
 ## 最近更新
+
+### 2026-06-02
+- ✅ 修复泛型约束（where 子句）：Parser 正确构造 WhereClause AST，Semantic 正确验证概念约束
+- ✅ 实现类型集合别名（`using X = A | B | C`）：新增 UnionType 类型，完整收集所有成员类型
+- ✅ LLVM CodeGen 析构函数调用：delete 表达式自动调用 ~ClassName
+- ✅ LLVM CodeGen 枚举类型检查：新增 enumTypes_ 跟踪
+- ✅ LLVM CodeGen 异常处理：landingpad + __gxx_personality_v0 + __cxa_throw
+- ✅ 所有 504 个单元测试全部通过（33 个测试套件，零失败）
 
 ### 2026-03-10
 - ✅ 实现切片功能（属性访问和下标访问）
@@ -394,9 +426,4 @@ tests/semantic/Debug/semantic_catch2_test.exe
 - ✅ 实现异常处理 LLVM 代码生成（使用 invoke/landingpad 指令）
 - ✅ 实现构造函数和析构函数代码生成
 - ✅ 实现 new/delete 代码生成
-
-### 2026-02-18
-- ✅ 完善类系统测试（访问修饰符）
-- ✅ 所有 167 个单元测试全部通过！
-- ✅ 创建单元测试文档和问题记录文档
 

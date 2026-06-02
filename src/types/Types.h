@@ -12,3 +12,4 @@
 #include "TupleType.h"
 #include "Type.h"
 #include "TypeFactory.h"
+#include "UnionType.h"

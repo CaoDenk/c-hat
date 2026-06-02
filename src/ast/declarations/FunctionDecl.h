@@ -2,6 +2,7 @@
 
 #include "Declaration.h"
 #include "../expressions/Expression.h"
+#include "../templates/WhereClause.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -16,7 +17,7 @@ public:
                  std::vector<std::unique_ptr<Node>> templateParams,
                  std::vector<std::unique_ptr<Node>> params,
                  std::unique_ptr<Node> returnType,
-                 std::unique_ptr<Node> whereClause,
+                 std::unique_ptr<WhereClause> whereClause,
                  std::unique_ptr<Node> requiresClause,
                  std::unique_ptr<Node> body,
                  std::unique_ptr<Expression> arrowExpr = nullptr,
@@ -38,7 +39,7 @@ public:
     std::vector<std::unique_ptr<Node>> templateParams;
     std::vector<std::unique_ptr<Node>> params;
     std::unique_ptr<Node> returnType;
-    std::unique_ptr<Node> whereClause;
+    std::unique_ptr<WhereClause> whereClause;
     std::unique_ptr<Node> requiresClause;
     std::unique_ptr<Node> body;
     std::unique_ptr<Expression> arrowExpr;

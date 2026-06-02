@@ -91,9 +91,9 @@ func as<T>(value) -> T;
 func cast<T>(value) -> T;
 
 // 最小/最大值
-func min<T>(T a, T b) -> T where T : Comparable;
-func max<T>(T a, T b) -> T where T : Comparable;
-func clamp<T>(T value, T min, T max) -> T where T : Comparable;
+func min<T>(T a, T b) -> T where Comparable<T>;
+func max<T>(T a, T b) -> T where Comparable<T>;
+func clamp<T>(T value, T min, T max) -> T where Comparable<T>;
 
 // 交换
 func swap<T>(T& a, T& b);
@@ -611,7 +611,7 @@ public class list<T> {
 ### 6.5 映射（hash_map）
 
 ```cpp
-public class hash_map<K, V> where K : Hashable {
+public class hash_map<K, V> where Hashable<K> {
     private Bucket^ buckets;
     private size bucket_count;
     private size sz;
@@ -705,7 +705,7 @@ public func unique<T>(T[] data) -> size;
 
 ```cpp
 // 排序
-public func sort<T>(T[] data) where T : Comparable;
+public func sort<T>(T[] data) where Comparable<T>;
 public func sort<T>(T[] data, func bool(T&, T&) comp);
 
 // 部分排序

@@ -735,11 +735,31 @@ void SemanticAnalyzer::analyzeFunctionDecl(
 
   // 处理 where 子句
   if (funcDecl->whereClause) {
-    if (auto *namedType =
-            dynamic_cast<ast::NamedType *>(funcDecl->whereClause.get())) {
-      auto sym = symbolTable.lookupSymbol(namedType->name);
+    for (const auto &c : funcDecl->whereClause->constraints) {
+      // 从约束类型 GenericType 中提取约束名
+      std::string constraintName;
+      if (auto *generic = dynamic_cast<ast::GenericType *>(c.constraint.get())) {
+        constraintName = generic->name;
+      } else if (auto *named =
+                     dynamic_cast<ast::NamedType *>(c.constraint.get())) {
+        constraintName = named->name;
+      }
+      if (constraintName.empty()) continue;
+
+      // 查找约束名对应的符号
+      auto sym = symbolTable.lookupSymbol(constraintName);
       if (!sym) {
-        error("Unknown constraint: " + namedType->name, *funcDecl);
+        error("Unknown constraint: " + constraintName, *funcDecl);
+        continue;
+      }
+      // 约束可以是 concept 或类型集合别名 (using X = int | long)
+      if (sym->getType() != SymbolType::Concept) {
+        auto *typeAlias = dynamic_cast<TypeAliasSymbol *>(sym.get());
+        if (!typeAlias || !typeAlias->isTypeSetAlias()) {
+          error("'" + constraintName + "' is not a concept or type set alias",
+                *funcDecl);
+          continue;
+        }
       }
     }
   }
@@ -1400,14 +1420,15 @@ void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
 }
 
 void SemanticAnalyzer::analyzeConceptDecl(ast::ConceptDecl *conceptDecl) {
-  for (auto &param : conceptDecl->templateParams) {
+  // 注册模板参数为类型别名（类似函数泛型参数的处理）
+  auto templateTypes = analyzeTemplateParameters(conceptDecl->templateParams);
+  for (size_t i = 0; i < conceptDecl->templateParams.size(); ++i) {
     if (auto *templateParam =
-            dynamic_cast<ast::TemplateParameter *>(param.get())) {
-      auto paramSym = std::make_shared<VariableSymbol>(
-          templateParam->name,
-          types::TypeFactory::getPrimitiveType(
-              types::PrimitiveType::Kind::Int));
-      symbolTable.addSymbol(paramSym);
+            dynamic_cast<ast::TemplateParameter *>(
+                conceptDecl->templateParams[i].get())) {
+      auto typeSym = std::make_shared<TypeAliasSymbol>(
+          templateParam->name, templateTypes[i]);
+      symbolTable.addSymbol(typeSym);
     }
   }
   auto conceptSym = std::make_shared<ConceptSymbol>(conceptDecl->name);
@@ -1549,15 +1570,32 @@ void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
   MetadataRegistry::instance().registerType(enumDecl->name, std::move(metadata));
 }
 void SemanticAnalyzer::analyzeTypeAliasDecl(ast::TypeAliasDecl *typeAliasDecl) {
-  // 分析类型别名的目标类型
-  if (typeAliasDecl->type) {
-    if (auto *typeNode = dynamic_cast<ast::Type *>(typeAliasDecl->type.get())) {
+  if (typeAliasDecl->types.empty()) return;
+
+  if (typeAliasDecl->isTypeSet) {
+    // 类型集合别名：遍历所有类型，创建 UnionType
+    std::vector<std::shared_ptr<types::Type>> memberTypes;
+    for (const auto &typeNode : typeAliasDecl->types) {
+      if (auto *type = dynamic_cast<ast::Type *>(typeNode.get())) {
+        auto targetType = analyzeType(type);
+        if (targetType) memberTypes.push_back(targetType);
+      }
+    }
+    if (!memberTypes.empty()) {
+      auto unionType = std::make_shared<types::UnionType>(
+          std::move(memberTypes));
+      auto typeAliasSymbol = std::make_shared<TypeAliasSymbol>(
+          typeAliasDecl->name, unionType, Visibility::Default, true);
+      symbolTable.addSymbol(typeAliasSymbol);
+    }
+  } else {
+    // 普通类型别名
+    if (auto *typeNode =
+            dynamic_cast<ast::Type *>(typeAliasDecl->types[0].get())) {
       auto targetType = analyzeType(typeNode);
       if (targetType) {
-        // 创建类型别名符号并添加到符号表
         auto typeAliasSymbol = std::make_shared<TypeAliasSymbol>(
-            typeAliasDecl->name, targetType, Visibility::Default,
-            typeAliasDecl->isTypeSet);
+            typeAliasDecl->name, targetType, Visibility::Default, false);
         symbolTable.addSymbol(typeAliasSymbol);
       }
     }
@@ -3653,6 +3691,14 @@ SemanticAnalyzer::analyzeDeleteExpr(ast::DeleteExpr *deleteExpr) {
   if (!exprType->isPointer()) {
     error("delete can only be applied to pointers", *deleteExpr);
     return nullptr;
+  }
+  // 获取指针指向的类型，如果是类类型则记录类名（供 LLVM CodeGen 查找析构函数）
+  auto pointeeType = std::dynamic_pointer_cast<types::PointerType>(exprType);
+  if (pointeeType) {
+    auto targetType = pointeeType->getPointeeType();
+    if (targetType && targetType->isClass()) {
+      deleteExpr->typeName = targetType->toString();
+    }
   }
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }

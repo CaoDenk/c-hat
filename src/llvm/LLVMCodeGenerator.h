@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace c_hat {
 namespace llvm_codegen {
@@ -113,6 +114,7 @@ private:
   llvm::Value *generateReturnStmt(std::unique_ptr<ast::ReturnStmt> returnStmt);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
+  llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
   llvm::Value *generateForStmt(std::unique_ptr<ast::ForStmt> forStmt);
   llvm::Value *generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
   llvm::Value *
@@ -164,6 +166,8 @@ private:
   generateTypeofExpr(std::unique_ptr<ast::TypeofExpr> typeofExpr);
   llvm::Value *
   generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr);
+  llvm::Value *
+  generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr);
   llvm::Value *generateLambdaExpr(std::unique_ptr<ast::LambdaExpr> lambdaExpr);
   llvm::Value *
   generateReflectionExpr(std::unique_ptr<ast::ReflectionExpr> reflectionExpr);
@@ -209,6 +213,12 @@ private:
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
   std::unordered_map<std::string, llvm::Function *> functions_;
+
+  // 枚举类型名集合
+  std::unordered_set<std::string> enumTypes_;
+
+  // 异常处理
+  llvm::FunctionCallee personalityFunc_;
 
   // 类型缓存，用于提高代码生成效率
   std::unordered_map<ast::Type *, llvm::Type *> typeCache_;

@@ -1156,7 +1156,7 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
     returnType = parseType();
   }
 
-  std::unique_ptr<ast::Node> whereClause;
+  std::unique_ptr<ast::WhereClause> whereClause;
   if (match(lexer::TokenType::Where)) {
     whereClause = parseWhereClause();
   }
@@ -1914,23 +1914,28 @@ std::unique_ptr<ast::TypeAliasDecl> Parser::parseTypeAliasDecl() {
   }
 
   // 检查是否有类型集合约束 (int | long | float | ...)
-  bool isTypeSet = false;
+  std::vector<std::unique_ptr<ast::Type>> typeSet;
+  typeSet.push_back(std::move(type));
   while (match(lexer::TokenType::Bar)) {
-    isTypeSet = true;
     auto nextType = parseType();
     if (!nextType) {
       error("Expected type after '|'");
       return nullptr;
     }
-    // 简化处理：忽略后续类型，只保留第一个类型
-    // TODO: 实现完整的类型集合约束
+    typeSet.push_back(std::move(nextType));
   }
+
+  bool isTypeSet = typeSet.size() > 1;
 
   expect(lexer::TokenType::Semicolon,
          "Expected ';' after type alias declaration");
 
-  return std::make_unique<ast::TypeAliasDecl>(specifiers, name, std::move(type),
-                                              isTypeSet);
+  if (isTypeSet) {
+    return std::make_unique<ast::TypeAliasDecl>(specifiers, name,
+                                                std::move(typeSet), true);
+  }
+  return std::make_unique<ast::TypeAliasDecl>(specifiers, name,
+                                              std::move(typeSet[0]), false);
 }
 
 // 解析语句
@@ -3649,10 +3654,11 @@ std::vector<std::unique_ptr<ast::Node>> Parser::parseTemplateArguments() {
 }
 
 // 解析where子句
-std::unique_ptr<ast::Node> Parser::parseWhereClause() {
+std::unique_ptr<ast::WhereClause> Parser::parseWhereClause() {
   // where 子句可以包含多个约束，用逗号分隔
   // 例如: where Integral<T>, Addable<T>
-  std::vector<std::unique_ptr<ast::Node>> constraints;
+  // 每个约束如 Comparable<T> 被 parseType() 解析为 GenericType
+  std::vector<ast::WhereClause::Constraint> constraints;
 
   do {
     if (!check(lexer::TokenType::Identifier)) {
@@ -3660,24 +3666,33 @@ std::unique_ptr<ast::Node> Parser::parseWhereClause() {
       return nullptr;
     }
 
+    // 解析约束类型 Comparable<T> → GenericType
     auto constraint = parseType();
-    if (constraint) {
-      constraints.push_back(std::move(constraint));
+    if (!constraint) {
+      error("Expected a valid type constraint in where clause");
+      return nullptr;
     }
+
+    // 从 GenericType 中提取约束名和类型参数
+    std::string typeParam;
+    if (auto *generic = dynamic_cast<ast::GenericType *>(constraint.get())) {
+      // 例如 Comparable<T> → conceptName="Comparable", templateArg="T"
+      if (!generic->arguments.empty()) {
+        if (auto *namedArg =
+                dynamic_cast<ast::NamedType *>(generic->arguments[0].get())) {
+          typeParam = namedArg->name;
+        }
+      }
+    } else if (auto *named = dynamic_cast<ast::NamedType *>(constraint.get())) {
+      // 简单约束如 Comparable（无模板参数）
+      typeParam = named->name;
+    }
+
+    constraints.push_back(ast::WhereClause::Constraint{
+        typeParam, std::move(constraint)});
   } while (match(lexer::TokenType::Comma));
 
-  // 如果只有一个约束，直接返回
-  if (constraints.size() == 1) {
-    return std::move(constraints[0]);
-  }
-
-  // 多个约束时，返回第一个（简化处理）
-  // TODO: 实现完整的约束列表
-  if (!constraints.empty()) {
-    return std::move(constraints[0]);
-  }
-
-  return nullptr;
+  return std::make_unique<ast::WhereClause>(std::move(constraints));
 }
 
 // 解析requires子句

@@ -199,7 +199,9 @@ std::string CodeGenerator::generateTypeAliasDecl(
     std::unique_ptr<ast::TypeAliasDecl> typeAliasDecl) {
   std::string code = indent();
   code += "typealias " + typeAliasDecl->name + " = ";
-  code += generateType(std::move(typeAliasDecl->type));
+  if (!typeAliasDecl->types.empty()) {
+    code += generateType(std::move(typeAliasDecl->types[0]));
+  }
   code += ";";
   return code;
 }

@@ -59,6 +59,9 @@ public:
   // 检查是否为引用类型
   virtual bool isReference() const { return false; }
 
+  // 检查是否为联合类型（类型集合）
+  virtual bool isUnion() const { return false; }
+
   // 检查是否为只读类型
   virtual bool isReadonly() const { return false; }
 

@@ -14,8 +14,18 @@ std::string ExportDecl::toString() const {
 // TypeAliasDecl::toString
 std::string TypeAliasDecl::toString() const {
   std::string specStr = specifiers.empty() ? "" : specifiers + " ";
-  return std::format("TypeAliasDecl({}{}, {})", specStr, name,
-                     type->toString());
+  std::string typeStr;
+  if (types.empty()) {
+    typeStr = "∅";
+  } else if (isTypeSet) {
+    for (size_t i = 0; i < types.size(); ++i) {
+      if (i > 0) typeStr += " | ";
+      typeStr += types[i]->toString();
+    }
+  } else {
+    typeStr = types[0]->toString();
+  }
+  return std::format("TypeAliasDecl({}{}, {})", specStr, name, typeStr);
 }
 
 // TupleDestructuringDecl::toString

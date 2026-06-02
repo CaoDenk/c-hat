@@ -334,7 +334,7 @@ private:
   std::unique_ptr<ast::ComptimeStmt> parseComptimeStmt();
 
   // 解析where子句
-  std::unique_ptr<ast::Node> parseWhereClause();
+  std::unique_ptr<ast::WhereClause> parseWhereClause();
 
   // 解析requires子句
   std::unique_ptr<ast::Node> parseRequiresClause();

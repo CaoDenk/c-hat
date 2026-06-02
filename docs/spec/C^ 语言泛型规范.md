@@ -308,8 +308,9 @@ public func serialize<T>(T obj)
 为了明确区分**面向对象继承**（运行时多态/子类型）和**泛型概念**（编译期鸭子类型），C^ 采用了不同的约束语法：
 
 1.  **继承约束 (Inheritance Constraint)**: 使用 `:` 语法。
-    *   **语法**: `where T : BaseClass` 或 `where T : IInterface`
-    *   **语义**: 要求 `T` 必须是 `BaseClass` 的子类或实现了 `IInterface`。这通常意味着 `T` 必须具有特定的内存布局或虚表指针。
+    *   **语法**: `where T : SomeClass` 或 `where T : ISomeInterface`
+    *   **语义**: 要求 `T` 必须是 `SomeClass` 的子类或实现了 `ISomeInterface`。这通常意味着 `T` 必须具有特定的内存布局或虚表指针。
+    *   **注意**: 继承约束与概念约束在语法上严格区分，避免混淆。
     
 2.  **概念约束 (Concept Constraint)**: 使用 `Concept<T>` 语法。
     *   **语法**: `where ConceptName<T>`
