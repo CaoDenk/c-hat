@@ -744,6 +744,10 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
   std::cerr << "Debug: createFunctionPrototype - adding function to map"
             << std::endl;
   functions_[uniqueFuncName] = function;
+  // 同时用简单名注册，便于函数调用时查找
+  if (uniqueFuncName != funcDecl->name) {
+    functions_[funcDecl->name] = function;
+  }
 }
 
 llvm::Value *LLVMCodeGenerator::generateFunctionBody(
