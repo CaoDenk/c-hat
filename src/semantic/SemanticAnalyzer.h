@@ -225,6 +225,9 @@ private:
   // 分析展开表达式
   std::shared_ptr<types::Type>
   analyzeExpansionExpr(ast::ExpansionExpr *expansionExpr);
+  // 分析折叠表达式
+  std::shared_ptr<types::Type>
+  analyzeFoldExpr(ast::FoldExpr *foldExpr);
 
   // 分析lambda表达式
   std::shared_ptr<types::Type> analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr);

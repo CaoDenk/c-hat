@@ -2492,6 +2492,8 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
     return analyzeSelfExpr(static_cast<ast::SelfExpr *>(expression));
   case ast::NodeType::ExpansionExpr:
     return analyzeExpansionExpr(static_cast<ast::ExpansionExpr *>(expression));
+  case ast::NodeType::FoldExpr:
+    return analyzeFoldExpr(static_cast<ast::FoldExpr *>(expression));
   case ast::NodeType::LambdaExpr:
     return analyzeLambdaExpr(static_cast<ast::LambdaExpr *>(expression));
   case ast::NodeType::StructInitExpr:
@@ -3753,6 +3755,18 @@ SemanticAnalyzer::analyzeExpansionExpr(ast::ExpansionExpr *expansionExpr) {
   }
   return analyzeExpression(expansionExpr->expr.get());
 }
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeFoldExpr(ast::FoldExpr *foldExpr) {
+  // 分析折叠操作数
+  if (foldExpr->expr) {
+    return analyzeExpression(foldExpr->expr.get());
+  }
+  if (foldExpr->right) {
+    return analyzeExpression(foldExpr->right.get());
+  }
+  return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int);
+}
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr) {
   std::vector<std::shared_ptr<types::Type>> paramTypes;
@@ -3948,12 +3962,9 @@ SemanticAnalyzer::analyzeMetaFieldAccessExpr(ast::MetaFieldAccessExpr *metaField
     analyzeExpression(metaFieldExpr->object.get());
   }
 
-  // 分析字段
-  if (metaFieldExpr->field) {
-    analyzeExpression(metaFieldExpr->field.get());
-  }
+  // 元字段的 field 部分是编译期名称引用，不进行运行时语义分析
+  // 返回 int 作为占位类型
 
-  // 返回字段类型（简化实现）
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int);
 }
 
