@@ -28,7 +28,8 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
     ast::NodeType type = decl->getType();
     if (type == ast::NodeType::StructDecl || type == ast::NodeType::ClassDecl ||
         type == ast::NodeType::TypeAliasDecl ||
-        type == ast::NodeType::ExtensionDecl) {
+        type == ast::NodeType::ExtensionDecl ||
+        type == ast::NodeType::InterfaceDecl) {
       generateDeclaration(std::move(decl));
     } else if (type == ast::NodeType::EnumDecl) {
       // 收集枚举类型名
@@ -81,6 +82,12 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
     return generateTupleDestructuringDecl(
         std::unique_ptr<ast::TupleDestructuringDecl>(
             static_cast<ast::TupleDestructuringDecl *>(decl.release())));
+  case ast::NodeType::EnumDecl:
+    return generateEnumDecl(std::unique_ptr<ast::EnumDecl>(
+        static_cast<ast::EnumDecl *>(decl.release())));
+  case ast::NodeType::InterfaceDecl:
+    // 接口声明是类型级构造，不生成 LLVM IR
+    return nullptr;
   case ast::NodeType::FunctionDecl:
     return generateFunctionDecl(std::unique_ptr<ast::FunctionDecl>(
         static_cast<ast::FunctionDecl *>(decl.release())));
@@ -438,6 +445,39 @@ llvm::Value *LLVMCodeGenerator::generateTupleDestructuringDecl(
     namedValues_[name] = alloca;
   }
 
+  return nullptr;
+}
+
+// 生成枚举声明
+llvm::Value *LLVMCodeGenerator::generateEnumDecl(
+    std::unique_ptr<ast::EnumDecl> enumDecl) {
+  // 枚举值作为 int32 全局常量
+  int currentValue = 0;
+  for (auto &member : enumDecl->members) {
+    if (auto *enumMember = dynamic_cast<ast::EnumMember *>(member.get())) {
+      std::string globalName = enumDecl->name + "_" + enumMember->name;
+
+      // 如果枚举成员有显式值，解析它
+      if (enumMember->value) {
+        if (auto *literal =
+                dynamic_cast<ast::Literal *>(enumMember->value.get())) {
+          if (literal->type == ast::Literal::Type::Integer) {
+            currentValue = std::stoi(literal->value);
+          }
+        }
+      }
+
+      // 创建全局 int32 常量
+      new llvm::GlobalVariable(
+          *module(), llvm::Type::getInt32Ty(context()), true,
+          llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                 currentValue),
+          globalName);
+
+      currentValue++;
+    }
+  }
   return nullptr;
 }
 

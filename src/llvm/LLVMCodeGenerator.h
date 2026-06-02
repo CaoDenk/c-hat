@@ -77,6 +77,7 @@ private:
   llvm::Value *generateVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   llvm::Value *generateTupleDestructuringDecl(
       std::unique_ptr<ast::TupleDestructuringDecl> tupleDecl);
+  llvm::Value *generateEnumDecl(std::unique_ptr<ast::EnumDecl> enumDecl);
   llvm::Value *
   generateFunctionDecl(std::unique_ptr<ast::FunctionDecl> funcDecl);
   void createFunctionPrototype(ast::FunctionDecl *funcDecl);
