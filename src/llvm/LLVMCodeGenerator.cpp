@@ -69,7 +69,7 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
   optimizeLoops();
 
   // 执行函数内联优化
-  optimizeFunctionInlining();
+  // optimizeFunctionInlining();  // TODO: 函数内联实现有 bug（指令复制的 valueMap 不完整），需要重写
 }
 
 llvm::Value *

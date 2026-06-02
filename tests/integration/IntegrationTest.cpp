@@ -61,3 +61,14 @@ TEST_CASE("Integration: if-else", "[integration][e2e]") {
       "    }\n"
       "}\n") == 100);
 }
+
+TEST_CASE("Integration: function call", "[integration][e2e]") {
+  REQUIRE(compileAndRun(
+      "func add(int a, int b) -> int {\n"
+      "    return a + b;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    var r = add(20, 22);\n"
+      "    return r;\n"
+      "}\n") == 42);
+}
