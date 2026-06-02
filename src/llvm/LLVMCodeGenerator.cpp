@@ -744,10 +744,6 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
   std::cerr << "Debug: createFunctionPrototype - adding function to map"
             << std::endl;
   functions_[uniqueFuncName] = function;
-  // 同时用简单名注册，便于函数调用时查找
-  if (uniqueFuncName != funcDecl->name) {
-    functions_[funcDecl->name] = function;
-  }
 }
 
 llvm::Value *LLVMCodeGenerator::generateFunctionBody(
@@ -2175,19 +2171,45 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     args.push_back(generateExpression(std::move(arg)));
   }
 
-  // 查找函数
-  auto it = functions_.find(funcName);
+  // 根据实参类型构造 mangled 函数名（支持重载）
+  // 如 add(int, int) → "add@int#int"
+  std::string mangledName = funcName;
+  if (!args.empty()) {
+    mangledName += "@";
+    for (size_t i = 0; i < args.size(); ++i) {
+      if (i > 0) mangledName += "#";
+      llvm::Type *argType = args[i]->getType();
+      if (argType->isIntegerTy()) {
+        mangledName += "int";
+      } else if (argType->isFloatingPointTy()) {
+        mangledName += "double";
+      } else if (argType->isPointerTy()) {
+        mangledName += "ptr";
+      } else {
+        mangledName += "unknown";
+      }
+    }
+  }
+
+  // 优先用 mangled 名查找（支持重载）
+  auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
     return builder()->CreateCall(it->second, args, "calltmp");
   }
 
-  // 如果找不到函数，尝试使用 extern 函数
+  // 回退到简单名查找（无参函数或 extern 函数）
+  it = functions_.find(funcName);
+  if (it != functions_.end()) {
+    return builder()->CreateCall(it->second, args, "calltmp");
+  }
+
+  // 最后尝试使用 LLVM module 中的函数（extern 声明）
   llvm::Function *func = module()->getFunction(funcName);
   if (func) {
     return builder()->CreateCall(func, args, "calltmp");
   }
 
-  error("Unknown function: " + funcName);
+  error("Unknown function: " + funcName + " (mangled: " + mangledName + ")");
   return nullptr;
 }
 
