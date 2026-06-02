@@ -115,6 +115,13 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
   case ast::NodeType::NamespaceDecl:
     return generateNamespaceDecl(std::unique_ptr<ast::NamespaceDecl>(
         static_cast<ast::NamespaceDecl *>(decl.release())));
+  case ast::NodeType::AttributeDecl:
+  case ast::NodeType::ConceptDecl:
+  case ast::NodeType::ModuleDecl:
+  case ast::NodeType::ImportDecl:
+  case ast::NodeType::ExportDecl:
+    // 编译期构造，不生成 LLVM IR
+    return nullptr;
   default:
     return nullptr;
   }
