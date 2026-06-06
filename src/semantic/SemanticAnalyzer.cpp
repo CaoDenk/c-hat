@@ -3,6 +3,8 @@
 #include "../types/ClassType.h"
 #include "../types/InterfaceType.h"
 #include "../types/TypeFactory.h"
+#include "../types/PointerType.h"
+#include "../types/ReferenceType.h"
 #include "ModuleSymbol.h"
 #include "ClassSymbol.h"
 #include "ConceptSymbol.h"
@@ -3312,9 +3314,13 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     }
 
     // 根据规则选择
+    // 将选中结果写入 CallExpr 的 resolvedMangledName
     if (exactCandidates.size() == 1) {
       // 规则 1：精确匹配优先
       auto selectedFunc = exactCandidates[0];
+      // 设置 mangled name
+      callExpr->resolvedMangledName = getMangledFuncName(
+          identifier->name, selectedFunc->getType()->getParameterTypes());
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&
           selectedFunc->isTemplate()) {
         // 替换返回类型中的模板参数
@@ -3339,6 +3345,9 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     } else if (viableCandidates.size() == 1) {
       // 规则 2：单一隐式转换路径
       auto selectedFunc = viableCandidates[0];
+      // 设置 mangled name
+      callExpr->resolvedMangledName = getMangledFuncName(
+          identifier->name, selectedFunc->getType()->getParameterTypes());
       // 如果有显式模板参数，返回替换后的返回类型
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&
           selectedFunc->isTemplate()) {
@@ -4277,6 +4286,88 @@ SemanticAnalyzer::visibilityToAccessModifier(Visibility visibility) {
 bool SemanticAnalyzer::isLValue(const ast::Expression &expr) const {
   return false;
 }
+// —— 函数重载 mangling 辅助 ——
+
+std::string SemanticAnalyzer::getMangledTypeName(
+    const std::shared_ptr<types::Type> &type) {
+  if (!type) return "void";
+
+  // 检查是否是引用类型（脱引用）
+  if (type->isReference()) {
+    auto refType = std::dynamic_pointer_cast<types::ReferenceType>(type);
+    if (refType) {
+      return getMangledTypeName(refType->getBaseType()) + "&";
+    }
+    // 如果 dynamic_cast 失败，尝试其他方式
+    // 引用类型名 = 基础类型名 + "&"
+    std::string s = type->toString();
+    if (s.size() > 1 && s.back() == '&') {
+      // 递归处理基础类型
+      auto base = type->getBaseType();
+      if (base) return getMangledTypeName(base) + "&";
+    }
+    return "ref";
+  }
+
+  // 检查是否是指针类型
+  if (type->isPointer()) {
+    auto ptrType = std::dynamic_pointer_cast<types::PointerType>(type);
+    if (ptrType) {
+      return getMangledTypeName(ptrType->getPointeeType()) + "^";
+    }
+    return "ptr";
+  }
+
+  // 检查基本类型
+  if (type->isPrimitive()) {
+    auto primType = std::dynamic_pointer_cast<types::PrimitiveType>(type);
+    if (primType) {
+      switch (primType->getKind()) {
+      case types::PrimitiveType::Kind::Void:    return "void";
+      case types::PrimitiveType::Kind::Bool:    return "bool";
+      case types::PrimitiveType::Kind::Byte:    return "byte";
+      case types::PrimitiveType::Kind::SByte:   return "sbyte";
+      case types::PrimitiveType::Kind::Short:   return "short";
+      case types::PrimitiveType::Kind::UShort:  return "ushort";
+      case types::PrimitiveType::Kind::Int:     return "int";
+      case types::PrimitiveType::Kind::UInt:    return "uint";
+      case types::PrimitiveType::Kind::Long:    return "long";
+      case types::PrimitiveType::Kind::ULong:   return "ulong";
+      case types::PrimitiveType::Kind::Float:   return "float";
+      case types::PrimitiveType::Kind::Double:  return "double";
+      case types::PrimitiveType::Kind::Fp16:    return "fp16";
+      case types::PrimitiveType::Kind::Bf16:    return "bf16";
+      case types::PrimitiveType::Kind::Char:    return "char";
+      }
+    }
+  }
+
+  // 默认：使用类型的 toString 作为 fallback
+  // 替换掉名字中可能的空格和特殊字符
+  std::string name = type->toString();
+  for (auto &c : name) {
+    if (c == ' ' || c == '<' || c == '>') c = '_';
+  }
+  return name;
+}
+
+std::string SemanticAnalyzer::getMangledFuncName(
+    const std::string &funcName,
+    const std::vector<std::shared_ptr<types::Type>> &paramTypes) {
+  if (paramTypes.empty()) {
+    return funcName;
+  }
+
+  std::string result = funcName + "@";
+  for (size_t i = 0; i < paramTypes.size(); ++i) {
+    if (i > 0) result += "#";
+    result += getMangledTypeName(paramTypes[i]);
+  }
+  return result;
+}
+
+// —— 类型兼容性 ——
+
 bool SemanticAnalyzer::isTypeCompatible(
     const std::shared_ptr<types::Type> &expected,
     const std::shared_ptr<types::Type> &actual) {

@@ -360,6 +360,17 @@ private:
       const std::shared_ptr<types::Type> &templateType,
       const std::vector<std::shared_ptr<types::Type>> &typeArguments);
 
+  // —— 函数重载 mangling 辅助 ——
+
+  // 将 C^ 类型转换为 mangled name 中的组件名
+  static std::string
+  getMangledTypeName(const std::shared_ptr<types::Type> &type);
+
+  // 构造函数的完整 mangled name：funcName@paramType1#paramType2...
+  static std::string getMangledFuncName(
+      const std::string &funcName,
+      const std::vector<std::shared_ptr<types::Type>> &paramTypes);
+
   // 是否有错误
   bool hasError_ = false;
 

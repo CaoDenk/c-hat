@@ -714,19 +714,24 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
       }
       std::string typeName;
       // 检查是否为结构体类型
-      if (auto *structType = llvm::dyn_cast<llvm::StructType>(paramTypes[i])) {
-        typeName = structType->getName().str();
-      }
-      if (typeName.empty()) {
-        if (paramTypes[i]->isFloatingPointTy()) {
-          typeName = "double";
-        } else if (paramTypes[i]->isIntegerTy()) {
-          typeName = "int";
-        } else {
-          typeName = paramTypes[i]->getTypeID() == llvm::Type::PointerTyID
-                         ? "ptr"
-                         : "unknown";
-        }
+      if (llvm::isa<llvm::StructType>(paramTypes[i])) {
+        typeName = "struct";
+      } else if (paramTypes[i]->isIntegerTy(1)) {
+        typeName = "bool";
+      } else if (paramTypes[i]->isIntegerTy(8)) {
+        typeName = "byte";
+      } else if (paramTypes[i]->isIntegerTy(32)) {
+        typeName = "int";
+      } else if (paramTypes[i]->isIntegerTy(64)) {
+        typeName = "long";
+      } else if (paramTypes[i]->isFloatTy()) {
+        typeName = "float";
+      } else if (paramTypes[i]->isDoubleTy()) {
+        typeName = "double";
+      } else if (paramTypes[i]->isPointerTy()) {
+        typeName = "ptr";
+      } else {
+        typeName = "unknown";
       }
       uniqueFuncName += typeName;
     }
@@ -790,19 +795,26 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
       }
       std::string typeName;
       // 检查是否为结构体类型
-      if (auto *structType = llvm::dyn_cast<llvm::StructType>(paramTypes[i])) {
-        typeName = structType->getName().str();
-      }
-      if (typeName.empty()) {
-        if (paramTypes[i]->isFloatingPointTy()) {
-          typeName = "double";
-        } else if (paramTypes[i]->isIntegerTy()) {
-          typeName = "int";
-        } else {
-          typeName = paramTypes[i]->getTypeID() == llvm::Type::PointerTyID
-                         ? "ptr"
-                         : "unknown";
-        }
+      if (llvm::isa<llvm::StructType>(paramTypes[i])) {
+        typeName = "struct";
+      } else if (paramTypes[i]->isIntegerTy(1)) {
+        typeName = "bool";
+      } else if (paramTypes[i]->isIntegerTy(8)) {
+        typeName = "byte";
+      } else if (paramTypes[i]->isIntegerTy(16)) {
+        typeName = "short";
+      } else if (paramTypes[i]->isIntegerTy(32)) {
+        typeName = "int";
+      } else if (paramTypes[i]->isIntegerTy(64)) {
+        typeName = "long";
+      } else if (paramTypes[i]->isFloatTy()) {
+        typeName = "float";
+      } else if (paramTypes[i]->isDoubleTy()) {
+        typeName = "double";
+      } else if (paramTypes[i]->isPointerTy()) {
+        typeName = "ptr";
+      } else {
+        typeName = "unknown";
       }
       uniqueFuncName += typeName;
     }
@@ -2171,8 +2183,15 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     args.push_back(generateExpression(std::move(arg)));
   }
 
-  // 根据实参类型构造 mangled 函数名（支持重载）
-  // 如 add(int, int) → "add@int#int"
+  // 优先使用语义分析器预计算的重载解析结果（精确类型 mangled name）
+  if (!callExpr->resolvedMangledName.empty()) {
+    auto it = functions_.find(callExpr->resolvedMangledName);
+    if (it != functions_.end()) {
+      return builder()->CreateCall(it->second, args, "calltmp");
+    }
+  }
+
+  // 根据实参 LLVM 类型构造 mangled 函数名（备用路径）
   std::string mangledName = funcName;
   if (!args.empty()) {
     mangledName += "@";
@@ -2191,7 +2210,7 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     }
   }
 
-  // 优先用 mangled 名查找（支持重载）
+  // 用 LLVM 类型 mangled 名查找
   auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
     return builder()->CreateCall(it->second, args, "calltmp");

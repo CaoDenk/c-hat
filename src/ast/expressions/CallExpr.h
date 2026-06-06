@@ -26,6 +26,9 @@ public:
 
   std::unique_ptr<Expression> callee;
   std::vector<std::unique_ptr<Expression>> args;
+  // 语义分析阶段填充的重载解析结果（mangled 函数名）
+  // 由 SemanticAnalyzer 在分析 CallExpr 时计算并设置
+  std::string resolvedMangledName;
 };
 
 } // namespace ast
