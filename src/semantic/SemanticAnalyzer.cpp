@@ -1,4 +1,5 @@
 #include "SemanticAnalyzer.h"
+#include "../Diagnostics.h"
 #include "../ast/AstNodes.h"
 #include "../types/ClassType.h"
 #include "../types/InterfaceType.h"
@@ -951,11 +952,11 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
 
   // 处理基类（单继承和多继承）
   if (!classDecl->baseClass.empty()) {
-    std::cerr << "Debug: Processing base class: " << classDecl->baseClass
+    c_hat::debugStream() << "Debug: Processing base class: " << classDecl->baseClass
               << std::endl;
     auto baseType = analyzeTypeByName(classDecl->baseClass);
     if (baseType) {
-      std::cerr << "Debug: baseType found, isClass: " << baseType->isClass()
+      c_hat::debugStream() << "Debug: baseType found, isClass: " << baseType->isClass()
                 << std::endl;
       if (baseType->isClass()) {
         auto baseClassType =
@@ -968,7 +969,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
                 *classDecl);
         } else {
           classType->addBaseClass(baseClassType);
-          std::cerr << "Debug: Added base class: " << classDecl->baseClass
+          c_hat::debugStream() << "Debug: Added base class: " << classDecl->baseClass
                     << std::endl;
         }
       } else if (baseType->isInterface()) {
@@ -981,7 +982,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
               *classDecl);
       }
     } else {
-      std::cerr << "Debug: baseType is null" << std::endl;
+      c_hat::debugStream() << "Debug: baseType is null" << std::endl;
       error("Base class or interface not found: " + classDecl->baseClass,
             *classDecl);
     }
@@ -1145,7 +1146,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
       types::ClassMethod method(funcDecl->name, returnType, paramTypes,
                                 isVirtual, isOverride, access, isMethodStatic);
       classType->addMethod(method);
-      std::cerr << "Debug: Added method " << funcDecl->name << " to class "
+      c_hat::debugStream() << "Debug: Added method " << funcDecl->name << " to class "
                 << classDecl->name << std::endl;
     } else if (auto *varDecl =
                    dynamic_cast<ast::VariableDecl *>(member.get())) {
@@ -1163,7 +1164,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
       bool isFieldStatic = varDecl->isStatic;
       types::ClassField field(varDecl->name, fieldType, access, isFieldStatic);
       classType->addField(field);
-      std::cerr << "Debug: Added field " << varDecl->name << " to class "
+      c_hat::debugStream() << "Debug: Added field " << varDecl->name << " to class "
                 << classDecl->name << " with access "
                 << static_cast<int>(access) << std::endl;
     } else if (auto *getterDecl =
@@ -1908,62 +1909,62 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeCompoundStmt(
 
     // 如果当前在类作用域中，复制基类的成员变量
     if (currentClassType) {
-      std::cerr << "Debug: currentClassType found" << std::endl;
-      std::cerr << "Debug: base class count = "
+      c_hat::debugStream() << "Debug: currentClassType found" << std::endl;
+      c_hat::debugStream() << "Debug: base class count = "
                 << currentClassType->getBaseClasses().size() << std::endl;
       // 获取基类的成员变量
       for (const auto &baseClass : currentClassType->getBaseClasses()) {
-        std::cerr << "Debug: baseClass = " << baseClass->getName() << std::endl;
+        c_hat::debugStream() << "Debug: baseClass = " << baseClass->getName() << std::endl;
         for (const auto &fieldPair : baseClass->getFields()) {
           const auto &field = fieldPair.second;
-          std::cerr << "Debug: field = " << field.name << std::endl;
+          c_hat::debugStream() << "Debug: field = " << field.name << std::endl;
           // 只复制 protected 和 public 的成员变量
           if (field.access == types::AccessModifier::Protected ||
               field.access == types::AccessModifier::Public) {
             auto variableSymbol =
                 std::make_shared<VariableSymbol>(field.name, field.type);
             symbolTable.addSymbol(variableSymbol);
-            std::cerr << "Debug: added variable " << field.name
+            c_hat::debugStream() << "Debug: added variable " << field.name
                       << " to symbol table" << std::endl;
           }
         }
       }
     } else if (!currentClassName_.empty()) {
-      std::cerr << "Debug: currentClassName_ = " << currentClassName_
+      c_hat::debugStream() << "Debug: currentClassName_ = " << currentClassName_
                 << std::endl;
       auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
           symbolTable.lookupSymbol(currentClassName_));
       if (classSymbol) {
-        std::cerr << "Debug: classSymbol found" << std::endl;
+        c_hat::debugStream() << "Debug: classSymbol found" << std::endl;
         auto classType =
             std::dynamic_pointer_cast<types::ClassType>(classSymbol->getType());
         if (classType) {
-          std::cerr << "Debug: classType found" << std::endl;
-          std::cerr << "Debug: base class count = "
+          c_hat::debugStream() << "Debug: classType found" << std::endl;
+          c_hat::debugStream() << "Debug: base class count = "
                     << classType->getBaseClasses().size() << std::endl;
           // 获取基类的成员变量
           for (const auto &baseClass : classType->getBaseClasses()) {
-            std::cerr << "Debug: baseClass = " << baseClass->getName()
+            c_hat::debugStream() << "Debug: baseClass = " << baseClass->getName()
                       << std::endl;
             for (const auto &fieldPair : baseClass->getFields()) {
               const auto &field = fieldPair.second;
-              std::cerr << "Debug: field = " << field.name << std::endl;
+              c_hat::debugStream() << "Debug: field = " << field.name << std::endl;
               // 只复制 protected 和 public 的成员变量
               if (field.access == types::AccessModifier::Protected ||
                   field.access == types::AccessModifier::Public) {
                 auto variableSymbol =
                     std::make_shared<VariableSymbol>(field.name, field.type);
                 symbolTable.addSymbol(variableSymbol);
-                std::cerr << "Debug: added variable " << field.name
+                c_hat::debugStream() << "Debug: added variable " << field.name
                           << " to symbol table" << std::endl;
               }
             }
           }
         } else {
-          std::cerr << "Debug: classType is null" << std::endl;
+          c_hat::debugStream() << "Debug: classType is null" << std::endl;
         }
       } else {
-        std::cerr << "Debug: classSymbol is null" << std::endl;
+        c_hat::debugStream() << "Debug: classSymbol is null" << std::endl;
       }
     }
   }
@@ -2062,23 +2063,36 @@ SemanticAnalyzer::analyzeForStmt(ast::ForStmt *forStmt) {
   if (forStmt->isForeach) {
     auto *iterVar = dynamic_cast<ast::VariableDecl *>(forStmt->init.get());
     auto *indexVar = dynamic_cast<ast::VariableDecl *>(forStmt->indexVar.get());
-    auto collectionType = forStmt->condition
-                              ? analyzeExpression(forStmt->condition.get())
-                              : nullptr;
 
     std::shared_ptr<types::Type> elementType;
-    if (!collectionType) {
-      error("Invalid foreach collection", *forStmt);
-    } else if (collectionType->isArray()) {
-      auto arrayType =
-          std::dynamic_pointer_cast<types::ArrayType>(collectionType);
-      elementType = arrayType ? arrayType->getElementType() : nullptr;
-    } else if (collectionType->isSlice()) {
-      auto sliceType =
-          std::dynamic_pointer_cast<types::SliceType>(collectionType);
-      elementType = sliceType ? sliceType->getElementType() : nullptr;
+    auto *rangeExpr =
+        dynamic_cast<ast::BinaryExpr *>(forStmt->condition.get());
+    if (rangeExpr && rangeExpr->op == ast::BinaryExpr::Op::Range) {
+      auto startType = analyzeExpression(rangeExpr->left.get());
+      auto endType = analyzeExpression(rangeExpr->right.get());
+      if (startType && endType && isTypeCompatible(startType, endType)) {
+        elementType = startType;
+      } else {
+        error("Foreach range bounds must have compatible types", *forStmt);
+      }
     } else {
-      error("Foreach can only iterate over arrays or slices", *forStmt);
+      auto collectionType = forStmt->condition
+                                ? analyzeExpression(forStmt->condition.get())
+                                : nullptr;
+      if (!collectionType) {
+        error("Invalid foreach collection", *forStmt);
+      } else if (collectionType->isArray()) {
+        auto arrayType =
+            std::dynamic_pointer_cast<types::ArrayType>(collectionType);
+        elementType = arrayType ? arrayType->getElementType() : nullptr;
+      } else if (collectionType->isSlice()) {
+        auto sliceType =
+            std::dynamic_pointer_cast<types::SliceType>(collectionType);
+        elementType = sliceType ? sliceType->getElementType() : nullptr;
+      } else {
+        error("Foreach can only iterate over arrays, slices or ranges",
+              *forStmt);
+      }
     }
 
     if (indexVar) {
@@ -3501,6 +3515,7 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
             return nullptr;
           }
         }
+        memberExpr->structName = classType->getName();
         return field->type;
       }
     }
@@ -3550,6 +3565,7 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
           error("Access denied to method: " + memberExpr->member, *memberExpr);
           return nullptr;
         }
+        memberExpr->structName = classType->getName();
         return method->returnType;
       }
     }
@@ -4284,6 +4300,18 @@ SemanticAnalyzer::visibilityToAccessModifier(Visibility visibility) {
 }
 
 bool SemanticAnalyzer::isLValue(const ast::Expression &expr) const {
+  if (dynamic_cast<const ast::Identifier *>(&expr)) {
+    return true;
+  }
+  if (dynamic_cast<const ast::SubscriptExpr *>(&expr)) {
+    return true;
+  }
+  if (dynamic_cast<const ast::MemberExpr *>(&expr)) {
+    return true;
+  }
+  if (auto *unary = dynamic_cast<const ast::UnaryExpr *>(&expr)) {
+    return unary->op == ast::UnaryExpr::Op::Dereference;
+  }
   return false;
 }
 // —— 函数重载 mangling 辅助 ——
@@ -4443,9 +4471,16 @@ bool SemanticAnalyzer::isTypeCompatible(
     auto expectedArray = std::dynamic_pointer_cast<types::ArrayType>(expected);
     auto actualArray = std::dynamic_pointer_cast<types::ArrayType>(actual);
 
+    // 元素只读性同样只能加、不能去
+    bool expectedElemReadonly = expectedArray->getElementType()->isReadonly();
+    bool actualElemReadonly = actualArray->getElementType()->isReadonly();
+    if (!expectedElemReadonly && actualElemReadonly) {
+      return false;
+    }
+
     // 检查元素类型是否相同
-    if (!isTypeCompatible(expectedArray->getElementType(),
-                          actualArray->getElementType())) {
+    if (!isTypeCompatible(types::unwrapReadonly(expectedArray->getElementType()),
+                          types::unwrapReadonly(actualArray->getElementType()))) {
       return false;
     }
 
@@ -4462,9 +4497,15 @@ bool SemanticAnalyzer::isTypeCompatible(
     auto expectedSlice = std::dynamic_pointer_cast<types::SliceType>(expected);
     auto actualArray = std::dynamic_pointer_cast<types::ArrayType>(actual);
 
+    // 数组 -> 切片时，只读性同样只能加、不能去
+    if (!expectedSlice->getElementType()->isReadonly() &&
+        actualArray->getElementType()->isReadonly()) {
+      return false;
+    }
+
     // 检查元素类型是否兼容
-    return isTypeCompatible(expectedSlice->getElementType(),
-                            actualArray->getElementType());
+    return isTypeCompatible(types::unwrapReadonly(expectedSlice->getElementType()),
+                            types::unwrapReadonly(actualArray->getElementType()));
   }
 
   // 检查切片类型兼容性
@@ -4472,9 +4513,18 @@ bool SemanticAnalyzer::isTypeCompatible(
     auto expectedSlice = std::dynamic_pointer_cast<types::SliceType>(expected);
     auto actualSlice = std::dynamic_pointer_cast<types::SliceType>(actual);
 
-    // 检查元素类型是否兼容
-    return isTypeCompatible(expectedSlice->getElementType(),
-                            actualSlice->getElementType());
+    // 只读性只能加、不能去：T[] -> T![] 合法，T![] -> T[] 非法。
+    // 否则一个只读视图可以被转换成可变切片，进而写入 .rodata 或破坏
+    // 调用者承诺的不可变状态。
+    bool expectedElemReadonly = expectedSlice->getElementType()->isReadonly();
+    bool actualElemReadonly = actualSlice->getElementType()->isReadonly();
+    if (!expectedElemReadonly && actualElemReadonly) {
+      return false;
+    }
+
+    // 检查元素类型是否兼容（忽略两侧最外层的 readonly 修饰）
+    return isTypeCompatible(types::unwrapReadonly(expectedSlice->getElementType()),
+                            types::unwrapReadonly(actualSlice->getElementType()));
   }
 
   // 检查指针类型兼容性
@@ -4567,15 +4617,19 @@ bool SemanticAnalyzer::isTypeCompatible(
   }
 
   // 检查 literalview 到指针的转换
+  // 字符串字面量位于只读段，因此只能转换成“指向只读字节/字符的指针”，
+  // 不能转换成可写指针（否则可写 .rodata）。
   if (expected->isPointer() && actual->isLiteralView()) {
     auto expectedPtr = std::dynamic_pointer_cast<types::PointerType>(expected);
     auto pointeeType = expectedPtr->getPointeeType();
+    bool pointeeReadonly = pointeeType->isReadonly();
+    auto plainPointee = types::unwrapReadonly(pointeeType);
 
-    // literalview 可以转换为 byte^ 或 char^
     if (auto primitive =
-            std::dynamic_pointer_cast<types::PrimitiveType>(pointeeType)) {
-      if (primitive->getKind() == types::PrimitiveType::Kind::Byte ||
-          primitive->getKind() == types::PrimitiveType::Kind::Char) {
+            std::dynamic_pointer_cast<types::PrimitiveType>(plainPointee)) {
+      if ((primitive->getKind() == types::PrimitiveType::Kind::Byte ||
+           primitive->getKind() == types::PrimitiveType::Kind::Char) &&
+          pointeeReadonly) {
         return true;
       }
     }
@@ -4736,8 +4790,13 @@ std::shared_ptr<types::Type> SemanticAnalyzer::tryImplicitConversion(
     auto expectedSlice = std::dynamic_pointer_cast<types::SliceType>(expected);
     auto actualArray = std::dynamic_pointer_cast<types::ArrayType>(actual);
 
-    if (isTypeCompatible(expectedSlice->getElementType(),
-                         actualArray->getElementType())) {
+    if (!expectedSlice->getElementType()->isReadonly() &&
+        actualArray->getElementType()->isReadonly()) {
+      return nullptr;
+    }
+
+    if (isTypeCompatible(types::unwrapReadonly(expectedSlice->getElementType()),
+                         types::unwrapReadonly(actualArray->getElementType()))) {
       return expected;
     }
   }

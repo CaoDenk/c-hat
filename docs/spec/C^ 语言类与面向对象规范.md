@@ -146,7 +146,7 @@ Resource^ r = new Resource();
 
 #### 接口声明
 
-在导出接口或声明文件中，使用 `~();` 语法声明析构函数。如果省略访问修饰符，则默认为 `internal`。
+在导出接口或声明文件中，使用 `~ClassName();` 语法声明析构函数。如果省略访问修饰符，则默认为 `internal`。
 
 ```cpp
 public class Resource {
@@ -161,13 +161,13 @@ public class Resource {
 
 ### 4.1 显式 `self` 参数
 
-C^ 中的成员函数必须显式声明 `self` 参数，用于访问实例。为了简化语法，`self` 关键字本身即代表对当前实例的引用。
+C^ 中的成员函数可以显式声明 `self` 参数，也可以省略；省略时 parser 会隐式注入 `self`，因此推荐只在不方便时显式写出。`self` 关键字本身即代表对当前实例的引用。
 
 | `self` 修饰符 | 描述                             |
 | ------------- | -------------------------------- |
 | `self`        | 可变引用，可修改实例成员（默认） |
 | `self!`       | 不可变引用，不可修改实例成员     |
-| `self~`       | 移动语义，获取实例的所有权       |
+| `self~`       | 移动接收者（尚未实现）           |
 
 ```cpp
 class Person {
@@ -326,7 +326,7 @@ class Animal {
 
 // 单继承 (隐式 public)
 class Dog : Animal {
-    public Dog(string new_name) : base(new_name) {
+    public Dog(string new_name) : super(new_name) {
     }
 
     public func speak() -> string {
@@ -348,12 +348,12 @@ string dog_name = dog.get_name(); // "Buddy"（继承自基类）
 #### 5.2.2 构造与析构
 
 *   **构造**：使用类名 `ClassName(...)`。
-*   **析构**：使用 `~ { ... }`。
-*   **基类调用**：使用 `: base(...)`。
+*   **析构**：使用 `~ClassName()`。
+*   **基类调用**：基类构造使用 `: super(...)`；基类成员使用 `base.member`。
 
 ```cpp
 class Derived : Base {
-    public Derived(int x) : base(x) {
+    public Derived(int x) : super(x) {
         // ...
     }
 
@@ -874,8 +874,8 @@ string text = string_list.get(1); // "World"
 使用 `where` 子句为泛型参数添加约束：
 
 ```cpp
-// 带约束的泛型类
-class Repository<T> where T : IComparable, new() {
+// 带约束的泛型类：当前实现只支持 Concept<T> 形式，多个约束用逗号分隔
+class Repository<T> where Comparable<T> {
     private List<T>^ _items;
 
     public Repository() {
@@ -912,8 +912,9 @@ class Repository<T> where T : IComparable, new() {
      // 静态字段
      private static int _count;
  
-     // 静态构造函数
-     static func init() {
+     // 静态初始化函数（当前实现没有“自动静态构造函数”，
+     // 需要在首次使用前显式调用 initialize()）
+     static func initialize() {
          _count = 0;
      }
  
@@ -927,8 +928,8 @@ class Repository<T> where T : IComparable, new() {
          _count++;
      }
  
-     // 实例构造函数
-     func init() {
+     // 实例构造函数：与类同名
+     Counter() {
          Counter.increment();
      }
  }
@@ -941,29 +942,34 @@ class Repository<T> where T : IComparable, new() {
  int total = Counter.count; // 3
  ```
  
- ### 11.2 静态构造函数
+ ### 11.2 静态构造函数（设计稿，当前未实现）
 
-静态构造函数用于初始化静态成员，在类第一次使用时自动调用：
+> ⚠️ 当前编译器没有“类首次使用时自动调用静态构造函数”的机制。
+> 下面的 `initialize()` 只是普通静态函数，必须显式调用。
+
+静态初始化函数用于初始化静态成员：
 
 ```cpp
 class Config {
     public static string app_name;
     public static int version;
 
-    // 静态构造函数
-    static func init() {
+    // 普通静态函数，需要显式调用
+    static func initialize() {
         app_name = "My Application";
         version = 1;
-        println("Static constructor called");
     }
 }
 
-// 第一次使用类时，静态构造函数会被调用
+// 使用前显式初始化
+Config.initialize();
 string name = Config.app_name; // "My Application"
 int ver = Config.version; // 1
 ```
 
 ## 12. 密封类
+
+> ⚠️ `sealed` 目前是设计语法，parser/semantic 尚未完整支持。
 
 使用 `sealed` 关键字声明密封类，密封类不能被继承：
 
@@ -990,6 +996,8 @@ bool empty = StringUtils.is_empty(""); // true
 
 ## 13. 部分类
 
+> ⚠️ `partial class` 目前是设计语法，尚未实现；下面示例仅用于说明构造函数的规范写法。
+
 C^ 支持部分类，允许将一个类的定义分散到多个文件中：
 
 ```cpp
@@ -998,7 +1006,7 @@ partial class Person {
     private string _name;
     private int _age;
 
-    func init(string name, int age) {
+    Person(string name, int age) {
         _name = name;
         _age = age;
     }

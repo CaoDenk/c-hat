@@ -9,7 +9,7 @@ find_package(Catch2 3 REQUIRED)
 add_executable(property_catch2_test PropertyTest.cpp)
 
 target_include_directories(property_catch2_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/../src
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(property_catch2_test PRIVATE

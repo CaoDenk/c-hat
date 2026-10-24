@@ -141,7 +141,7 @@ C^ 提供了固定大小的数组和动态大小的切片。
 
 ```cpp
 // 声明固定大小数组
-int[5] arr = {1, 2, 3, 4, 5};
+int[5] arr = [1, 2, 3, 4, 5];
 
 // 访问数组元素
 int first = arr[0];
@@ -169,7 +169,7 @@ int[$] arr2 = [1, 2, 3, 4, 5]; // 等价于 int[5]
 
 ```cpp
 // 从固定数组创建切片
-int[5] arr = {1, 2, 3, 4, 5};
+int[5] arr = [1, 2, 3, 4, 5];
 int[] slice = arr[1..3]; // 包含元素 2, 3
 
 // 切片长度
@@ -187,9 +187,9 @@ slice[1] = 20;
 不可变切片 `Type![]` 是 C^ 提供的一种安全的切片类型，确保数据不被意外修改。
 
 **不可变切片特性**：
-- `Type![]` 是 `Type[]` 的子类型
+- 只读只能“加”，不能“去”：`Type[] -> Type![]` 合法
+- `Type![] -> Type[]` **非法**（否则只读视图可以被转成可变切片，写入只读内存）
 - 不能通过下标修改元素
-- 可以传递给期望 `Type[]` 的函数（协变）
 
 **字符串字面量**：
 - 字符串字面量 `"hello"` 的默认类型是 `literalview`（编译器内置类型，不属于标准库）
@@ -198,7 +198,7 @@ slice[1] = 20;
 
 ```cpp
 // 不可变切片 - 不能修改切片内容
-int[5] arr = {1, 2, 3, 4, 5};
+int[5] arr = [1, 2, 3, 4, 5];
 int![] immutable_slice = arr[0..3]; // 不可变切片
 
 // 可以读取元素
@@ -207,9 +207,11 @@ int first = immutable_slice[0]; // OK
 // 不能修改元素
 // immutable_slice[1] = 20; // 编译错误：不可修改不可变切片
 
-// 不可变切片可以传递给可变切片参数（协变）
-func print_ints(int[] arr) { ... }
-print_ints(immutable_slice); // OK：int![] 可隐式转换为 int[]
+// 只读切片不能传递给可变切片参数
+func print_ints(int![] arr) { ... }
+print_ints(immutable_slice); // OK
+// func fill(int[] arr) { ... }
+// fill(immutable_slice); // Error：不允许去掉只读
 
 // 字符串字面量默认为 literalview
 var s = "hello"; // 类型为 literalview
@@ -260,20 +262,18 @@ var s = "hello"; // 类型为 literalview
 // 可以隐式转换为 string
 string hello = "Hello, World!"; // literalview 隐式转换为 string
 
-// 字符串插值
-int age = 30;
-string message = "My age is age}";
+// 字符串插值（尚未实现）
+// int age = 30;
+// string message = $"My age is {age}";
 
-// 原始字符串
-string path = r"C:\\Users\\Name\\Documents";
+// 原始字符串（尚未实现）
+// string path = r"C:\\Users\\Name\\Documents";
 
-// 多行字符串
-string poem = """
-Roses are red,
-Violets are blue,
-Sugar is sweet,
-And so are you.
-""";
+// 多行字符串（尚未实现）
+// string poem = """
+// Roses are red,
+// ...
+// """;
 
 // 字符串字面量不可修改
 var literal = "hello";
@@ -442,12 +442,12 @@ int^ int_ptr = (int^)ptr; // 显式转换
 C^ 提供了安全的类型转换操作符 `as`，用于安全地转换引用类型：
 
 ```cpp
-// 安全类型转换
+// 安全类型转换（设计：失败返回可空类型）
 class Base {}
 class Derived : Base {}
 
 Base^ b = new Derived();
-Derived^ d = b as Derived; // 安全转换，如果失败返回 null
+Derived? d = b as Derived; // 注意：`as` 目前尚未实现
 
 if (d != null) {
     // 转换成功
@@ -464,7 +464,7 @@ C^ 支持类型推断，使用 `var` 关键字：
 // 类型推断
 var x = 42; // 推断为 int 类型
 var y = 3.14; // 推断为 double 类型
-var s = "Hello"; // 推断为 string 类型
+var s = "Hello"; // 推断为 literalview（当前实现）
 var list = [1, 2, 3]; // 推断为 int[] 类型
 
 // 类型推断与函数返回值
@@ -481,22 +481,24 @@ C^ 支持泛型类型约束，用于限制泛型参数的类型范围。
 ### 11.1 类型约束语法
 
 ```cpp
-// 类型约束
-func<T>(T value) where T : IComparable -> bool {
+// 类型约束：约束写在 where 后，形式是 Concept<T>
+func is_comparable<T>(T value) -> bool where Comparable<T> {
     // 实现
 }
 
-// 多个类型约束
-func<T>(T value) where T : IComparable, IDisposable -> bool {
+// 多个类型约束：用逗号分隔
+func is_comparable<T>(T value) -> bool where Comparable<T>, Disposable<T> {
     // 实现
 }
 
 // 泛型类的类型约束
-class Container<T> where T : new() {
-    T create() {
-        return new T();
+class Container<T> where DefaultConstructible<T> {
+    func create() -> T {
+        // new T() 目前尚未实现
+        // return new T();
     }
 }
+```
 ```
 
 ## 12. 类型安全
@@ -506,7 +508,7 @@ C^ 设计了多种机制来确保类型安全：
 ### 12.1 数组边界检查
 
 ```cpp
-int[5] arr = {1, 2, 3, 4, 5};
+int[5] arr = [1, 2, 3, 4, 5];
 arr[10] = 100; // 编译时错误：索引越界
 
 int[] slice = arr[0..5];
@@ -546,7 +548,7 @@ C^ 语言的类型系统设计兼顾了类型安全、性能和表达能力：
 - **丰富的基础类型**：满足不同场景的需求
 - **安全的指针类型**：区分非空指针和可空指针
 - **灵活的数组和切片**：支持固定大小和动态大小的序列
-- **现代化的字符串处理**：支持字符串插值、原始字符串等特性
+- **现代化的字符串处理**：字符串插值、原始字符串等是设计目标，当前尚未实现
 - **强大的元组类型**：方便地组合多个值
 - **函数类型**：支持一等函数
 - **类型推断**：减少冗余代码

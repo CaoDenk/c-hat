@@ -179,6 +179,9 @@ int if = 0;      // 非法标识符（是关键字）
 
 多行字符串使用 `""" ... """`。
 
+> ⚠️ 当前实现只支持普通 `"..."` 字符串字面量。`u16`/`u32`/`b`/`$`/`#` 前缀、
+> 自定义前缀和多行字符串都还是设计语法。
+
 **注意**：`std.literal_view` 是一个标记类型，保证指向的数据拥有静态生命周期。可以隐式转换为 `string` 类型。
 
 #### 1.3.5 布尔字面量
@@ -478,8 +481,8 @@ C^ 支持面向对象编程，同时保持函数作为一等公民的地位。�
     set { statement; }
   }
   
-  // 构造函数
-  [access_modifier] func init(parameter_type parameter_name, ...) {
+  // 构造函数：与类同名，没有返回类型
+  [access_modifier] ClassName(parameter_type parameter_name, ...) {
     // 构造函数体
   }
   
@@ -509,7 +512,7 @@ public class Player {
   }
   
   // 构造函数
-  public func init(int initial_health) {
+  public Player(int initial_health) {
     self._health = initial_health;
   }
 }
@@ -517,9 +520,8 @@ public class Player {
 // 继承
 public class Boss : Player {
   private int _damage_multiplier;
-  
-  public func init(int initial_health, int damage_multiplier) {
-    base.init(initial_health);
+
+  public Boss(int initial_health, int damage_multiplier) : super(initial_health) {
     self._damage_multiplier = damage_multiplier;
   }
   
@@ -1092,7 +1094,7 @@ if (safe_ptr != null) {
 // 堆内存分配
 // new 返回 Type^ (或智能指针，视上下文而定)
 Player^ player = new Player(); // 自动调用构造 Player()
-delete player; // 自动调用析构 ~
+delete player; // 自动调用 ~Player()
 ```
 
 ##### 2.5.2.2 数组类型
@@ -1522,7 +1524,7 @@ class Person {
   string name;
   int age;
   
-  func init(string name, int age) {
+  Person(string name, int age) {
     self.name = name;
     self.age = age;
   }
@@ -1549,8 +1551,7 @@ class Person {
 class Student : Person {
   string student_id;
   
-  func init(string name, int age, string student_id) {
-    base.init(name, age);
+  Student(string name, int age, string student_id) : super(name, age) {
     self.student_id = student_id;
   }
   

@@ -218,7 +218,7 @@ public class Person {
     protected int _age;
     
     // 公开成员，对所有模块可见
-    public func init(string name, int age) {
+    public Person(string name, int age) {
         _name = name;
         _age = age;
     }

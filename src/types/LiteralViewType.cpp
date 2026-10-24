@@ -19,27 +19,33 @@ bool LiteralViewType::isCompatibleWithImpl(const Type &other) const {
     return true;
   }
 
-  // 与 byte^（byte 指针）兼容
+  // 与只读 byte 指针（byte!^）兼容；可写 byte^ 不允许
   if (other.isPointer()) {
     const auto *pointerType = static_cast<const PointerType *>(&other);
     const auto &pointeeType = pointerType->getPointeeType();
-    if (pointeeType->isPrimitive()) {
+    if (!pointeeType->isReadonly()) {
+      return false;
+    }
+    auto plainPointee = unwrapReadonly(pointeeType);
+    if (plainPointee && plainPointee->isPrimitive()) {
       const auto *primType =
-          static_cast<const PrimitiveType *>(pointeeType.get());
+          static_cast<const PrimitiveType *>(plainPointee.get());
       if (primType->getKind() == PrimitiveType::Kind::Byte) {
         return true;
       }
     }
   }
 
-  // 与 byte[]（Slice<byte>）兼容，当被 Readonly 包装时（byte![]）
-  // 注意：Type::isCompatibleWith 会先处理顶层 Readonly 的兼容性，
-  // 所以这里只要检查 Slice<byte> 即可，Readonly 的处理在基类中
+  // 与只读 byte 切片（byte![]）兼容；可写 byte[] 不允许
   if (other.isSlice()) {
     const auto *sliceType = static_cast<const SliceType *>(&other);
     const auto &elemType = sliceType->getElementType();
-    if (elemType->isPrimitive()) {
-      const auto *primType = static_cast<const PrimitiveType *>(elemType.get());
+    if (!elemType->isReadonly()) {
+      return false;
+    }
+    auto plainElem = unwrapReadonly(elemType);
+    if (plainElem && plainElem->isPrimitive()) {
+      const auto *primType = static_cast<const PrimitiveType *>(plainElem.get());
       if (primType->getKind() == PrimitiveType::Kind::Byte) {
         return true;
       }

@@ -189,72 +189,50 @@ if (x == 0) print("Zero");
 
 ### 5.2 match 语句
 
-match 是一个表达式（Expression），具有返回值。C^ 移除了传统的 `switch` 语句，采用更强大、更安全的模式匹配。
+match 是 C^ 用来替代 `switch` 的模式匹配语句。**当前实现是语句，不是表达式**，没有返回值。
 
 #### 语法
 
 ```
 match_statement ::= 'match' '(' expression ')' '{' match_arm* '}'
-match_arm ::= pattern ('if' expression)? '=>' (expression | statement) ','?
-pattern ::= literal | identifier | '_' | pattern '|' pattern | pattern '(' pattern_list ')'
+match_arm ::= pattern ('if' expression)? '=>' (compound_statement | expression ';')
+pattern ::= literal | identifier | '_'
 ```
 
-#### 语义
+#### 语义（当前实现）
 
-- 必须覆盖所有可能的情况（穷尽性检查）
-- `_` 表示默认匹配（必选，除非所有情况都被覆盖）
-- 支持模式或（`|`）
-- 支持守卫子句 (`if condition`)
-- 支持结构解构 (Destructuring)
-- 支持字符串字面量匹配
+- 默认分支写 `_`，不是 `default`。
+- 分支模式直接写，不加 `case` 关键字。
+- 支持整数字面量、字符串字面量、布尔/字符/null、标识符、`_`。
+- 支持守卫子句 `if condition`。
+- 分支体可以是 `{ ... }` 或一条以 `;` 结尾的表达式语句。
+- **尚未实现**：`|` 多模式、结构解构（`Point(x, y)`）、穷尽性检查、match 作为表达式返回值。
 
 #### 示例
 
 ```cpp
-// 基本用法
+// 基本用法：分支体是语句
 match (statusCode) {
-    200 => print("OK"),
-    404 => print("Not Found"),
-    500 => print("Server Error"),
-    _ => print("Unknown")
+    200 => { puts("OK"); }
+    404 => { puts("Not Found"); }
+    _   => { puts("Unknown"); }
 }
 
-// 作为表达式
-var message = match (statusCode) {
-    200 => "OK",
-    404 => "Not Found",
-    500 => "Server Error",
-    _ => "Unknown"
-};
-
-// 多模式匹配
-match (value) {
-    1 | 2 | 3 => print("Small"),
-    4 | 5 | 6 => print("Medium"),
-    _ => print("Large")
-}
-
-// 守卫子句 (Guards)
+// 守卫子句
 match (num) {
-    case x if x % 2 == 0 => "Even",
-    case _ => "Odd"
+    x if x % 2 == 0 => { puts("Even"); }
+    _               => { puts("Odd"); }
 }
 
-// 结构解构 (Destructuring)
-match (point) {
-    case Point(0, 0) => "Origin",
-    case Point(x, 0) => "On X-axis at " + x,
-    case Point(0, y) => "On Y-axis at " + y,
-    case Point(x, y) => $"({x}, {y})"
-}
-
-// 字符串匹配 (编译器优化为哈希跳转)
+// 字符串匹配
 match (command) {
-    case "start" => start_game(),
-    case "quit" => exit_game(),
-    case _ => print("Unknown command")
+    "start" => { start_game(); }
+    "quit"  => { exit_game(); }
+    _       => { puts("Unknown command"); }
 }
 ```
+
+> 早期文档里的 `var message = match (...) { ... };` 属于设计稿，当前 parser 不接受逗号分隔的表达式分支。
 
 #### 穷尽性检查
 
@@ -392,32 +370,35 @@ for (; i < 10;) {
 }
 ```
 
-### 6.4 范围 for 循环（预留）
+### 6.4 foreach 循环
 
 #### 语法
 
 ```
-range_for_statement ::= 'for' '(' ('var' | 'let') identifier ':' expression ')' statement
+foreach_statement ::= 'foreach' '(' ('var' | 'let' | type) identifier ':' expression ')' statement
 ```
 
 #### 示例
 
 ```cpp
-// 遍历数组
-for (var item : array) {
-    print(item);
+// 遍历数组：关键字是 foreach，分隔符是 ':'
+foreach (var item : array) {
+    puts(item);
 }
 
 // 使用 let 表示不可变
-for (let char : string) {
-    // char 是只读的
+foreach (let ch : text) {
+    // ch 是只读的
 }
 
 // 遍历范围
-for (var i : 0..10) {
-    print(i);
+foreach (var i : 0..10) {
+    puts(i);
 }
 ```
+
+> 注意：不是 `for (var x : xs)`，也不是 `for (var x in xs)`。`in` 形式属于早期设计，当前 parser 不识别。
+> `foreach` 的 `a..b` 当前按闭区间处理（包含 `b`）；切片 `arr[a..b]` 是半开区间（不包含 `b`）。
 
 ## 7. 跳转语句
 

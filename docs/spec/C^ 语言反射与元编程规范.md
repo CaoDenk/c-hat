@@ -311,12 +311,12 @@ comptime func factorial(int n) -> int {
 }
 
 // 模板元编程：类型列表
-comptime func<Ts...> type_list_length() -> int {
+comptime func type_list_length<Ts...>() -> int {
     return sizeof...(Ts);
 }
 
 // 模板元编程：类型索引
-comptime func<Ts..., int N> get_type_at() -> TypeInfo {
+comptime func get_type_at<Ts..., int N>() -> TypeInfo {
     static_assert(N < sizeof...(Ts), "Index out of bounds");
     
     TypeInfo[] types = [typeof(Ts)...];
@@ -406,7 +406,7 @@ Color? parsed_color = string_to_Color("Green"); // Color::Green
 
 ```cpp
 // 自动序列化
-func<T> serialize(T obj) -> string {
+func serialize<T>(T obj) -> string {
     TypeInfo type = @typeof(obj);
     string result = "{";
     
@@ -497,7 +497,7 @@ class Logger {
 class UserService {
     private Logger^ _logger;
     
-    public func init(Logger^ logger) {
+    public UserService(Logger^ logger) {
         _logger = logger;
     }
     

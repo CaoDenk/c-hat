@@ -117,6 +117,7 @@ private:
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
   llvm::Value *generateForStmt(std::unique_ptr<ast::ForStmt> forStmt);
+  llvm::Value *generateForeachStmt(std::unique_ptr<ast::ForStmt> forStmt);
   llvm::Value *generateBreakStmt(std::unique_ptr<ast::BreakStmt> breakStmt);
   llvm::Value *
   generateContinueStmt(std::unique_ptr<ast::ContinueStmt> continueStmt);
@@ -200,9 +201,12 @@ private:
 
   // 状态管理
   llvm::Function *currentFunction_ = nullptr;
+  std::string currentClassName_;
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
+  // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
+  std::vector<llvm::Value *> exceptionHandlerStack_;
   std::vector<std::string> namespaceStack_;
   std::unordered_map<ast::FunctionDecl *, std::vector<std::string>>
       functionNamespaces_;

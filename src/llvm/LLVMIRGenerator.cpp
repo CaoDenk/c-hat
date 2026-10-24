@@ -106,7 +106,7 @@ bool LLVMIRGenerator::emitObjectFile(const std::string &filename) {
       target->createTargetMachine(targetTriple, "generic", "", opt, RM);
 
   module->setDataLayout(targetMachine->createDataLayout());
-  module->setTargetTriple(targetTriple);
+  module->setTargetTriple(llvm::Triple(targetTriple));
 
   std::error_code ec;
   llvm::raw_fd_ostream dest(filename, ec, llvm::sys::fs::OF_None);
@@ -144,7 +144,7 @@ bool LLVMIRGenerator::emitAssemblyFile(const std::string &filename) {
       target->createTargetMachine(targetTriple, "generic", "", opt, RM);
 
   module->setDataLayout(targetMachine->createDataLayout());
-  module->setTargetTriple(targetTriple);
+  module->setTargetTriple(llvm::Triple(targetTriple));
 
   std::error_code ec;
   llvm::raw_fd_ostream dest(filename, ec, llvm::sys::fs::OF_None);

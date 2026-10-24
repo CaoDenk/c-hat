@@ -4,15 +4,26 @@ project(c_hat LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(C_HAT_BUILD_TESTS "Build C^ tests" ON)
+if(WIN32)
+    set(C_HAT_USE_LLD_DEFAULT ON)
+else()
+    set(C_HAT_USE_LLD_DEFAULT OFF)
+endif()
+option(C_HAT_USE_LLD "Use in-process LLD for linking (Windows only)"
+       ${C_HAT_USE_LLD_DEFAULT})
+
 # 查找 LLVM 包
 find_package(LLVM REQUIRED CONFIG)
 if(LLVM_FOUND)
     message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
     message(STATUS "LLVM include directories: ${LLVM_INCLUDE_DIRS}")
     message(STATUS "LLVM definitions: ${LLVM_DEFINITIONS}")
-    
-    # 使用 llvm_map_components_to_libnames 获取组件库
-    llvm_map_components_to_libnames(LLVM_LIBS
+
+    # 使用 llvm_map_components_to_libnames 获取组件库。
+    # windowsdriver 只在 Windows 上存在；把它加进 Linux 的链接列表会拖入
+    # LLVMWindowsManifest，再拖入 libxml2，导致 Linux 链接失败。
+    set(C_HAT_LLVM_COMPONENTS
         core
         support
         irreader
@@ -37,43 +48,62 @@ if(LLVM_FOUND)
         object
         orcjit
         native
-        windowsdriver
     )
-    
-    # 查找 LLD 库
-    find_library(LLD_LIBRARY NAMES lld lldDriver PATHS ${LLVM_LIBRARY_DIRS})
-    if(LLD_LIBRARY)
-        message(STATUS "Found LLD library: ${LLD_LIBRARY}")
-        list(APPEND LLVM_LIBS ${LLD_LIBRARY})
-    else()
-        # 尝试查找各个 LLD 组件
-        find_library(LLD_COFF NAMES lldCOFF PATHS ${LLVM_LIBRARY_DIRS})
-        find_library(LLD_COMMON NAMES lldCommon PATHS ${LLVM_LIBRARY_DIRS})
-        find_library(LLD_DRIVER NAMES lldDriver PATHS ${LLVM_LIBRARY_DIRS})
-        if(LLD_COFF AND LLD_COMMON)
-            message(STATUS "Found LLD COFF: ${LLD_COFF}")
-            message(STATUS "Found LLD Common: ${LLD_COMMON}")
-            list(APPEND LLVM_LIBS ${LLD_COFF} ${LLD_COMMON})
-            if(LLD_DRIVER)
-                list(APPEND LLVM_LIBS ${LLD_DRIVER})
-            endif()
-        else()
-            message(WARNING "LLD library not found, will use external linker")
+    if(WIN32)
+        list(APPEND C_HAT_LLVM_COMPONENTS windowsdriver)
+    endif()
+    llvm_map_components_to_libnames(LLVM_LIBS ${C_HAT_LLVM_COMPONENTS})
+
+    # Linux/macOS distributions usually build LLVM as one shared library.
+    # Linking the dylib avoids pulling every backend static archive and the
+    # target-registration symbols (InitializeAllAsmParsers etc.) that live in
+    # backends not listed above.
+    if(NOT WIN32 AND LLVM_LINK_LLVM_DYLIB)
+        string(REGEX MATCH "^[0-9]+" LLVM_MAJOR_VERSION "${LLVM_PACKAGE_VERSION}")
+        find_library(LLVM_DYLIB
+            NAMES LLVM-${LLVM_MAJOR_VERSION} LLVM
+            PATHS ${LLVM_LIBRARY_DIRS}
+            NO_DEFAULT_PATH)
+        if(LLVM_DYLIB)
+            message(STATUS "Using LLVM shared library: ${LLVM_DYLIB}")
+            set(LLVM_LIBS ${LLVM_DYLIB})
         endif()
     endif()
-    
-    # 查找 LLVMWindowsManifest 库（LLD COFF 需要）
-    find_library(LLVM_WINDOWS_MANIFEST NAMES LLVMWindowsManifest PATHS ${LLVM_LIBRARY_DIRS})
-    if(LLVM_WINDOWS_MANIFEST)
-        message(STATUS "Found LLVMWindowsManifest: ${LLVM_WINDOWS_MANIFEST}")
-        list(APPEND LLVM_LIBS ${LLVM_WINDOWS_MANIFEST})
-    endif()
-    
-    # 查找 LLVMlibDriver 库（LLD COFF 需要）
-    find_library(LLVM_LIB_DRIVER NAMES LLVMlibDriver PATHS ${LLVM_LIBRARY_DIRS})
-    if(LLVM_LIB_DRIVER)
-        message(STATUS "Found LLVMlibDriver: ${LLVM_LIB_DRIVER}")
-        list(APPEND LLVM_LIBS ${LLVM_LIB_DRIVER})
+
+    if(WIN32)
+        # LLD 是 Windows 上可选的进程内链接器；Linux 默认用系统 C++ 驱动。
+        find_library(LLD_LIBRARY NAMES lld lldDriver PATHS ${LLVM_LIBRARY_DIRS})
+        if(LLD_LIBRARY)
+            message(STATUS "Found LLD library: ${LLD_LIBRARY}")
+            list(APPEND LLVM_LIBS ${LLD_LIBRARY})
+        else()
+            find_library(LLD_COFF NAMES lldCOFF PATHS ${LLVM_LIBRARY_DIRS})
+            find_library(LLD_COMMON NAMES lldCommon PATHS ${LLVM_LIBRARY_DIRS})
+            find_library(LLD_DRIVER NAMES lldDriver PATHS ${LLVM_LIBRARY_DIRS})
+            if(LLD_COFF AND LLD_COMMON)
+                message(STATUS "Found LLD COFF: ${LLD_COFF}")
+                message(STATUS "Found LLD Common: ${LLD_COMMON}")
+                list(APPEND LLVM_LIBS ${LLD_COFF} ${LLD_COMMON})
+                if(LLD_DRIVER)
+                    list(APPEND LLVM_LIBS ${LLD_DRIVER})
+                endif()
+            else()
+                message(STATUS "LLD library not found, will use external linker")
+            endif()
+        endif()
+
+        # LLD COFF 需要的 Windows 专用库
+        find_library(LLVM_WINDOWS_MANIFEST NAMES LLVMWindowsManifest PATHS ${LLVM_LIBRARY_DIRS})
+        if(LLVM_WINDOWS_MANIFEST)
+            message(STATUS "Found LLVMWindowsManifest: ${LLVM_WINDOWS_MANIFEST}")
+            list(APPEND LLVM_LIBS ${LLVM_WINDOWS_MANIFEST})
+        endif()
+
+        find_library(LLVM_LIB_DRIVER NAMES LLVMlibDriver PATHS ${LLVM_LIBRARY_DIRS})
+        if(LLVM_LIB_DRIVER)
+            message(STATUS "Found LLVMlibDriver: ${LLVM_LIB_DRIVER}")
+            list(APPEND LLVM_LIBS ${LLVM_LIB_DRIVER})
+        endif()
     endif()
 else()
     message(FATAL_ERROR "LLVM not found. Please install LLVM.")
@@ -99,5 +129,14 @@ endif()
 # 添加 src 子目录
 add_subdirectory(src)
 
-# 添加 tests 子目录
-add_subdirectory(tests)
+# 添加 tests 子目录（找不到 Catch2 时自动跳过，保证编译器本体可构建）
+if(C_HAT_BUILD_TESTS)
+    find_package(Catch2 3 QUIET)
+    if(Catch2_FOUND)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(WARNING "Catch2 3 not found; tests are skipped. "
+                        "Install Catch2 or pass -DC_HAT_BUILD_TESTS=OFF.")
+    endif()
+endif()

@@ -2,6 +2,7 @@
 #include "parser/Parser.h"
 #include "semantic/SemanticAnalyzer.h"
 #include "llvm/LLVMCodeGenerator.h"
+#include "Diagnostics.h"
 #include <argparse/argparse.hpp>
 #include <cstdlib>
 #include <filesystem>
@@ -26,6 +27,42 @@ LLD_HAS_DRIVER(coff)
 #endif
 
 namespace fs = std::filesystem;
+
+namespace {
+
+#ifdef _WIN32
+constexpr const char *kObjectExtension = ".obj";
+constexpr const char *kExecutableExtension = ".exe";
+#else
+constexpr const char *kObjectExtension = ".o";
+constexpr const char *kExecutableExtension = "";
+#endif
+
+// Quote one argument for the platform shell.  Windows keeps the historical
+// raw-path behaviour (the linker command is assembled by the caller); POSIX
+// uses single quotes so paths with spaces are safe.
+std::string quoteShellArg(const std::string &value) {
+#ifdef _WIN32
+  if (value.find(' ') == std::string::npos) {
+    return value;
+  }
+  return "\"" + value + "\"";
+#else
+  std::string out = "'";
+  for (char c : value) {
+    if (c == '\'') {
+      out += "'\\''";
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+#endif
+}
+
+} // namespace
+
 
 fs::path modulePathToFilePath(const std::vector<std::string> &modulePath,
                               const std::string &stdlibPath) {
@@ -69,6 +106,10 @@ int main(int argc, char *argv[]) {
       .help("Dump the LLVM IR")
       .default_value(false)
       .implicit_value(true);
+  argParser.add_argument("--no-verify")
+      .help("Skip LLVM IR verification (for debugging malformed IR)")
+      .default_value(false)
+      .implicit_value(true);
   argParser.add_argument("--emit-llvm")
       .help("Emit LLVM IR file")
       .default_value(false)
@@ -97,11 +138,18 @@ int main(int argc, char *argv[]) {
       .default_value(std::vector<std::string>())
       .append();
   argParser.add_argument("--c-lib-path")
-      .help("Path to the C standard library")
+      .help("Path to the C standard library (Windows: extra /LIBPATH; Linux: extra -L)")
       .default_value(std::string(""));
   argParser.add_argument("--c-lib-file")
       .help("C standard library file to link")
       .default_value(std::string(""));
+  argParser.add_argument("--linker")
+      .help("Linker driver to use on non-Windows hosts (default: $CXX or c++)")
+      .default_value(std::string(""));
+  argParser.add_argument("--verbose")
+      .help("Print detailed progress information")
+      .default_value(false)
+      .implicit_value(true);
 
   try {
     argParser.parse_args(argc, argv);
@@ -116,6 +164,7 @@ int main(int argc, char *argv[]) {
   bool dumpAst = argParser.get<bool>("--dump-ast");
   bool dumpTokens = argParser.get<bool>("--dump-tokens");
   bool dumpIR = argParser.get<bool>("--dump-ir");
+  bool noVerify = argParser.get<bool>("--no-verify");
   bool emitLLVM = argParser.get<bool>("--emit-llvm");
   bool emitObj = argParser.get<bool>("--emit-obj");
   bool emitAsm = argParser.get<bool>("--emit-asm");
@@ -127,6 +176,10 @@ int main(int argc, char *argv[]) {
       argParser.get<std::vector<std::string>>("--library");
   std::string cLibPath = argParser.get<std::string>("--c-lib-path");
   std::string cLibFile = argParser.get<std::string>("--c-lib-file");
+  std::string linker = argParser.get<std::string>("--linker");
+  bool verbose = argParser.get<bool>("--verbose");
+
+  c_hat::debugLogsEnabled() = verbose;
 
   std::ifstream file(inputFile);
   if (!file.is_open()) {
@@ -162,8 +215,10 @@ int main(int argc, char *argv[]) {
       return 1;
     }
 
-    std::cout << "Debug: Program parsed successfully, declarations count: "
-              << program->declarations.size() << std::endl;
+    if (verbose) {
+      std::println("Parsed {} top-level declaration(s).",
+                   program->declarations.size());
+    }
 
     if (dumpAst) {
       std::println("\n=== Abstract Syntax Tree ===");
@@ -181,25 +236,28 @@ int main(int argc, char *argv[]) {
     }
 
     c_hat::semantic::SemanticAnalyzer semanticAnalyzer(allModulePaths);
-    std::cout << "Debug: Before semantic analysis" << std::endl;
+    if (verbose) {
+      std::println("Running semantic analysis...");
+    }
     semanticAnalyzer.analyze(*program);
-    std::cout << "Debug: After semantic analysis" << std::endl;
 
     if (semanticAnalyzer.hasError()) {
       std::println("\n✗ Semantic analysis failed!");
       return 1;
     }
 
-    std::cout << "\n✓ Parsing and semantic analysis successful!" << std::endl;
+    std::println("✓ Parsing and semantic analysis successful!");
 
-    std::cout << "\nStarting code generation..." << std::endl;
+    if (verbose) {
+      std::println("Generating LLVM IR...");
+    }
     c_hat::llvm_codegen::LLVMCodeGenerator codeGen("c_hat_module");
-    std::cout << "Debug: Before code generation" << std::endl;
     codeGen.generate(std::move(program));
-    std::cout << "Debug: After code generation" << std::endl;
-    std::cout << "\nCode generation complete!" << std::endl;
+    if (verbose) {
+      std::println("LLVM IR generated.");
+    }
 
-    if (!codeGen.verifyIR()) {
+    if (!noVerify && !codeGen.verifyIR()) {
       std::println("\n✗ IR verification failed!");
       return 1;
     }
@@ -222,9 +280,9 @@ int main(int argc, char *argv[]) {
       return result;
     }
 
-    std::string objOutputFile = baseName + ".obj";
+    std::string objOutputFile = baseName + kObjectExtension;
     std::string exeOutputFile =
-        outputFile.empty() ? (baseName + ".exe") : outputFile;
+        outputFile.empty() ? (baseName + kExecutableExtension) : outputFile;
 
     if (emitLLVM) {
       std::string llvmOutputFile =
@@ -236,7 +294,7 @@ int main(int argc, char *argv[]) {
 
     if (emitObj) {
       if (outputFile.empty()) {
-        objOutputFile = baseName + ".obj";
+        objOutputFile = baseName + kObjectExtension;
       } else {
         objOutputFile = outputFile;
       }
@@ -257,6 +315,7 @@ int main(int argc, char *argv[]) {
       if (codeGen.emitObjectFile(objOutputFile)) {
         std::println("\n✓ Object file written to: {}", objOutputFile);
 
+#ifdef _WIN32
         std::string outArg = std::format("/OUT:{}", exeOutputFile);
 
         std::vector<std::string> argsStr;
@@ -331,6 +390,71 @@ int main(int argc, char *argv[]) {
 
         int linkResult = std::system(linkCommand.c_str());
 
+        if (linkResult == 0) {
+          std::println("\n✓ Executable generated: {}", exeOutputFile);
+        } else {
+          std::println("\n✗ Linking failed with code: {}", linkResult);
+        }
+#endif
+#else
+        // POSIX: the object file is a native ELF/Mach-O object.  Use the
+        // configured C++ driver (or $CXX) so startup files and libc are linked
+        // exactly the way the host expects.  This also keeps cross-compiling
+        // possible by pointing --linker at a target-specific driver.
+        std::string linkDriver = linker;
+        if (linkDriver.empty()) {
+          if (const char *envCxx = std::getenv("CXX");
+              envCxx != nullptr && *envCxx != '\0') {
+            linkDriver = envCxx;
+          }
+        }
+        if (linkDriver.empty()) {
+          linkDriver = "c++";
+        }
+
+        std::vector<std::string> linkArgs;
+        linkArgs.push_back(quoteShellArg(linkDriver));
+        // The object emitter currently produces non-PIC code, while most
+        // Linux distributions default to PIE.  Ask the driver for a
+        // non-PIE executable so absolute relocations stay valid.
+#ifdef __APPLE__
+        linkArgs.push_back("-Wl,-no_pie");
+#else
+        linkArgs.push_back("-no-pie");
+#endif
+        linkArgs.push_back("-o");
+        linkArgs.push_back(quoteShellArg(exeOutputFile));
+        linkArgs.push_back(quoteShellArg(objOutputFile));
+
+        if (!cLibPath.empty()) {
+          linkArgs.push_back(quoteShellArg("-L" + cLibPath));
+        }
+        if (!cLibFile.empty()) {
+          linkArgs.push_back(quoteShellArg(cLibFile));
+        }
+        for (const auto &lib : libraries) {
+          if (lib.rfind("-l", 0) == 0 || lib.rfind("-L", 0) == 0 ||
+              lib.find('/') != std::string::npos ||
+              lib.find(".a") != std::string::npos ||
+              lib.find(".so") != std::string::npos) {
+            linkArgs.push_back(quoteShellArg(lib));
+          } else {
+            linkArgs.push_back(quoteShellArg("-l" + lib));
+          }
+        }
+        linkArgs.push_back("-lm");
+
+        std::string linkCommand;
+        for (const auto &arg : linkArgs) {
+          linkCommand += " " + arg;
+        }
+
+        std::println("\nLinking with {}...", linkDriver);
+        if (verbose) {
+          std::println("{}", linkCommand);
+        }
+
+        int linkResult = std::system(linkCommand.c_str());
         if (linkResult == 0) {
           std::println("\n✓ Executable generated: {}", exeOutputFile);
         } else {

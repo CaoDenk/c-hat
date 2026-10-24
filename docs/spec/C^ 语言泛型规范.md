@@ -42,7 +42,7 @@ generic_constraint_clause ::= 'where' constraint_expression
 public class Box<T> {
     private T value_;
     
-    public func init(T value) {
+    public Box(T value) {
         self.value_ = value;
     }
     
@@ -55,18 +55,18 @@ public struct Point<T> {
     T x;
     T y;
     
-    public func new(T x, T y) {
+    public Point(T x, T y) {
         self.x = x;
         self.y = y;
     }
 }
 
 // 使用
-Box<int> intBox = new Box<int>(10);
-Box<string> strBox = new Box<string>("Hello");
+Box<int>^ intBox = new Box<int>(10);
+Box<string>^ strBox = new Box<string>("Hello");
 
-Point<float> p1 = new Point<float>(1.0, 2.0);
-Point<int> p2 = new Point<int>(10, 20);
+Point<float> p1 = Point<float>(1.0, 2.0);
+Point<int> p2 = Point<int>(10, 20);
 ```
 
 ### 2.2 泛型函数
@@ -303,30 +303,27 @@ public func serialize<T>(T obj)
     // ...
 }
 
-### 3.4 约束语法区分：继承 vs 概念
+### 3.4 约束语法：概念（当前唯一实现）
 
-为了明确区分**面向对象继承**（运行时多态/子类型）和**泛型概念**（编译期鸭子类型），C^ 采用了不同的约束语法：
+> ⚠️ 当前实现只支持 **概念约束** `where Concept<T>`，多个约束用逗号分隔。
+> `where T : Base`、`&&`/`||` 组合、`T::Item` 都是设计稿，parser 尚未支持。
 
-1.  **继承约束 (Inheritance Constraint)**: 使用 `:` 语法。
-    *   **语法**: `where T : SomeClass` 或 `where T : ISomeInterface`
-    *   **语义**: 要求 `T` 必须是 `SomeClass` 的子类或实现了 `ISomeInterface`。这通常意味着 `T` 必须具有特定的内存布局或虚表指针。
-    *   **注意**: 继承约束与概念约束在语法上严格区分，避免混淆。
-    
-2.  **概念约束 (Concept Constraint)**: 使用 `Concept<T>` 语法。
-    *   **语法**: `where ConceptName<T>`
-    *   **语义**: 要求 `T` 满足 `ConceptName` 定义的编译期契约（鸭子类型）。不要求 `T` 继承自任何特定基类，只要具备所需的成员函数/操作符即可。**这是实现零开销抽象的首选方式**。
+1.  **概念约束 (Concept Constraint)**：使用 `Concept<T>` 语法。
+    *   **语法**: `where ConceptName<T>`，多个约束用逗号分隔。
+    *   **语义**: 目标设计是要求 `T` 满足 `ConceptName` 定义的编译期契约（鸭子类型）。
+    *   **实现现状**: `where` 目前只检查“概念名存在”，没有真正验证 `requires` 体。
 
 ```cpp
-// 继承约束：T 必须是 Widget 的子类 (强耦合)
-func process_widget<T>(T w) where T : Widget { ... }
-
 // 概念约束：T 只需要满足 Drawable 概念 (松耦合，零开销)
 func draw_object<T>(T obj) where Drawable<T> { ... }
+
+// 多个约束：用逗号分隔，不用 &&
+func serialize<T>(T obj) where Serializable<T>, Debuggable<T> { ... }
 ```
 
-// 涉及多个泛型参数的约束
-public func zip<A, B>(A seq1, B seq2) -> Pair<A::Item, B::Item>
-    where Iterable<A> && Iterable<B> && SameType<A::Item, B::Item>
+// 涉及多个泛型参数的约束（设计稿）
+public func zip<A, B>(A seq1, B seq2) -> Pair<A.Item, B.Item>
+    where Iterable<A>, Iterable<B>, SameType<A.Item, B.Item>
 {
     // 实现 zip 逻辑
 }
@@ -461,7 +458,7 @@ C^ 引入了显式的万能引用运算符 `&~`（Left-Right Combined Operator�
 
 ```cpp
 // 语法：T &~ param
-func<T> wrapper(T &~ arg) {
+func wrapper<T>(T &~ arg) {
     // ...
 }
 ```
@@ -497,7 +494,7 @@ func process(int& x) { print("Lvalue"); }
 func process(int~ x) { print("Rvalue"); }
 
 // 万能引用包装器
-func<T> logAndProcess(T &~ arg) {
+func logAndProcess<T>(T &~ arg) {
     print("Log: processing...");
     // 完美转发：arg 如果是左值则传左值，是右值则传右值
     process(forward<T>(arg));
@@ -515,7 +512,7 @@ class Widget {
     string name;
     
     // 构造函数接受万能引用
-    func<U> init(U &~ n) {
+    func Widget<U>(U &~ n) {
         // 将 n 转发给 string 的构造/赋值
         self.name = forward<U>(n);
     }

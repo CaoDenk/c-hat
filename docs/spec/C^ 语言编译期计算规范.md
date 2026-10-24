@@ -218,7 +218,7 @@ func print_fields<T>(T! obj) {
     // 遍历类型的字段 (反射)
     // 编译器会将此循环展开为多条 print 语句
     comptime for (var field : @T.fields) {
-        print(field.name + ": " + obj.@[field]); 
+        print(field.name + ": " + obj.[field]); 
     }
 }
 ```

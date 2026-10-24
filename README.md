@@ -4,6 +4,11 @@
 
 C^ (C-Hat) 本项目使用AI辅助开发C^语言的完整编译器实现。
 
+> **实现状态提示**：本 README 同时描述目标设计与当前实现。两者不一致时，以
+> [`docs/spec/C^ 语言实现现状与语法速查.md`](<docs/spec/C^ 语言实现现状与语法速查.md>)
+> 和测试代码为准。当前 parser/semantic 覆盖度高于 LLVM codegen，端到端只验证了
+> 基础函数、变量、表达式、数组下标等子集。
+
 ## 核心设计理念
 
 - **性能优先**：不低于 C++ 的性能
@@ -69,12 +74,12 @@ if (x > 0) {
     print("Non-positive");
 }
 
-// Match 表达式 (取代 switch)
-string status_text = match (code) {
-    200 => "OK",
-    404 => "Not Found",
-    _   => "Unknown"
-};
+// Match 语句 (取代 switch；当前实现是语句，不是表达式)
+match (code) {
+    200 => { print("OK"); }
+    404 => { print("Not Found"); }
+    _   => { print("Unknown"); }
+}
 
 // 循环
 for (int i = 0; i < 10; i++) {
@@ -119,14 +124,15 @@ var s = "hello"; // 类型为 LiteralView（编译器内置类型）
 byte![] view = "hello"; // 类型为 byte![]（string_view）
 
 // 标准库字符串对象
-var str = $"hello"; // 类型为 std::string
+// 标准库字符串对象（当前实现把 string 识别为内建类型名）
+string str = "hello";
 
-// 字符串插值
-var name = "Alice";
-var msg = $"Hello {name}, you are {30} years old.";
+// 字符串插值（设计语法，当前尚未实现）
+// var name = "Alice";
+// var msg = $"Hello {name}, you are {30} years old.";
 
-// 原始字符串（无需转义）
-var path = #"C:\Windows\System32"#;
+// 原始字符串（设计语法，当前尚未实现）
+// var path = #"C:\Windows\System32"#;
 
 // 字符串切片
 var sub = view[0..3]; // "hel"（string_view）
@@ -136,10 +142,10 @@ char c1 = 'A';
 char c2 = '中';
 char c3 = '😊'; // 32位 Unicode 码点
 
-// 不同编码前缀
-byte b = u8'A';
-char16 c16 = u16'中';
-char32 c32 = u32'😊';
+// 不同编码前缀（尚未实现）
+// byte b = u8'A';
+// char16 c16 = u16'中';
+// char32 c32 = u32'😊';
 ```
 
 ### 指针系统
@@ -160,6 +166,12 @@ obj->member;         // 指针成员访问
 class Rectangle {
     int width;
     int height;
+
+    // 构造函数与类同名
+    Rectangle(int w, int h) {
+        width = w;
+        height = h;
+    }
     
     func area() -> int {
         return width * height;
@@ -347,17 +359,37 @@ var (x, y) = get_coords();
 | Variadic            | 4       | ✅    |
 | **总计**            | **504** | ✅    |
 
+> 以上“断言数”来自各测试二进制。当前源码中有 176 个 `TEST_CASE`；`ctest` 会注册 43 个测试项（包含 Catch2 自动发现）。
+> 单元测试主要覆盖 lexer/parser/semantic，端到端能力见《实现现状与语法速查》。
+
 ### 构建和运行测试
 
-```bash
-# 构建项目
-mkdir build && cd build
-cmake ..
-cmake --build . --config Debug
+#### Linux / macOS
 
-# 运行测试
-tests/parser/Debug/parser_catch2_test.exe
-tests/semantic/Debug/semantic_catch2_test.exe
+```bash
+# 依赖（Ubuntu/Debian）
+sudo apt install cmake llvm-21-dev liblld-21-dev libpolly-21-dev \
+                 libzstd-dev libcatch2-dev libargparse-dev
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# 编译器
+./build/src/c_hat_compiler examples/hello.ch --run
+./build/src/c_hat_compiler examples/hello.ch          # 生成 hello.o + hello
+
+# 测试（逐个运行；当前尚未注册到 CTest）
+for t in $(find build/tests -name '*_catch2_test' -type f -executable); do "$t"; done
+```
+
+#### Windows
+
+```powershell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --config Debug
+
+tests\parser\Debug\parser_catch2_test.exe
+tests\semantic\Debug\semantic_catch2_test.exe
 # ... 其他测试
 ```
 
@@ -410,6 +442,22 @@ tests/semantic/Debug/semantic_catch2_test.exe
 - [ ] 优化反馈
 
 ## 最近更新
+
+### 2026-10-24
+- ✅ 支持 Linux/macOS 构建与链接：`.o` + `$CXX`/`c++` 驱动，Windows 保持 `.obj` + `lld-link`/`link.exe`
+- ✅ 修复 LLVM 21 兼容性（opaque pointer、`setTargetTriple`）
+- ✅ 修复构造函数代码生成：`new T(args)` 现在会把构造参数传给构造函数
+- ✅ 修复复合赋值 `+=`/`-=`/... 与 `++`/`--` 的 LLVM codegen
+- ✅ 修复 `while`/`for` codegen（禁用会破坏 SSA dominance 的 `optimizeLoops`，补齐 for-init）
+- ✅ 打通类方法 `p.m()` / `p->m()`、裸字段名、`self.x` 和结构体字段读写
+- ✅ 修复 `match` codegen（整数/字符/布尔/字符串、守卫、默认分支、标识符绑定）
+- ✅ 修复 `foreach` codegen（数组/切片/范围、可选 index 变量、break/continue）
+- ✅ 修复 `try/catch/throw`（setjmp/longjmp v1：跨函数抛出、嵌套 try、catch(...)；类型匹配待补）
+- ✅ `ctest` 注册 43 个测试项；`tests/integration` 已有 13 个端到端用例（循环、类、结构体、match、foreach、异常）
+- ✅ 只读性收紧：禁止 `T![] -> T[]`、`T!^ -> T^` 和 `literalview -> byte^`
+- ✅ 编译器 debug 输出改为 `--verbose` 才显示
+- ✅ 修正文档中的构造函数/析构函数语法：`ClassName(...)`、`~ClassName()`、`: super(...)`
+- ✅ 新增 `docs/spec/C^ 语言实现现状与语法速查.md`，以代码和测试为准
 
 ### 2026-06-02
 - ✅ 修复泛型约束（where 子句）：Parser 正确构造 WhereClause AST，Semantic 正确验证概念约束

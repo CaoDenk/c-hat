@@ -137,7 +137,7 @@ Point^ pt = new Point(1.0, 2.0);
 #### 语法
 
 ```
-delete_expression ::= 'delete' expression
+delete_expression ::= 'delete' '[' ']'? expression
 ```
 
 #### 语义
@@ -155,9 +155,9 @@ int^ p = new int(42);
 delete p;
 // p 现在悬空，不应再使用
 
-// 删除数组
+// 删除数组：推荐写 delete[]
 int[] arr = new int[10];
-delete arr;
+delete[] arr;
 
 // 删除类对象
 Point^ pt = new Point(1.0, 2.0);
@@ -252,7 +252,7 @@ class File {
 class File {
     int fd;
     
-    public ~ {
+    public ~File() {
         if (fd >= 0) {
             close(fd);
         }
@@ -264,16 +264,18 @@ class File {
 
 ```cpp
 func readFile(string path) -> string {
-    var file = File(path);  // 调用 init
-    defer file.~();         // 确保析构（可选，RAII自动处理）
-    
+    var file = File(path);  // 调用 File(...) 构造函数
+    // 离开作用域时自动调用 ~File()，不需要手动 defer
     return file.readAll();
-}  // file 在这里自动销毁，调用 ~File()
+}
 ```
 
 ## 6. 所有权系统
 
-### 6.1 所有权规则
+### 6.1 所有权规则（设计目标）
+
+> ⚠️ 当前实现没有借用检查器。下面是语言的设计目标，不是编译器强制保证；
+> 实际语义是 RAII + move + 可选智能指针。
 
 1. 每个值有且只有一个所有者
 2. 当所有者离开作用域，值被销毁
@@ -285,20 +287,21 @@ func readFile(string path) -> string {
 class UniquePtr<T> {
     T^ ptr;
     
-    public func init(T^ p) {
+    public UniquePtr(T^ p) {
         ptr = p;
     }
     
-    public ~ {
+    public ~UniquePtr() {
         delete ptr;
     }
     
-    // 禁止拷贝
-    delete func UniquePtr(UniquePtr& other);
-    delete func operator=(UniquePtr& other);
+    // 禁止拷贝：当前实现尚未支持 deleted 函数声明，
+    // 这里只保留设计意图。
+    // UniquePtr(UniquePtr& other) = deleted;
+    // operator=(UniquePtr& other) = deleted;
     
     // 允许移动
-    public  UniquePtr(UniquePtr~ other) {
+    public UniquePtr(UniquePtr~ other) {
         ptr = other.ptr;
         other.ptr = null;
     }

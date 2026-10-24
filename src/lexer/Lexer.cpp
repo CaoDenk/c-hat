@@ -684,8 +684,10 @@ std::optional<Token> Lexer::processNumber() {
     column++;
   }
 
-  // 处理小数部分
-  if (!isEOF() && currentChar() == '.') {
+  // 处理小数部分。只有“点后面是数字”才当成小数点，避免把 0..4
+  // 这类范围表达式误读成浮点字面量 0.
+  if (!isEOF() && currentChar() == '.' && peekChar() != '.' &&
+      std::isdigit(peekChar())) {
     isFloat = true;
     number += '.';
     advance();

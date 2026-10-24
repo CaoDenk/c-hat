@@ -12,8 +12,8 @@ add_executable(c_hat_compiler main.cpp)
 target_include_directories(c_hat_compiler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(c_hat_compiler PRIVATE lexer ast parser types semantic code_generator llvm_codegen argparse::argparse)
 
-# 检查 LLD 是否可用
-if(LLD_COFF AND LLD_COMMON)
+# 检查 LLD 是否可用（仅 Windows 进程内链接器）
+if(WIN32 AND C_HAT_USE_LLD AND LLD_COFF AND LLD_COMMON)
     message(STATUS "Enabling LLD linker support")
     target_compile_definitions(c_hat_compiler PRIVATE USE_LLD)
     target_include_directories(c_hat_compiler PRIVATE ${LLVM_INCLUDE_DIRS})

@@ -2,7 +2,11 @@
 
 ## 1. 概述
 
-C^ 语言提供了多种错误处理机制，包括异常、错误码和可选类型等。C^ 的错误处理哲学是：**区分"可恢复的逻辑结果"与"不可恢复的运行时异常"**。本文档详细描述 C^ 语言中错误处理的语法、API 和最佳实践，与设计文档保持一致。
+C^ 语言提供了多种错误处理机制，包括异常、错误码和可选类型等。C^ 的错误处理哲学是：**区分"可恢复的逻辑结果"与"不可恢复的运行时异常"**。本文档详细描述 C^ 语言中错误处理的语法、API 和最佳实践。
+
+> ⚠️ **实现现状（v1）**：当前编译器用 `setjmp` / `longjmp` 传播异常，不是本文描述的
+> 零开销表驱动模型；`catch (T e)` 暂不按类型匹配（第一个 catch 处理所有异常）；
+> 跨函数 throw 会跳过中途的 defer/析构。详见《实现现状与语法速查》。
 
 ## 2. 错误处理基础
 
@@ -52,19 +56,19 @@ class Exception {
 public:
     virtual string message { get; }
     virtual string stack_trace { get; }
-    virtual ~ { }
+    virtual ~Exception() { }
 }
 
 // 用户自定义异常
-class NetworkError : public Exception {
+class NetworkError : Exception {
 public:
-    NetworkError(string msg) : base(msg) {}
+    NetworkError(string msg) : super(msg) {}
 }
 
 // 运行时类型判断
-class DivideByZeroError : public Exception {
+class DivideByZeroError : Exception {
 public:
-    DivideByZeroError(string msg) : base(msg) {}
+    DivideByZeroError(string msg) : super(msg) {}
 }
 ```
 
@@ -101,12 +105,11 @@ func divide(int a, int b) -> int {
 }
 
 // 抛出自定义异常
-class InvalidInputException : public Exception {
+class InvalidInputException : Exception {
 public:
     int input_value;
     
-    func init(string message, int value) {
-        base.init(message);
+    InvalidInputException(string message, int value) : super(message) {
         input_value = value;
     }
 }
@@ -201,16 +204,14 @@ Exception
 
 ```cpp
 // 自定义异常 - 使用 C^ 继承语法
-class MyException : public Exception {
+class MyException : Exception {
     int error_code;
     
-    func init(string message, int code) {
-        base.init(message);
+    MyException(string message, int code) : super(message) {
         error_code = code;
     }
     
-    func init(string message) {
-        base.init(message);
+    MyException(string message) : super(message) {
         error_code = 0;
     }
 }
@@ -378,11 +379,11 @@ if (user) {
     print("User not found");
 }
 
-// 2. 模式匹配 (推荐)
-match (find_user(2)) {
-    case Some(u) => print(u^.name),
-    case None    => print("Not found")
-}
+// 2. 模式匹配（设计稿：Some/None 解构尚未实现）
+// match (find_user(2)) {
+//     Some(u) => { print(u^.name); }
+//     None    => { print("Not found"); }
+// }
 
 // 3. 链式操作 (Map / AndThen)
 Optional<string> name = find_user(3)

@@ -85,8 +85,8 @@
 | **`bf16`**     | 脑浮点数 (Brain Floating Point, BFloat16)。*注：依赖硬件支持，无硬件支持时软模拟* |
 | **`bool`**     | 布尔类型                                                                          |
 | **`char`**     | Unicode字符 (32位)                                                                |
-| **`string`**   | **已移除** (现为标准库类型 `std.string`)                                          |
-| **`cstring`**  | **已移除** (现为标准库类型 `std.cstring`)                                         |
+| **`string`**   | **当前实现作为内建类型名识别** (目标设计为标准库 `std.string`)                     |
+| **`cstring`**  | **已移除** (使用 `byte!^` / `byte![]` 与 C 互操作)                                |
 | **`true`**     | 布尔真值                                                                          |
 | **`false`**    | 布尔假值                                                                          |
 | **`null`**     | 空值                                                                              |

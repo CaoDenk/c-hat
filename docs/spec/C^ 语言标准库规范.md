@@ -203,9 +203,9 @@ public class unique_ptr<T> {
     public unique_ptr(unique_ptr~ other);
     public ~unique_ptr();
     
-    // 禁止拷贝
-    delete unique_ptr(unique_ptr& other);
-    delete func operator=(unique_ptr& other);
+    // 禁止拷贝（当前实现尚未支持 deleted 声明，这里只表达设计意图）
+    // unique_ptr(unique_ptr& other) = deleted;
+    // operator=(unique_ptr& other) = deleted;
     
     // 操作
     public func operator^(self) -> T&;
@@ -327,7 +327,7 @@ public class string {
     public string(byte^ str, size n);
     public string(size n, byte c);
     
-    public ~;
+    public ~string();
     
     // 赋值
     public func operator=(self, string& other) -> string&;
@@ -876,7 +876,7 @@ public class regex {
     // 替换
     public func replace(self, string_view text, string_view replacement) -> string;
     
-    public ~;
+    public ~regex();
 }
 
 // 字符串前缀操作符
@@ -891,5 +891,5 @@ public class match_result {
     public func success(self) -> bool;
     public func groups(self) -> size;
     public func operator[](self, size index) -> string_view; // 获取捕获组
-    public ~;
+    public ~match_result();
 }

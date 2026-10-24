@@ -109,7 +109,7 @@ func take_ownership(string~ s) -> void {
 }
 
 // 万能引用 (泛型)
-func<T> forward_wrapper(T&~ arg) -> void {
+func forward_wrapper<T>(T&~ arg) -> void {
     target((T&~)arg);
 }
 
@@ -271,7 +271,7 @@ C^ 支持泛型函数，使用类型参数来实现通用算法：
 
 ```cpp
 // 泛型函数
-func<T> print_value(T value) -> void {
+func print_value<T>(T value) -> void {
     println(value);
 }
 
@@ -292,17 +292,17 @@ print_value(3.14); // 推断为 double
 
 ```cpp
 // 带约束的泛型函数
-func<T> maximum(T a, T b) -> T where Comparable<T> {
+func maximum<T>(T a, T b) -> T where Comparable<T> {
     return a > b ? a : b;
 }
 
 // 多个约束
-func<T> process(T value) -> void where Disposable<T> && Cloneable<T> {
+func process<T>(T value) -> void where Disposable<T> && Cloneable<T> {
     // 处理逻辑
 }
 
 // 约束为具体类型 (使用 SameType 概念)
-func<T> convert_to_string(T value) -> string where SameType<T, int> || SameType<T, double> {
+func convert_to_string<T>(T value) -> string where SameType<T, int> || SameType<T, double> {
     return value.ToString();
 }
 ```
@@ -311,7 +311,7 @@ func<T> convert_to_string(T value) -> string where SameType<T, int> || SameType<
 
 ```cpp
 // 多类型参数泛型函数
-func<T, U> pair(T first, U second) -> (T, U) {
+func pair<T, U>(T first, U second) -> (T, U) {
     return (first, second);
 }
 
@@ -326,7 +326,7 @@ func<T, U> pair(T first, U second) -> (T, U) {
 
 ```cpp
 // 万能引用：T &~ 可以绑定左值也可以绑定右值
-func<T> wrapper(T &~ arg) -> void {
+func wrapper<T>(T &~ arg) -> void {
     // forward<T> 保持参数的值类别（左值或右值）
     process(forward<T>(arg));
 }
@@ -694,7 +694,7 @@ class Resource {
     }
 
     // 析构函数
-    public ~ {
+    public ~Resource() {
         if (handle != null) {
             free_resource(handle);
             handle = null;

@@ -143,3 +143,33 @@ TEST_CASE("Semantic: Expression type checking", "[semantic][expressions]") {
                           "int { return foo(42); }") == true);
   }
 }
+
+TEST_CASE("Semantic: readonly views are one-way", "[semantic][readonly]") {
+  SECTION("mutable slice can be passed to a readonly parameter") {
+    REQUIRE(analyzeSource(R"(
+      func take(int![] xs) { }
+      func use(int[] xs) { take(xs); }
+    )") == true);
+  }
+
+  SECTION("readonly slice cannot be passed to a mutable parameter") {
+    REQUIRE(analyzeSource(R"(
+      func fill(int[] xs) { }
+      func use(int![] ro) { fill(ro); }
+    )") == false);
+  }
+
+  SECTION("literalview cannot be converted to a writable pointer") {
+    REQUIRE(analyzeSource(R"(
+      func write(byte^ p) { }
+      func use() { write("hello"); }
+    )") == false);
+  }
+
+  SECTION("literalview can be converted to a readonly pointer") {
+    REQUIRE(analyzeSource(R"(
+      func read(byte!^ p) { }
+      func use() { read("hello"); }
+    )") == true);
+  }
+}
