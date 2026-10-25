@@ -112,8 +112,19 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
   // 先处理类型声明（不处理 VariableDecl）
   for (auto &decl : program->declarations) {
     ast::NodeType type = decl->getType();
-    if (type == ast::NodeType::StructDecl || type == ast::NodeType::ClassDecl ||
-        type == ast::NodeType::TypeAliasDecl ||
+    if (type == ast::NodeType::StructDecl) {
+      auto *structDecl = static_cast<ast::StructDecl *>(decl.get());
+      if (!structDecl->templateParams.empty()) {
+        continue; // 泛型声明由语义层单态化后追加的副本生成
+      }
+      generateDeclaration(std::move(decl));
+    } else if (type == ast::NodeType::ClassDecl) {
+      auto *classDecl = static_cast<ast::ClassDecl *>(decl.get());
+      if (!classDecl->templateParams.empty()) {
+        continue;
+      }
+      generateDeclaration(std::move(decl));
+    } else if (type == ast::NodeType::TypeAliasDecl ||
         type == ast::NodeType::ExtensionDecl ||
         type == ast::NodeType::InterfaceDecl) {
       generateDeclaration(std::move(decl));
@@ -139,6 +150,9 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
     if (decl && decl->getType() == ast::NodeType::FunctionDecl) {
       auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
           static_cast<ast::FunctionDecl *>(decl.release()));
+      if (!funcDecl->templateParams.empty()) {
+        continue; // 泛型声明由语义层单态化后追加的副本生成
+      }
       c_hat::debugStream() << "Debug: Creating prototype for function: " << funcDecl->name
                 << std::endl;
       createFunctionPrototype(funcDecl.get());
@@ -1152,15 +1166,22 @@ llvm::Value *LLVMCodeGenerator::generateStructDecl(
     std::unique_ptr<ast::StructDecl> structDecl) {
   std::vector<llvm::Type *> memberTypes;
   std::unordered_map<std::string, unsigned> memberIndices;
+  std::vector<std::unique_ptr<ast::Node>> functions;
 
-  for (size_t i = 0; i < structDecl->members.size(); ++i) {
-    auto &member = structDecl->members[i];
+  for (auto &member : structDecl->members) {
     if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
       if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
         llvm::Type *memberType = generateType(typeNode);
         memberTypes.push_back(memberType);
-        memberIndices[varDecl->name] = static_cast<unsigned>(i);
+        memberIndices[varDecl->name] =
+            static_cast<unsigned>(memberTypes.size() - 1);
       }
+    } else if (auto *funcDecl =
+                   dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      functions.push_back(std::move(member));
+    } else if (dynamic_cast<ast::GetterDecl *>(member.get()) ||
+               dynamic_cast<ast::SetterDecl *>(member.get())) {
+      functions.push_back(std::move(member));
     }
   }
 
@@ -1172,6 +1193,29 @@ llvm::Value *LLVMCodeGenerator::generateStructDecl(
       llvm::StructType::create(context(), memberTypes, structDecl->name);
   structTypes_[structDecl->name] = structType;
   structInfo_[structDecl->name] = memberIndices;
+
+  for (auto &funcNode : functions) {
+    if (auto *funcDecl =
+            dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
+      auto owned = std::unique_ptr<ast::FunctionDecl>(
+          static_cast<ast::FunctionDecl *>(funcNode.release()));
+      bool isConstructor = (owned->name == structDecl->name);
+      bool isDestructor =
+          (!owned->name.empty() && owned->name[0] == '~');
+      generateClassMemberFunction(std::move(owned), structDecl->name,
+                                  isConstructor, isDestructor);
+    } else if (auto *getterDecl =
+                   dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
+      auto owned = std::unique_ptr<ast::GetterDecl>(
+          static_cast<ast::GetterDecl *>(funcNode.release()));
+      generateGetterDecl(std::move(owned), structDecl->name);
+    } else if (auto *setterDecl =
+                   dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
+      auto owned = std::unique_ptr<ast::SetterDecl>(
+          static_cast<ast::SetterDecl *>(funcNode.release()));
+      generateSetterDecl(std::move(owned), structDecl->name);
+    }
+  }
 
   return nullptr;
 }

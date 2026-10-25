@@ -76,6 +76,13 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
       concepts_[conceptDecl->name] = conceptDecl;
       analyzeConceptDecl(conceptDecl);
     } else if (auto *structDecl = dynamic_cast<ast::StructDecl *>(decl.get())) {
+      if (!structDecl->templateParams.empty()) {
+        genericStructs_[structDecl->name] = structDecl;
+        auto placeholder = std::make_shared<types::ClassType>(structDecl->name);
+        symbolTable.addSymbol(
+            std::make_shared<ClassSymbol>(structDecl->name, placeholder));
+        continue;
+      }
       analyzeStructDecl(structDecl);
     } else if (auto *enumDecl = dynamic_cast<ast::EnumDecl *>(decl.get())) {
       analyzeEnumDecl(enumDecl);
@@ -120,6 +127,12 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
     program.declarations.push_back(std::move(spec));
   }
   functionSpecializations_.clear();
+  // 结构体先于类追加：泛型类字段可能引用泛型结构体，codegen 需要先
+  // 注册结构体布局，才能正确生成类的字段类型。
+  for (auto &spec : structSpecializations_) {
+    program.declarations.push_back(std::move(spec));
+  }
+  structSpecializations_.clear();
   for (auto &spec : classSpecializations_) {
     program.declarations.push_back(std::move(spec));
   }
@@ -1844,6 +1857,51 @@ ast::FunctionDecl *SemanticAnalyzer::instantiateGenericFunction(
   return raw;
 }
 
+std::shared_ptr<types::Type> SemanticAnalyzer::instantiateGenericStruct(
+    const std::string &name, const std::vector<ast::Type *> &typeArgs) {
+  auto it = genericStructs_.find(name);
+  if (it == genericStructs_.end()) {
+    return nullptr;
+  }
+  ast::StructDecl *generic = it->second;
+
+  std::vector<ast::TemplateParameter *> templateParams;
+  for (const auto &param : generic->templateParams) {
+    if (auto *tp = dynamic_cast<ast::TemplateParameter *>(param.get())) {
+      templateParams.push_back(tp);
+    }
+  }
+  if (templateParams.size() != typeArgs.size()) {
+    error("Generic struct '" + name + "' expects " +
+          std::to_string(templateParams.size()) + " type argument(s), got " +
+          std::to_string(typeArgs.size()));
+    return nullptr;
+  }
+
+  ast::TypeSubst subst;
+  for (size_t i = 0; i < templateParams.size(); ++i) {
+    subst[templateParams[i]->name] = typeArgs[i];
+  }
+
+  std::string specializedName = name + "__" + specializeTypeName(typeArgs);
+  if (auto existing = specializedStructDecls_.find(specializedName);
+      existing != specializedStructDecls_.end()) {
+    auto sym = std::dynamic_pointer_cast<ClassSymbol>(
+        symbolTable.lookupSymbol(specializedName));
+    return sym ? sym->getType() : nullptr;
+  }
+
+  auto cloned = ast::cloneStructWithSubst(generic, subst, specializedName);
+  ast::StructDecl *raw = cloned.get();
+  specializedStructDecls_[specializedName] = raw;
+  structSpecializations_.push_back(std::move(cloned));
+
+  analyzeStructDecl(raw);
+  auto sym = std::dynamic_pointer_cast<ClassSymbol>(
+      symbolTable.lookupSymbol(specializedName));
+  return sym ? sym->getType() : nullptr;
+}
+
 std::shared_ptr<types::Type> SemanticAnalyzer::instantiateGenericClass(
     const std::string &name, const std::vector<ast::Type *> &typeArgs) {
   auto it = genericClasses_.find(name);
@@ -1866,8 +1924,60 @@ std::shared_ptr<types::Type> SemanticAnalyzer::instantiateGenericClass(
   }
 
   ast::TypeSubst subst;
+  std::vector<std::shared_ptr<types::Type>> semanticArgs;
   for (size_t i = 0; i < templateParams.size(); ++i) {
     subst[templateParams[i]->name] = typeArgs[i];
+    semanticArgs.push_back(typeArgs[i] ? analyzeType(typeArgs[i]) : nullptr);
+  }
+
+  // 类级 where 约束：用实际类型参数检查。
+  if (generic->whereClause) {
+    for (const auto &constraint : generic->whereClause->constraints) {
+      std::string conceptName;
+      std::vector<std::shared_ptr<types::Type>> constraintArgs;
+      if (auto *genericConstraint =
+              dynamic_cast<ast::GenericType *>(constraint.constraint.get())) {
+        conceptName = genericConstraint->name;
+        for (const auto &arg : genericConstraint->arguments) {
+          if (auto *argType = dynamic_cast<ast::Type *>(arg.get())) {
+            auto cloned = ast::cloneTypeWithSubst(argType, subst);
+            constraintArgs.push_back(analyzeType(cloned.get()));
+          }
+        }
+      } else if (auto *named =
+                     dynamic_cast<ast::NamedType *>(constraint.constraint.get())) {
+        conceptName = named->name;
+      }
+      if (conceptName.empty()) {
+        continue;
+      }
+      if (conceptName == "SameType") {
+        if (constraintArgs.size() < 2 ||
+            constraintArgs[0]->toString() != constraintArgs[1]->toString()) {
+          error("Type does not satisfy SameType constraint on class '" +
+                name + "'");
+          return nullptr;
+        }
+      } else if (conceptName == "Convertible") {
+        if (constraintArgs.size() < 2 ||
+            !isTypeCompatible(constraintArgs[1], constraintArgs[0])) {
+          error("Type does not satisfy Convertible constraint on class '" +
+                name + "'");
+          return nullptr;
+        }
+      } else {
+        const auto &actual = constraintArgs.empty()
+                                 ? (semanticArgs.empty() ? nullptr
+                                                         : semanticArgs[0])
+                                 : constraintArgs[0];
+        if (!checkConceptConstraint(conceptName, actual)) {
+          error("Type '" + (actual ? actual->toString() : std::string("?")) +
+                "' does not satisfy concept '" + conceptName +
+                "' for class '" + name + "'");
+          return nullptr;
+        }
+      }
+    }
   }
 
   std::string specializedName = name + "__" + specializeTypeName(typeArgs);
@@ -1960,6 +2070,36 @@ void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
       metadata.size += 8;
     } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
       analyzeFunctionDecl(funcDecl, structType);
+
+      // 把方法登记到结构体类型，供成员调用解析。
+      auto visibility = parseVisibility({funcDecl->specifiers});
+      auto access = visibilityToAccessModifier(visibility);
+      std::vector<std::shared_ptr<types::Type>> paramTypes;
+      for (const auto &param : funcDecl->params) {
+        if (auto *paramNode = dynamic_cast<ast::Parameter *>(param.get())) {
+          if (auto *typeNode =
+                  dynamic_cast<ast::Type *>(paramNode->type.get())) {
+            paramTypes.push_back(analyzeType(typeNode));
+          }
+        }
+      }
+      std::shared_ptr<types::Type> returnType;
+      if (funcDecl->returnType) {
+        if (auto *typeNode =
+                dynamic_cast<ast::Type *>(funcDecl->returnType.get())) {
+          returnType = analyzeType(typeNode);
+        }
+      } else {
+        returnType = types::TypeFactory::getPrimitiveType(
+            types::PrimitiveType::Kind::Void);
+      }
+      bool isVirtual =
+          (funcDecl->specifiers.find("virtual") != std::string::npos);
+      bool isOverride =
+          (funcDecl->specifiers.find("override") != std::string::npos);
+      structType->addMethod(types::ClassMethod(
+          funcDecl->name, returnType, paramTypes, isVirtual, isOverride,
+          access, funcDecl->isStatic));
 
       // 收集方法元数据
       MethodMetadata methodMeta;
@@ -4785,8 +4925,13 @@ SemanticAnalyzer::analyzeGenericType(const ast::GenericType *genericType) {
         }
       }
       if (astArgs.size() == genericType->arguments.size()) {
-        if (auto specialized =
-                instantiateGenericClass(genericType->name, astArgs)) {
+        std::shared_ptr<types::Type> specialized;
+        if (genericClasses_.count(genericType->name)) {
+          specialized = instantiateGenericClass(genericType->name, astArgs);
+        } else if (genericStructs_.count(genericType->name)) {
+          specialized = instantiateGenericStruct(genericType->name, astArgs);
+        }
+        if (specialized) {
           return specialized;
         }
       }

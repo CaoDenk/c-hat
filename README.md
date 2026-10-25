@@ -453,9 +453,10 @@ tests\semantic\Debug\semantic_catch2_test.exe
 - ✅ 修复 `match` codegen（整数/字符/布尔/字符串、守卫、默认分支、标识符绑定）
 - ✅ 修复 `foreach` codegen（数组/切片/范围、可选 index 变量、break/continue）
 - ✅ 修复 `try/catch/throw`（setjmp/longjmp v1：跨函数抛出、嵌套 try、catch(...)；类型匹配待补）
-- ✅ 泛型函数/类单态化（`id<int>`、`Box<int>`、递归泛型、简单类型推导）
+- ✅ 泛型函数/类/结构体单态化（`id<int>`、`Box<int>`、`Point<int>`、递归泛型、简单类型推导）
+- ✅ 类级 `where` 约束在实例化时检查
 - ✅ concept 解析与检查（内置概念 + 自定义 `requires` 的基础能力检查）
-- ✅ `ctest` 注册 43 个测试项；`tests/integration` 已有 16 个端到端用例（循环、类、结构体、match、foreach、异常、泛型）
+- ✅ `ctest` 注册 43 个测试项；`tests/integration` 已有 18 个端到端用例（循环、类、结构体、match、foreach、异常、泛型）
 - ✅ 只读性收紧：禁止 `T![] -> T[]`、`T!^ -> T^` 和 `literalview -> byte^`
 - ✅ 编译器 debug 输出改为 `--verbose` 才显示
 - ✅ 修正文档中的构造函数/析构函数语法：`ClassName(...)`、`~ClassName()`、`: super(...)`

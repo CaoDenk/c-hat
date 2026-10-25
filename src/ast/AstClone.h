@@ -39,5 +39,9 @@ std::unique_ptr<ClassDecl>
 cloneClassWithSubst(const ClassDecl *cls, const TypeSubst &subst,
                     const std::string &newName);
 
+std::unique_ptr<StructDecl>
+cloneStructWithSubst(const StructDecl *st, const TypeSubst &subst,
+                     const std::string &newName);
+
 } // namespace ast
 } // namespace c_hat

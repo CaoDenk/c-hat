@@ -59,12 +59,15 @@ private:
   // 泛型单态化
   std::unordered_map<std::string, ast::FunctionDecl *> genericFunctions_;
   std::unordered_map<std::string, ast::ClassDecl *> genericClasses_;
+  std::unordered_map<std::string, ast::StructDecl *> genericStructs_;
   std::unordered_map<std::string, ast::ConceptDecl *> concepts_;
   std::vector<std::unique_ptr<ast::FunctionDecl>> functionSpecializations_;
   std::vector<std::unique_ptr<ast::ClassDecl>> classSpecializations_;
+  std::vector<std::unique_ptr<ast::StructDecl>> structSpecializations_;
   std::unordered_set<std::string> instantiatedFunctions_;
   std::unordered_map<std::string, ast::FunctionDecl *> specializedFunctionDecls_;
   std::unordered_map<std::string, ast::ClassDecl *> specializedClassDecls_;
+  std::unordered_map<std::string, ast::StructDecl *> specializedStructDecls_;
   std::unordered_set<std::string> instantiatedClasses_;
 
   // 构造一个单态化函数；找不到时返回 nullptr。
@@ -74,6 +77,9 @@ private:
   std::shared_ptr<types::Type>
   instantiateGenericClass(const std::string &name,
                           const std::vector<ast::Type *> &typeArgs);
+  std::shared_ptr<types::Type>
+  instantiateGenericStruct(const std::string &name,
+                           const std::vector<ast::Type *> &typeArgs);
   bool checkConceptConstraint(const std::string &conceptName,
                               const std::shared_ptr<types::Type> &actualType);
   std::string specializeTypeName(const std::vector<ast::Type *> &typeArgs);

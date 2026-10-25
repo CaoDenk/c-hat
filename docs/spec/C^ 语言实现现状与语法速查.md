@@ -239,9 +239,10 @@ func main() -> int {
 - 泛型函数/类在调用点做单态化：`id<int>` 生成 `id__int`，`Box<int>` 生成 `Box__int`。
 - 支持显式类型实参；也支持简单推导（`id(42)`、`first(a)` 从 `T[]` 推导元素类型）。
 - `concept X<T> = requires (T a, T b) { { a + b } -> T; };` 已能解析并参与检查。
+- 泛型结构体也支持单态化：`struct Point<T>` → `Point__int`，字段/方法可用。
+- 类声明上的 `where` 约束会在实例化时检查，例如 `class Box<T> where Comparable<T>`。
 - 限制：
-  - `struct Point<T>` 这种泛型结构体尚未支持（泛型类可以）。
-  - 类声明上的 `where` 约束尚未解析/检查。
+  - 结构体的值构造 `Point<int>(1, 2)` 还没有实现（字段赋值和泛型类 `new` 可用）。
   - concept 检查目前覆盖常见内置概念和 requires 中的二元运算/成员方法；关联类型、嵌套 requires、复杂表达式还不完整。
   - 推导只做简单的一一对应；不根据返回类型/上下文推导。
 
@@ -283,7 +284,8 @@ extern "C" {
 - `foreach`：数组、切片、`a..b` 范围、可选的 index 变量（本次修复）
 - `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`（本版为 setjmp/longjmp 实现）
 - 泛型函数单态化：`id<int>` / `max_of(40, 42)` / `first(a)` / 递归泛型
-- 泛型类单态化：`Box<int>` / `Box<double>`（字段、构造、方法）
+- 泛型类单态化：`Box<int>` / `Box<double>`（字段、构造、方法、类级 `where`）
+- 泛型结构体单态化：`Point<int>` / `Pair<int, double>`（字段、方法；值构造暂不支持）
 - concept 检查：`Addable` / `Comparable` 等内置概念，以及自定义 `requires` 的基础能力检查
 
 ### 只有 parser/semantic 覆盖，codegen 仍不完整

@@ -273,3 +273,45 @@ TEST_CASE("Integration: concept rejection", "[integration][generics]") {
       "func add<T>(T a, T b) -> T where Addable<T> { return a + b; }\n"
       "func main() -> int { return add<bool>(true, false); }\n") == -2);
 }
+
+TEST_CASE("Integration: generic struct monomorphization", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "struct Point<T> {\n"
+      "    T x;\n"
+      "    T y;\n"
+      "    func sum() -> T { return x + y; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Point<int> a;\n"
+      "    Point<double> b;\n"
+      "    a.x = 40;\n"
+      "    a.y = 2;\n"
+      "    b.x = 1.5;\n"
+      "    b.y = 1.0;\n"
+      "    if (b.sum() > 2.0) { return a.sum(); }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: generic class where constraint", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "class Box<T> where Comparable<T> {\n"
+      "    T value;\n"
+      "    Box(T v) { value = v; }\n"
+      "    func get_value() -> T { return value; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box<int>^ b = new Box<int>(42);\n"
+      "    return b->get_value();\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box<T> where Comparable<T> {\n"
+      "    T value;\n"
+      "    Box(T v) { value = v; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box<bool>^ b = new Box<bool>(true);\n"
+      "    return 0;\n"
+      "}\n") == -2);
+}

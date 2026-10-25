@@ -1281,6 +1281,12 @@ std::unique_ptr<ast::ClassDecl> Parser::parseClassDecl() {
     } while (match(lexer::TokenType::Comma));
   }
 
+  // 类级 where 约束：class Box<T> where Comparable<T> { ... }
+  std::unique_ptr<ast::WhereClause> whereClause;
+  if (match(lexer::TokenType::Where)) {
+    whereClause = parseWhereClause();
+  }
+
   expect(lexer::TokenType::LBrace, "Expected '{' after class declaration");
 
   std::vector<std::unique_ptr<ast::Node>> members;
@@ -1346,7 +1352,8 @@ std::unique_ptr<ast::ClassDecl> Parser::parseClassDecl() {
 
   return std::make_unique<ast::ClassDecl>(
       specifiers, name, std::move(templateParams), baseClass,
-      std::move(baseClasses), std::move(interfaces), std::move(members));
+      std::move(baseClasses), std::move(interfaces), std::move(members),
+      std::move(whereClause));
 }
 
 // 解析接口声明
@@ -1649,6 +1656,18 @@ std::unique_ptr<ast::StructDecl> Parser::parseStructDecl() {
   std::string name = currentToken->getValue();
   advance();
 
+  // 解析模板参数：struct Point<T> { ... }
+  std::vector<std::unique_ptr<ast::Node>> templateParams;
+  if (match(lexer::TokenType::Lt)) {
+    auto rawTemplateParams = parseTemplateParameters();
+    for (auto &param : rawTemplateParams) {
+      templateParams.push_back(std::unique_ptr<ast::Node>(param.release()));
+    }
+    if (!match(lexer::TokenType::Gt)) {
+      error("Expected '>' after template parameters");
+    }
+  }
+
   expect(lexer::TokenType::LBrace, "Expected '{' after struct declaration");
 
   std::vector<std::unique_ptr<ast::Node>> members;
@@ -1660,6 +1679,7 @@ std::unique_ptr<ast::StructDecl> Parser::parseStructDecl() {
   expect(lexer::TokenType::RBrace, "Expected '}' after struct body");
 
   return std::make_unique<ast::StructDecl>(specifiers, name,
+                                           std::move(templateParams),
                                            std::move(members));
 }
 

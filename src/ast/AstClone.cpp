@@ -2,6 +2,7 @@
 
 #include "declarations/ClassDecl.h"
 #include "declarations/FunctionDecl.h"
+#include "declarations/StructDecl.h"
 #include "declarations/VariableDecl.h"
 #include "others/Parameter.h"
 #include "statements/CompoundStmt.h"
@@ -482,6 +483,31 @@ cloneClassWithSubst(const ClassDecl *cls, const TypeSubst &subst,
   return std::make_unique<ClassDecl>(
       cls->specifiers, newName, std::vector<std::unique_ptr<Node>>(),
       cls->baseClass, cls->baseClasses, cls->interfaces, std::move(members));
+}
+
+std::unique_ptr<StructDecl>
+cloneStructWithSubst(const StructDecl *st, const TypeSubst &subst,
+                     const std::string &newName) {
+  std::vector<std::unique_ptr<Node>> members;
+  for (const auto &member : st->members) {
+    if (auto *varDecl = dynamic_cast<const VariableDecl *>(member.get())) {
+      members.push_back(cloneVariableDecl(varDecl, subst));
+    } else if (auto *funcDecl =
+                   dynamic_cast<const FunctionDecl *>(member.get())) {
+      std::string memberName = funcDecl->name;
+      if (memberName == st->name) {
+        memberName = newName;
+      } else if (memberName == "~" + st->name) {
+        memberName = "~" + newName;
+      }
+      members.push_back(
+          cloneFunctionWithSubst(funcDecl, subst, memberName));
+    }
+  }
+
+  return std::make_unique<StructDecl>(
+      st->specifiers, newName, std::vector<std::unique_ptr<Node>>(),
+      std::move(members));
 }
 
 } // namespace ast
