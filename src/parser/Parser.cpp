@@ -1448,6 +1448,24 @@ std::unique_ptr<ast::ConceptDecl> Parser::parseConceptDecl() {
 
   // 解析约束（可选）
   std::vector<std::unique_ptr<ast::Node>> constraints;
+
+  // 推荐写法：concept Addable<T> = requires (T a, T b) { ... };
+  if (match(lexer::TokenType::Assign)) {
+    if (!match(lexer::TokenType::Requires)) {
+      error("Expected 'requires' after '=' in concept declaration");
+      return nullptr;
+    }
+    auto requiresExpr = parseRequiresExpression();
+    if (!requiresExpr) {
+      return nullptr;
+    }
+    constraints.push_back(std::move(requiresExpr));
+    expect(lexer::TokenType::Semicolon,
+           "Expected ';' after concept requires clause");
+    return std::make_unique<ast::ConceptDecl>(
+        name, std::move(templateParams), std::move(constraints));
+  }
+
   if (match(lexer::TokenType::Where)) {
     // 简化处理：跳过 where 子句内容直到 { 或 ;
     while (!check(lexer::TokenType::LBrace) &&
@@ -3707,17 +3725,77 @@ std::unique_ptr<ast::RequiresExpression> Parser::parseRequiresExpression() {
   std::vector<std::unique_ptr<ast::Node>> params;
   std::vector<std::unique_ptr<ast::Requirement>> requirements;
 
+  // 可选参数列表：requires (T a, T b) { ... }
+  bool hasParams = false;
   if (!check(lexer::TokenType::RParen)) {
-    requirements = parseRequirementList();
+    ParserState paramState = saveState();
+    auto firstParam = parseParameter();
+    if (firstParam && (check(lexer::TokenType::Comma) ||
+                       check(lexer::TokenType::RParen))) {
+      hasParams = true;
+      params.push_back(std::move(firstParam));
+      while (match(lexer::TokenType::Comma)) {
+        auto param = parseParameter();
+        if (!param) {
+          return nullptr;
+        }
+        params.push_back(std::move(param));
+      }
+    } else {
+      restoreState(paramState);
+    }
   }
 
-  expect(lexer::TokenType::RParen, "Expected ')' after requires expression");
+  if (hasParams) {
+    expect(lexer::TokenType::RParen,
+           "Expected ')' after requires parameters");
+    // concept 语法：requires (T a, T b) { requirements }
+    if (match(lexer::TokenType::LBrace)) {
+      requirements = parseRequirementList();
+      expect(lexer::TokenType::RBrace,
+             "Expected '}' after concept requirements");
+    }
+  } else {
+    if (!check(lexer::TokenType::RParen)) {
+      requirements = parseRequirementList();
+    }
+    expect(lexer::TokenType::RParen,
+           "Expected ')' after requires expression");
+  }
+
   return std::make_unique<ast::RequiresExpression>(std::move(params),
                                                    std::move(requirements));
 }
 
 // 解析需求
 std::unique_ptr<ast::Requirement> Parser::parseRequirement() {
+  if (match(lexer::TokenType::LBrace)) {
+    auto expr = parseExpression();
+    if (!expr) {
+      error("Expected expression in compound requirement");
+      return nullptr;
+    }
+    expect(lexer::TokenType::RBrace,
+           "Expected '}' after compound requirement expression");
+    std::unique_ptr<ast::Type> targetType;
+    if (match(lexer::TokenType::Arrow)) {
+      targetType = parseType();
+      if (!targetType) {
+        error("Expected type after '->' in compound requirement");
+        return nullptr;
+      }
+    }
+    return std::make_unique<ast::Requirement>(
+        ast::Requirement::RequirementType::Compound, std::move(expr),
+        std::move(targetType));
+  }
+
+  if (match(lexer::TokenType::Requires)) {
+    auto type = parseType();
+    return std::make_unique<ast::Requirement>(
+        ast::Requirement::RequirementType::Typename, std::move(type));
+  }
+
   if (check(lexer::TokenType::Identifier)) {
     auto type = parseType();
 
@@ -3755,9 +3833,24 @@ std::unique_ptr<ast::Requirement> Parser::parseRequirement() {
 std::vector<std::unique_ptr<ast::Requirement>> Parser::parseRequirementList() {
   std::vector<std::unique_ptr<ast::Requirement>> requirements;
 
-  do {
-    requirements.push_back(parseRequirement());
-  } while (match(lexer::TokenType::Comma));
+  while (true) {
+    auto requirement = parseRequirement();
+    if (!requirement) {
+      break;
+    }
+    requirements.push_back(std::move(requirement));
+
+    bool separator = match(lexer::TokenType::Semicolon) ||
+                     match(lexer::TokenType::Comma);
+    if (check(lexer::TokenType::RBrace) ||
+        check(lexer::TokenType::RParen) ||
+        check(lexer::TokenType::EndOfFile)) {
+      break;
+    }
+    if (!separator) {
+      break;
+    }
+  }
 
   return requirements;
 }

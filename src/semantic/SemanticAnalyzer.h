@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ast/AstNodes.h"
+#include "../ast/AstClone.h"
 #include "../types/Type.h"
 #include "ExtensionRegistry.h"
 #include "ModuleLoader.h"
@@ -9,6 +10,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace c_hat {
@@ -53,6 +55,28 @@ private:
 
   // 当前分析的程序
   ast::Program *currentProgram_ = nullptr;
+
+  // 泛型单态化
+  std::unordered_map<std::string, ast::FunctionDecl *> genericFunctions_;
+  std::unordered_map<std::string, ast::ClassDecl *> genericClasses_;
+  std::unordered_map<std::string, ast::ConceptDecl *> concepts_;
+  std::vector<std::unique_ptr<ast::FunctionDecl>> functionSpecializations_;
+  std::vector<std::unique_ptr<ast::ClassDecl>> classSpecializations_;
+  std::unordered_set<std::string> instantiatedFunctions_;
+  std::unordered_map<std::string, ast::FunctionDecl *> specializedFunctionDecls_;
+  std::unordered_map<std::string, ast::ClassDecl *> specializedClassDecls_;
+  std::unordered_set<std::string> instantiatedClasses_;
+
+  // 构造一个单态化函数；找不到时返回 nullptr。
+  ast::FunctionDecl *instantiateGenericFunction(
+      const std::string &name,
+      const std::vector<ast::Type *> &typeArgs);
+  std::shared_ptr<types::Type>
+  instantiateGenericClass(const std::string &name,
+                          const std::vector<ast::Type *> &typeArgs);
+  bool checkConceptConstraint(const std::string &conceptName,
+                              const std::shared_ptr<types::Type> &actualType);
+  std::string specializeTypeName(const std::vector<ast::Type *> &typeArgs);
 
   // 隐式转换运算符：源类型名称 -> 目标类型名称 -> 函数符号
   std::unordered_map<

@@ -226,3 +226,50 @@ TEST_CASE("Integration: try/catch", "[integration][exception]") {
       "    return 0;\n"
       "}\n") == 42);
 }
+
+TEST_CASE("Integration: generic function monomorphization", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "func id<T>(T x) -> T { return x; }\n"
+      "func main() -> int {\n"
+      "    var i = id<int>(42);\n"
+      "    var d = id<double>(3.5);\n"
+      "    if (d > 3.0) { return i; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func max_of<T>(T a, T b) -> T where Comparable<T> {\n"
+      "    if (a > b) { return a; }\n"
+      "    return b;\n"
+      "}\n"
+      "func main() -> int { return max_of<int>(40, 42); }\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func first<T>(T[] xs) -> T { return xs[0]; }\n"
+      "func main() -> int {\n"
+      "    int[3] a = [7, 8, 9];\n"
+      "    return first(a);\n"
+      "}\n") == 7);
+}
+
+TEST_CASE("Integration: generic class monomorphization", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "class Box<T> {\n"
+      "    T value;\n"
+      "    Box(T v) { value = v; }\n"
+      "    func get_value() -> T { return value; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box<int>^ b = new Box<int>(42);\n"
+      "    return b->get_value();\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: concept rejection", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "concept Addable<T> = requires (T a, T b) {\n"
+      "    { a + b } -> T;\n"
+      "};\n"
+      "func add<T>(T a, T b) -> T where Addable<T> { return a + b; }\n"
+      "func main() -> int { return add<bool>(true, false); }\n") == -2);
+}

@@ -260,13 +260,42 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
       if (auto *identifier =
               dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
         const std::string &funcName = identifier->name;
-        // 检查是否是已定义的函数
-        auto it = functions_.find(funcName);
-        if (it != functions_.end()) {
-          llvm::Function *func = it->second;
+        // 优先使用语义层解析出的 mangled name；否则按 "name@..." 前缀查找。
+        llvm::Function *func = nullptr;
+        if (!callExpr->resolvedMangledName.empty()) {
+          auto it = functions_.find(callExpr->resolvedMangledName);
+          if (it != functions_.end()) {
+            func = it->second;
+          }
+        }
+        if (!func) {
+          auto it = functions_.find(funcName);
+          if (it != functions_.end()) {
+            func = it->second;
+          }
+        }
+        if (!func) {
+          for (auto &[name, candidate] : functions_) {
+            if (name.rfind(funcName + "@", 0) == 0) {
+              func = candidate;
+              break;
+            }
+          }
+        }
+        if (func) {
           varType = func->getReturnType();
         } else {
           // 如果函数未定义，暂时使用 int 作为默认类型
+          varType = llvm::Type::getInt32Ty(context());
+        }
+      } else if (auto *member =
+                     dynamic_cast<ast::MemberExpr *>(callExpr->callee.get())) {
+        // 成员方法调用：用 Class_method 的返回类型推断变量类型。
+        std::string methodName = member->structName + "_" + member->member;
+        auto it = functions_.find(methodName);
+        if (it != functions_.end()) {
+          varType = it->second->getReturnType();
+        } else {
           varType = llvm::Type::getInt32Ty(context());
         }
       } else {
@@ -1856,6 +1885,27 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
     default:
       llvmType = llvm::Type::getInt32Ty(context());
       break;
+    }
+  } else if (auto *genericType = dynamic_cast<ast::GenericType *>(type)) {
+    // 泛型单态化后的结构体名：Box<int> -> Box__int
+    std::string specializedName = genericType->name + "__";
+    for (size_t i = 0; i < genericType->arguments.size(); ++i) {
+      if (i > 0) {
+        specializedName += "_";
+      }
+      auto *argType =
+          dynamic_cast<ast::Type *>(genericType->arguments[i].get());
+      std::string argName = argType ? argType->toString() : "unknown";
+      for (char c : argName) {
+        specializedName +=
+            (std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+      }
+    }
+    auto structIt = structTypes_.find(specializedName);
+    if (structIt != structTypes_.end()) {
+      llvmType = structIt->second;
+    } else {
+      llvmType = llvm::Type::getInt32Ty(context());
     }
   } else if (auto *namedType = dynamic_cast<ast::NamedType *>(type)) {
     // 检查是否是结构体类型

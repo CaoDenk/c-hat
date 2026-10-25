@@ -1,5 +1,6 @@
 #include "SemanticAnalyzer.h"
 #include "../Diagnostics.h"
+#include "../ast/AstClone.h"
 #include "../ast/AstNodes.h"
 #include "../types/ClassType.h"
 #include "../types/InterfaceType.h"
@@ -58,6 +59,11 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
       symbolTable.addSymbol(classSymbol);
     } else if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
       // 第一遍只注册顶层函数签名，函数体放到类成员注册完成后再分析
+      if (!funcDecl->templateParams.empty()) {
+        genericFunctions_[funcDecl->name] = funcDecl;
+        // 泛型声明本身不生成代码；签名会在调用点单态化时分析。
+        continue;
+      }
       analyzeFunctionDecl(funcDecl, nullptr, false);
     } else if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(decl.get())) {
       // 分析顶级变量声明（包括 static 变量）
@@ -67,6 +73,7 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
       analyzeInterfaceDecl(interfaceDecl);
     } else if (auto *conceptDecl =
                    dynamic_cast<ast::ConceptDecl *>(decl.get())) {
+      concepts_[conceptDecl->name] = conceptDecl;
       analyzeConceptDecl(conceptDecl);
     } else if (auto *structDecl = dynamic_cast<ast::StructDecl *>(decl.get())) {
       analyzeStructDecl(structDecl);
@@ -87,6 +94,10 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
   // 第二遍：分析类成员（使用 analyzeClassDecl 方法）
   for (auto &decl : program.declarations) {
     if (auto *classDecl = dynamic_cast<ast::ClassDecl *>(decl.get())) {
+      if (!classDecl->templateParams.empty()) {
+        genericClasses_[classDecl->name] = classDecl;
+        continue;
+      }
       // 分析类声明，包括类成员
       analyzeClassDecl(classDecl);
     }
@@ -95,11 +106,24 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
   // 第三遍：分析顶层函数体
   for (auto &decl : program.declarations) {
     if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
+      if (!funcDecl->templateParams.empty()) {
+        continue;
+      }
       analyzeFunctionDecl(funcDecl);
     }
   }
 
   // 第四遍：类的方法体和属性方法体已经在 analyzeClassDecl 中分析过
+
+  // 把单态化产生的具体声明追加到程序里，供 codegen 生成。
+  for (auto &spec : functionSpecializations_) {
+    program.declarations.push_back(std::move(spec));
+  }
+  functionSpecializations_.clear();
+  for (auto &spec : classSpecializations_) {
+    program.declarations.push_back(std::move(spec));
+  }
+  classSpecializations_.clear();
 
   // 检查是否存在 main 函数（可选：在某些测试场景下禁用）
   bool hasMainFunction = false;
@@ -1436,6 +1460,437 @@ void SemanticAnalyzer::analyzeConceptDecl(ast::ConceptDecl *conceptDecl) {
   }
   auto conceptSym = std::make_shared<ConceptSymbol>(conceptDecl->name);
   symbolTable.addSymbol(conceptSym);
+}
+
+namespace {
+std::string sanitizeTypeName(const std::string &name) {
+  std::string out;
+  for (char c : name) {
+    out += (std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+  }
+  return out;
+}
+
+std::unique_ptr<ast::Type>
+astTypeFromSemanticType(const std::shared_ptr<types::Type> &type) {
+  if (!type) {
+    return nullptr;
+  }
+  if (auto prim = std::dynamic_pointer_cast<types::PrimitiveType>(type)) {
+    ast::PrimitiveType::Kind astKind = ast::PrimitiveType::Kind::Int;
+    switch (prim->getKind()) {
+    case types::PrimitiveType::Kind::Void:
+      astKind = ast::PrimitiveType::Kind::Void;
+      break;
+    case types::PrimitiveType::Kind::Bool:
+      astKind = ast::PrimitiveType::Kind::Bool;
+      break;
+    case types::PrimitiveType::Kind::Byte:
+      astKind = ast::PrimitiveType::Kind::Byte;
+      break;
+    case types::PrimitiveType::Kind::SByte:
+      astKind = ast::PrimitiveType::Kind::SByte;
+      break;
+    case types::PrimitiveType::Kind::Short:
+      astKind = ast::PrimitiveType::Kind::Short;
+      break;
+    case types::PrimitiveType::Kind::UShort:
+      astKind = ast::PrimitiveType::Kind::UShort;
+      break;
+    case types::PrimitiveType::Kind::UInt:
+      astKind = ast::PrimitiveType::Kind::UInt;
+      break;
+    case types::PrimitiveType::Kind::Long:
+      astKind = ast::PrimitiveType::Kind::Long;
+      break;
+    case types::PrimitiveType::Kind::ULong:
+      astKind = ast::PrimitiveType::Kind::ULong;
+      break;
+    case types::PrimitiveType::Kind::Float:
+      astKind = ast::PrimitiveType::Kind::Float;
+      break;
+    case types::PrimitiveType::Kind::Double:
+      astKind = ast::PrimitiveType::Kind::Double;
+      break;
+    case types::PrimitiveType::Kind::Fp16:
+      astKind = ast::PrimitiveType::Kind::Fp16;
+      break;
+    case types::PrimitiveType::Kind::Bf16:
+      astKind = ast::PrimitiveType::Kind::Bf16;
+      break;
+    case types::PrimitiveType::Kind::Char:
+      astKind = ast::PrimitiveType::Kind::Char;
+      break;
+    default:
+      astKind = ast::PrimitiveType::Kind::Int;
+      break;
+    }
+    return std::make_unique<ast::PrimitiveType>(astKind);
+  }
+  if (auto cls = std::dynamic_pointer_cast<types::ClassType>(type)) {
+    return std::make_unique<ast::NamedType>(cls->getName());
+  }
+  if (auto ptr = std::dynamic_pointer_cast<types::PointerType>(type)) {
+    return std::make_unique<ast::PointerType>(
+        astTypeFromSemanticType(ptr->getPointeeType()));
+  }
+  if (auto ref = std::dynamic_pointer_cast<types::ReferenceType>(type)) {
+    return std::make_unique<ast::ReferenceType>(
+        astTypeFromSemanticType(ref->getBaseType()));
+  }
+  if (auto slice = std::dynamic_pointer_cast<types::SliceType>(type)) {
+    return std::make_unique<ast::SliceType>(
+        astTypeFromSemanticType(slice->getElementType()));
+  }
+  if (auto ro = std::dynamic_pointer_cast<types::ReadonlyType>(type)) {
+    return std::make_unique<ast::ReadonlyType>(
+        astTypeFromSemanticType(ro->getBaseType()));
+  }
+  if (auto nullable = std::dynamic_pointer_cast<types::NullableType>(type)) {
+    return std::make_unique<ast::NullableType>(
+        astTypeFromSemanticType(nullable->getBaseType()));
+  }
+  return nullptr;
+}
+
+bool isNumericType(const std::shared_ptr<types::Type> &type) {
+  if (!type || !type->isPrimitive()) {
+    return false;
+  }
+  auto prim = std::dynamic_pointer_cast<types::PrimitiveType>(type);
+  if (!prim) {
+    return false;
+  }
+  switch (prim->getKind()) {
+  case types::PrimitiveType::Kind::Byte:
+  case types::PrimitiveType::Kind::SByte:
+  case types::PrimitiveType::Kind::Short:
+  case types::PrimitiveType::Kind::UShort:
+  case types::PrimitiveType::Kind::Int:
+  case types::PrimitiveType::Kind::UInt:
+  case types::PrimitiveType::Kind::Long:
+  case types::PrimitiveType::Kind::ULong:
+  case types::PrimitiveType::Kind::Float:
+  case types::PrimitiveType::Kind::Double:
+  case types::PrimitiveType::Kind::Fp16:
+  case types::PrimitiveType::Kind::Bf16:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool hasOperatorMethod(const std::shared_ptr<types::Type> &type,
+                       const std::string &name) {
+  if (!type || !type->isClass()) {
+    return false;
+  }
+  auto cls = std::dynamic_pointer_cast<types::ClassType>(type);
+  return cls && cls->hasMethod(name);
+}
+} // namespace
+
+std::string SemanticAnalyzer::specializeTypeName(
+    const std::vector<ast::Type *> &typeArgs) {
+  std::string result;
+  for (size_t i = 0; i < typeArgs.size(); ++i) {
+    if (i > 0) {
+      result += "_";
+    }
+    result += typeArgs[i] ? sanitizeTypeName(typeArgs[i]->toString()) : "unknown";
+  }
+  return result;
+}
+
+bool SemanticAnalyzer::checkConceptConstraint(
+    const std::string &conceptName,
+    const std::shared_ptr<types::Type> &actualType) {
+  if (!actualType) {
+    return false;
+  }
+
+  // 内置常用概念：直接检查类型能力。
+  if (conceptName == "Numeric" || conceptName == "Integral") {
+    return isNumericType(actualType);
+  }
+  if (conceptName == "Addable") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator+");
+  }
+  if (conceptName == "Subtractable") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator-");
+  }
+  if (conceptName == "Multipliable") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator*");
+  }
+  if (conceptName == "Divisible") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator/");
+  }
+  if (conceptName == "Comparable") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator<");
+  }
+  if (conceptName == "EqualityComparable") {
+    return isNumericType(actualType) ||
+           hasOperatorMethod(actualType, "operator==");
+  }
+  if (conceptName == "Boolean") {
+    return (actualType->isPrimitive() &&
+            std::dynamic_pointer_cast<types::PrimitiveType>(actualType)
+                    ->getKind() == types::PrimitiveType::Kind::Bool) ||
+           hasOperatorMethod(actualType, "operator bool");
+  }
+  if (conceptName == "Copyable" || conceptName == "Movable" ||
+      conceptName == "Destructible") {
+    return true;
+  }
+  if (conceptName == "DefaultConstructible") {
+    if (!actualType->isClass()) {
+      return true;
+    }
+    auto cls = std::dynamic_pointer_cast<types::ClassType>(actualType);
+    if (!cls) {
+      return false;
+    }
+    for (const auto &[name, method] : cls->getMethods()) {
+      if (name == cls->getName() && method.paramTypes.empty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (conceptName == "Container" || conceptName == "Iterable") {
+    return hasOperatorMethod(actualType, "begin") ||
+           hasOperatorMethod(actualType, "next") ||
+           hasOperatorMethod(actualType, "length") ||
+           actualType->isArray() || actualType->isSlice();
+  }
+
+  // 用户自定义 concept：按 requires 体做基础能力检查。
+  auto conceptIt = concepts_.find(conceptName);
+  if (conceptIt == concepts_.end()) {
+    return true; // 未知概念暂不拒绝，避免误报
+  }
+
+  for (const auto &constraint : conceptIt->second->constraints) {
+    auto *requiresExpr =
+        dynamic_cast<ast::RequiresExpression *>(constraint.get());
+    if (!requiresExpr) {
+      continue;
+    }
+    for (const auto &requirement : requiresExpr->requirements) {
+      if (!requirement || !requirement->expr) {
+        continue;
+      }
+      auto *binary =
+          dynamic_cast<ast::BinaryExpr *>(requirement->expr.get());
+      if (binary) {
+        switch (binary->op) {
+        case ast::BinaryExpr::Op::Add:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator+")) {
+            return false;
+          }
+          break;
+        case ast::BinaryExpr::Op::Sub:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator-")) {
+            return false;
+          }
+          break;
+        case ast::BinaryExpr::Op::Mul:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator*")) {
+            return false;
+          }
+          break;
+        case ast::BinaryExpr::Op::Div:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator/")) {
+            return false;
+          }
+          break;
+        case ast::BinaryExpr::Op::Lt:
+        case ast::BinaryExpr::Op::Le:
+        case ast::BinaryExpr::Op::Gt:
+        case ast::BinaryExpr::Op::Ge:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator<")) {
+            return false;
+          }
+          break;
+        case ast::BinaryExpr::Op::Eq:
+        case ast::BinaryExpr::Op::Ne:
+          if (!isNumericType(actualType) &&
+              !hasOperatorMethod(actualType, "operator==")) {
+            return false;
+          }
+          break;
+        default:
+          break;
+        }
+        continue;
+      }
+
+      auto *call = dynamic_cast<ast::CallExpr *>(requirement->expr.get());
+      if (call) {
+        if (auto *member =
+                dynamic_cast<ast::MemberExpr *>(call->callee.get())) {
+          if (!hasOperatorMethod(actualType, member->member)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+ast::FunctionDecl *SemanticAnalyzer::instantiateGenericFunction(
+    const std::string &name, const std::vector<ast::Type *> &typeArgs) {
+  auto it = genericFunctions_.find(name);
+  if (it == genericFunctions_.end()) {
+    return nullptr;
+  }
+  ast::FunctionDecl *generic = it->second;
+
+  std::vector<ast::TemplateParameter *> templateParams;
+  for (const auto &param : generic->templateParams) {
+    if (auto *tp = dynamic_cast<ast::TemplateParameter *>(param.get())) {
+      templateParams.push_back(tp);
+    }
+  }
+  if (templateParams.size() != typeArgs.size()) {
+    error("Generic function '" + name + "' expects " +
+          std::to_string(templateParams.size()) + " type argument(s), got " +
+          std::to_string(typeArgs.size()));
+    return nullptr;
+  }
+
+  ast::TypeSubst subst;
+  std::vector<std::shared_ptr<types::Type>> semanticArgs;
+  for (size_t i = 0; i < templateParams.size(); ++i) {
+    subst[templateParams[i]->name] = typeArgs[i];
+    semanticArgs.push_back(typeArgs[i] ? analyzeType(typeArgs[i]) : nullptr);
+  }
+
+  // where 约束：用实际类型检查概念。
+  if (generic->whereClause) {
+    for (const auto &constraint : generic->whereClause->constraints) {
+      std::string conceptName;
+      std::vector<std::shared_ptr<types::Type>> constraintArgs;
+      if (auto *genericConstraint =
+              dynamic_cast<ast::GenericType *>(constraint.constraint.get())) {
+        conceptName = genericConstraint->name;
+        for (const auto &arg : genericConstraint->arguments) {
+          if (auto *argType = dynamic_cast<ast::Type *>(arg.get())) {
+            auto cloned = ast::cloneTypeWithSubst(argType, subst);
+            constraintArgs.push_back(analyzeType(cloned.get()));
+          }
+        }
+      } else if (auto *named =
+                     dynamic_cast<ast::NamedType *>(constraint.constraint.get())) {
+        conceptName = named->name;
+      }
+      if (conceptName.empty()) {
+        continue;
+      }
+      if (conceptName == "SameType") {
+        if (constraintArgs.size() < 2 ||
+            constraintArgs[0]->toString() != constraintArgs[1]->toString()) {
+          error("Type does not satisfy SameType constraint on '" + name + "'");
+          return nullptr;
+        }
+      } else if (conceptName == "Convertible") {
+        if (constraintArgs.size() < 2 ||
+            !isTypeCompatible(constraintArgs[1], constraintArgs[0])) {
+          error("Type does not satisfy Convertible constraint on '" + name +
+                "'");
+          return nullptr;
+        }
+      } else {
+        const auto &actual = constraintArgs.empty()
+                                 ? (semanticArgs.empty() ? nullptr
+                                                         : semanticArgs[0])
+                                 : constraintArgs[0];
+        if (!checkConceptConstraint(conceptName, actual)) {
+          error("Type '" + (actual ? actual->toString() : std::string("?")) +
+                "' does not satisfy concept '" + conceptName + "' for '" +
+                name + "'");
+          return nullptr;
+        }
+      }
+    }
+  }
+
+  std::string specializedName = name + "__" + specializeTypeName(typeArgs);
+  auto existing = specializedFunctionDecls_.find(specializedName);
+  if (existing != specializedFunctionDecls_.end()) {
+    return existing->second;
+  }
+
+  auto cloned = ast::cloneFunctionWithSubst(generic, subst, specializedName);
+  ast::FunctionDecl *raw = cloned.get();
+  specializedFunctionDecls_[specializedName] = raw;
+  instantiatedFunctions_.insert(specializedName);
+  functionSpecializations_.push_back(std::move(cloned));
+
+  // 先注册具体化后的签名，再分析函数体。
+  analyzeFunctionDecl(raw, nullptr, false);
+  analyzeFunctionDecl(raw, nullptr, true);
+  return raw;
+}
+
+std::shared_ptr<types::Type> SemanticAnalyzer::instantiateGenericClass(
+    const std::string &name, const std::vector<ast::Type *> &typeArgs) {
+  auto it = genericClasses_.find(name);
+  if (it == genericClasses_.end()) {
+    return nullptr;
+  }
+  ast::ClassDecl *generic = it->second;
+
+  std::vector<ast::TemplateParameter *> templateParams;
+  for (const auto &param : generic->templateParams) {
+    if (auto *tp = dynamic_cast<ast::TemplateParameter *>(param.get())) {
+      templateParams.push_back(tp);
+    }
+  }
+  if (templateParams.size() != typeArgs.size()) {
+    error("Generic class '" + name + "' expects " +
+          std::to_string(templateParams.size()) + " type argument(s), got " +
+          std::to_string(typeArgs.size()));
+    return nullptr;
+  }
+
+  ast::TypeSubst subst;
+  for (size_t i = 0; i < templateParams.size(); ++i) {
+    subst[templateParams[i]->name] = typeArgs[i];
+  }
+
+  std::string specializedName = name + "__" + specializeTypeName(typeArgs);
+  if (auto existing = specializedClassDecls_.find(specializedName);
+      existing != specializedClassDecls_.end()) {
+    auto sym = std::dynamic_pointer_cast<ClassSymbol>(
+        symbolTable.lookupSymbol(specializedName));
+    return sym ? sym->getType() : nullptr;
+  }
+
+  auto cloned = ast::cloneClassWithSubst(generic, subst, specializedName);
+  ast::ClassDecl *raw = cloned.get();
+  specializedClassDecls_[specializedName] = raw;
+  classSpecializations_.push_back(std::move(cloned));
+
+  // analyzeClassDecl 需要先有类符号。
+  auto specializedType = std::make_shared<types::ClassType>(specializedName);
+  symbolTable.addSymbol(
+      std::make_shared<ClassSymbol>(specializedName, specializedType));
+  analyzeClassDecl(raw);
+  auto sym = std::dynamic_pointer_cast<ClassSymbol>(
+      symbolTable.lookupSymbol(specializedName));
+  return sym ? sym->getType() : nullptr;
 }
 
 void SemanticAnalyzer::analyzeAttributeDecl(ast::AttributeDecl *attributeDecl) {
@@ -3151,6 +3606,86 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
   // 处理标识符调用的情况
   if (auto *identifier =
           dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+    // 隐式泛型调用：从实参类型推导模板参数（只做简单的一一对应推导）。
+    if (identifier->templateArgs.empty()) {
+      auto genericIt = genericFunctions_.find(identifier->name);
+      if (genericIt != genericFunctions_.end() && !argTypes.empty()) {
+        std::vector<ast::TemplateParameter *> templateParams;
+        for (const auto &param : genericIt->second->templateParams) {
+          if (auto *tp = dynamic_cast<ast::TemplateParameter *>(param.get())) {
+            templateParams.push_back(tp);
+          }
+        }
+        if (!templateParams.empty()) {
+          std::vector<std::unique_ptr<ast::Type>> inferredStorage;
+          std::vector<ast::Type *> inferred;
+          for (size_t i = 0; i < templateParams.size(); ++i) {
+            const auto &source = argTypes[std::min(i, argTypes.size() - 1)];
+            std::shared_ptr<types::Type> sourceForInference = source;
+
+            // T[] 参数：从实参数组/切片推导元素类型。
+            if (i < genericIt->second->params.size()) {
+              if (auto *param = dynamic_cast<ast::Parameter *>(
+                      genericIt->second->params[i].get())) {
+                if (auto *sliceType =
+                        dynamic_cast<ast::SliceType *>(param->type.get())) {
+                  if (auto *elemType =
+                          dynamic_cast<ast::NamedType *>(
+                              sliceType->baseType.get());
+                      elemType && elemType->name == templateParams[i]->name) {
+                    if (source->isArray()) {
+                      sourceForInference =
+                          std::dynamic_pointer_cast<types::ArrayType>(source)
+                              ->getElementType();
+                    } else if (source->isSlice()) {
+                      sourceForInference =
+                          std::dynamic_pointer_cast<types::SliceType>(source)
+                              ->getElementType();
+                    }
+                  }
+                }
+              }
+            }
+
+            auto astType = astTypeFromSemanticType(sourceForInference);
+            if (!astType) {
+              inferred.clear();
+              break;
+            }
+            inferred.push_back(astType.get());
+            inferredStorage.push_back(std::move(astType));
+          }
+          if (!inferred.empty()) {
+            if (auto *specialized =
+                    instantiateGenericFunction(identifier->name, inferred)) {
+              identifier->name = specialized->name;
+            }
+          }
+        }
+      }
+    }
+
+    // 显式泛型调用：先做单态化，把 callee 改写成具体函数名。
+    if (!identifier->templateArgs.empty()) {
+      std::vector<ast::Type *> typeArgs;
+      bool allTypes = true;
+      for (const auto &arg : identifier->templateArgs) {
+        if (auto *typeArg = dynamic_cast<ast::Type *>(arg.get())) {
+          typeArgs.push_back(typeArg);
+        } else {
+          allTypes = false;
+          break;
+        }
+      }
+      if (allTypes) {
+        if (auto *specialized =
+                instantiateGenericFunction(identifier->name, typeArgs)) {
+          identifier->name = specialized->name;
+          identifier->templateArgs.clear();
+        }
+      }
+    }
+
     // 从符号表中查找所有同名函数
     auto functionSymbols = symbolTable.lookupFunctionSymbols(identifier->name);
     if (functionSymbols.empty()) {
@@ -4242,7 +4777,19 @@ SemanticAnalyzer::analyzeGenericType(const ast::GenericType *genericType) {
   // 如果是类类型，创建实例化的类类型
   if (baseType->isClass()) {
     auto classType = std::dynamic_pointer_cast<types::ClassType>(baseType);
-    if (classType && !typeArgs.empty()) {
+    if (classType && !genericType->arguments.empty()) {
+      std::vector<ast::Type *> astArgs;
+      for (const auto &arg : genericType->arguments) {
+        if (auto *typeArg = dynamic_cast<ast::Type *>(arg.get())) {
+          astArgs.push_back(typeArg);
+        }
+      }
+      if (astArgs.size() == genericType->arguments.size()) {
+        if (auto specialized =
+                instantiateGenericClass(genericType->name, astArgs)) {
+          return specialized;
+        }
+      }
       return classType->instantiate(typeArgs);
     }
     return classType;

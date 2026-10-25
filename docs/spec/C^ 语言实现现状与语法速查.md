@@ -236,7 +236,14 @@ func main() -> int {
 - 类型参数写在**函数名/类名之后**：`func foo<T>`、`class Box<T>`。
 - **不是** `func<T> foo(...)`。
 - 关联类型用 `T.Item`，不是 `T::Item`。
-- `where` / `concept` 目前只做名字与语法检查；概念体里的 requires 还没有真正验证，泛型也还没有单态化。
+- 泛型函数/类在调用点做单态化：`id<int>` 生成 `id__int`，`Box<int>` 生成 `Box__int`。
+- 支持显式类型实参；也支持简单推导（`id(42)`、`first(a)` 从 `T[]` 推导元素类型）。
+- `concept X<T> = requires (T a, T b) { { a + b } -> T; };` 已能解析并参与检查。
+- 限制：
+  - `struct Point<T>` 这种泛型结构体尚未支持（泛型类可以）。
+  - 类声明上的 `where` 约束尚未解析/检查。
+  - concept 检查目前覆盖常见内置概念和 requires 中的二元运算/成员方法；关联类型、嵌套 requires、复杂表达式还不完整。
+  - 推导只做简单的一一对应；不根据返回类型/上下文推导。
 
 ## 7. 模块与 FFI
 
@@ -275,7 +282,9 @@ extern "C" {
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
 - `foreach`：数组、切片、`a..b` 范围、可选的 index 变量（本次修复）
 - `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`（本版为 setjmp/longjmp 实现）
-- 显式实例化的简单泛型函数（如 `id<int>(42)`）
+- 泛型函数单态化：`id<int>` / `max_of(40, 42)` / `first(a)` / 递归泛型
+- 泛型类单态化：`Box<int>` / `Box<double>`（字段、构造、方法）
+- concept 检查：`Addable` / `Comparable` 等内置概念，以及自定义 `requires` 的基础能力检查
 
 ### 只有 parser/semantic 覆盖，codegen 仍不完整
 
