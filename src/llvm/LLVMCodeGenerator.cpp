@@ -2585,6 +2585,24 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     args.push_back(generateExpression(std::move(arg)));
   }
 
+  // 结构体值构造：Point(...) / Point<int>(...)
+  if (!funcName.empty()) {
+    auto structIt = structTypes_.find(funcName);
+    if (structIt != structTypes_.end()) {
+      auto ctorIt = functions_.find(funcName + "_" + funcName);
+      if (ctorIt != functions_.end()) {
+        llvm::StructType *structTy = structIt->second;
+        llvm::AllocaInst *tmp =
+            builder()->CreateAlloca(structTy, nullptr, funcName + ".tmp");
+        std::vector<llvm::Value *> ctorArgs;
+        ctorArgs.push_back(tmp);
+        ctorArgs.insert(ctorArgs.end(), args.begin(), args.end());
+        builder()->CreateCall(ctorIt->second, ctorArgs);
+        return builder()->CreateLoad(structTy, tmp, funcName + ".value");
+      }
+    }
+  }
+
   // 优先使用语义分析器预计算的重载解析结果（精确类型 mangled name）
   if (!callExpr->resolvedMangledName.empty()) {
     auto it = functions_.find(callExpr->resolvedMangledName);

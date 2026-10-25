@@ -60,6 +60,7 @@ private:
   std::unordered_map<std::string, ast::FunctionDecl *> genericFunctions_;
   std::unordered_map<std::string, ast::ClassDecl *> genericClasses_;
   std::unordered_map<std::string, ast::StructDecl *> genericStructs_;
+  std::unordered_set<std::string> structTypeNames_;
   std::unordered_map<std::string, ast::ConceptDecl *> concepts_;
   std::vector<std::unique_ptr<ast::FunctionDecl>> functionSpecializations_;
   std::vector<std::unique_ptr<ast::ClassDecl>> classSpecializations_;

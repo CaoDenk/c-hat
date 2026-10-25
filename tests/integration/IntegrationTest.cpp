@@ -315,3 +315,17 @@ TEST_CASE("Integration: generic class where constraint", "[integration][generics
       "    return 0;\n"
       "}\n") == -2);
 }
+
+TEST_CASE("Integration: struct value constructor", "[integration][generics]") {
+  REQUIRE(compileAndRun(
+      "struct Point<T> {\n"
+      "    T x;\n"
+      "    T y;\n"
+      "    Point(T a, T b) { x = a; y = b; }\n"
+      "    func sum() -> T { return x + y; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Point<int> p = Point<int>(40, 2);\n"
+      "    return p.sum();\n"
+      "}\n") == 42);
+}

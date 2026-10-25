@@ -2024,6 +2024,7 @@ void SemanticAnalyzer::analyzeAttributeDecl(ast::AttributeDecl *attributeDecl) {
 }
 
 void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
+  structTypeNames_.insert(structDecl->name);
   // 创建结构体类型（值类型，复用 ClassType 基础设施）
   auto structType = std::make_shared<types::ClassType>(structDecl->name);
   auto structSymbol = std::make_shared<ClassSymbol>(structDecl->name, structType);
@@ -3746,6 +3747,37 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
   // 处理标识符调用的情况
   if (auto *identifier =
           dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+    // 结构体值构造：Point(...) / Point<int>(...)
+    if (genericStructs_.count(identifier->name) &&
+        !identifier->templateArgs.empty()) {
+      std::vector<ast::Type *> typeArgs;
+      for (const auto &arg : identifier->templateArgs) {
+        if (auto *typeArg = dynamic_cast<ast::Type *>(arg.get())) {
+          typeArgs.push_back(typeArg);
+        }
+      }
+      if (auto specialized =
+              instantiateGenericStruct(identifier->name, typeArgs)) {
+        if (auto classType =
+                std::dynamic_pointer_cast<types::ClassType>(specialized)) {
+          identifier->name = classType->getName();
+          identifier->templateArgs.clear();
+          callExpr->resolvedMangledName =
+              identifier->name + "_" + identifier->name;
+          return specialized;
+        }
+      }
+    }
+    if (structTypeNames_.count(identifier->name)) {
+      auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+          symbolTable.lookupSymbol(identifier->name));
+      if (classSymbol) {
+        callExpr->resolvedMangledName =
+            identifier->name + "_" + identifier->name;
+        return classSymbol->getType();
+      }
+    }
+
     // 隐式泛型调用：从实参类型推导模板参数（只做简单的一一对应推导）。
     if (identifier->templateArgs.empty()) {
       auto genericIt = genericFunctions_.find(identifier->name);

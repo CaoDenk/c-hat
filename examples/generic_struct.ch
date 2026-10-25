@@ -4,6 +4,8 @@ struct Point<T> {
     T x;
     T y;
 
+    Point(T a, T b) { x = a; y = b; }
+
     func sum() -> T { return x + y; }
 }
 
@@ -11,8 +13,7 @@ class Box<T> where Comparable<T> {
     Point<T> p;
 
     Box(T a, T b) {
-        p.x = a;
-        p.y = b;
+        p = Point<T>(a, b);
     }
 
     func total() -> T { return p.sum(); }
