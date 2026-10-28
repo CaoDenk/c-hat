@@ -22,8 +22,8 @@ bool analyzeSource(const std::string &source) {
 
 TEST_CASE("Defer: Basic defer", "[defer][basic]") {
   SECTION("Simple defer") {
-    REQUIRE(analyzeSource("func test() { defer println(\"cleanup\"); }") ==
-            true);
+    REQUIRE(analyzeSource(
+                "func test() { var x = 0; defer x = x + 1; }") == true);
   }
 
   SECTION("Defer with expression") {
@@ -34,16 +34,14 @@ TEST_CASE("Defer: Basic defer", "[defer][basic]") {
 
 TEST_CASE("Defer: Multiple defer", "[defer][multiple]") {
   SECTION("Two defer statements") {
-    REQUIRE(
-        analyzeSource(
-            "func test() { defer println(\"1\"); defer println(\"2\"); }") ==
-        true);
+    REQUIRE(analyzeSource("func test() { var x = 0; defer x = x + 1; "
+                          "defer x = x + 2; }") == true);
   }
 }
 
 TEST_CASE("Defer: Defer in function", "[defer][function]") {
   SECTION("Defer with return") {
-    REQUIRE(analyzeSource(
-                "func test() -> int { defer cleanup(); return 42; }") == true);
+    REQUIRE(analyzeSource("func test() -> int { var x = 0; "
+                          "defer x = x + 1; return 42; }") == true);
   }
 }

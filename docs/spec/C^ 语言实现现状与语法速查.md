@@ -282,7 +282,8 @@ extern "C" {
 - 结构体字段赋值/读取 `p.x = 7; return p.x;`（本次修复）
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
 - `foreach`：数组、切片、`a..b` 范围、可选的 index 变量（本次修复）
-- `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`（本版为 setjmp/longjmp 实现）
+- `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`、按类型顺序匹配 catch、未匹配继续向外抛（本版为 setjmp/longjmp 实现）
+- `defer`：正常返回/throw 时按 LIFO 执行；含 defer 的中间函数也会在异常穿过时执行清理
 - 泛型函数单态化：`id<int>` / `max_of(40, 42)` / `first(a)` / 递归泛型
 - 泛型类单态化：`Box<int>` / `Box<double>`（字段、构造、方法、类级 `where`）
 - 泛型结构体单态化：`Point<int>` / `Pair<int, double>`（字段、方法、值构造 `Point<int>(...)`）
@@ -292,7 +293,7 @@ extern "C" {
 
 | 功能 | 现状 |
 |---|---|
-| `defer` | 能解析；修改外部变量的 `defer x = 5;` 未按预期生效 |
+| `defer` | 能解析并执行；但按函数级收集，不是块级作用域（循环内 defer 只执行一次） |
 | `comptime { ... }` 块 | 解析失败（当前只支持部分 comptime 语句） |
 | 反射 `Fold` / `Expansion` | codegen 仍是 “not implemented” |
 | 协程 `await/yield` | 只有部分语法/分析 |
@@ -300,14 +301,16 @@ extern "C" {
 ### 异常实现限制（v1）
 
 - 当前用 `setjmp` / `longjmp` 传播异常，不是文档里描述的零开销表驱动模型。
-- `catch (T e)` 目前**不做类型匹配**：第一个 catch 分支处理所有异常。
-- 跨函数 `throw` 会跳过中途的 `defer` 和析构函数。
-- 异常值按 64 位字传递，适合 int/char/bool/指针；结构体异常尚未完整支持。
+- `catch (T e)` 已按类型标签精确匹配：按书写顺序尝试 catch，未匹配的异常继续向外传播；`catch (...)` 接受所有异常。当前不做基类/隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
+- 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
+- `defer` 仍按函数级收集，不是精确块作用域：循环内注册的 defer 在函数退出时只执行一次；同函数 try 捕获异常时，defer 可能在 throw 点提前执行。
+- 自动析构/RAII 尚未实现；目前只有显式 `delete` 会调用析构函数。
+- 异常值按 64 位字传递，适合 int/char/bool/指针/类指针；结构体按值异常尚未完整支持。
 - 嵌套 try / `catch (...)` / catch 内再次 throw 已可用。
 
 ### 单元测试覆盖
 
-现有 176 个 `TEST_CASE` 主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 13 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 23 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 

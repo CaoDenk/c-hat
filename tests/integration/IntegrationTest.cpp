@@ -227,6 +227,123 @@ TEST_CASE("Integration: try/catch", "[integration][exception]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: catch type matching", "[integration][exception]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try { throw 42; }\n"
+      "    catch (double e) { r = 100; }\n"
+      "    catch (int e) { r = e; }\n"
+      "    catch (...) { r = 200; }\n"
+      "    return r;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try { throw 2.5; }\n"
+      "    catch (int e) { r = 1; }\n"
+      "    catch (double e) { if (e > 2.0) { r = 7; } }\n"
+      "    return r;\n"
+      "}\n") == 7);
+
+  REQUIRE(compileAndRun(
+      "class ErrorA { int code; ErrorA(int c) { code = c; } }\n"
+      "class ErrorB { int code; ErrorB(int c) { code = c; } }\n"
+      "func main() -> int {\n"
+      "    try { throw new ErrorB(5); }\n"
+      "    catch (ErrorA^ e) { return 1; }\n"
+      "    catch (ErrorB^ e) { return e->code + 2; }\n"
+      "    return 0;\n"
+      "}\n") == 7);
+}
+
+TEST_CASE("Integration: catch fallthrough and rethrow", "[integration][exception]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        try { throw 3.5; }\n"
+      "        catch (int e) { r = 10; }\n"
+      "        catch (...) { r = 7; }\n"
+      "    } catch (...) { r = 99; }\n"
+      "    return r;\n"
+      "}\n") == 7);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        try { throw 8; }\n"
+      "        catch (double e) { r = 10; }\n"
+      "    } catch (int e) { r = e; }\n"
+      "    return r;\n"
+      "}\n") == 8);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        try { throw 8; }\n"
+      "        catch (int e) { throw; }\n"
+      "    } catch (int e) { r = e; }\n"
+      "    return r;\n"
+      "}\n") == 8);
+}
+
+TEST_CASE("Integration: defer on throw and return", "[integration][exception][defer]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        defer r = 7;\n"
+      "        throw 3;\n"
+      "    } catch (int e) { r = r + e; }\n"
+      "    return r;\n"
+      "}\n") == 10);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        defer r = r * 10 + 1;\n"
+      "        defer r = r * 10 + 2;\n"
+      "        throw 3;\n"
+      "    } catch (int e) { r = r + 0; }\n"
+      "    return r;\n"
+      "}\n") == 21);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    try {\n"
+      "        if (false) { defer r = 99; }\n"
+      "        defer r = 5;\n"
+      "        throw 3;\n"
+      "    } catch (int e) { r = r + e; }\n"
+      "    return r;\n"
+      "}\n") == 8);
+}
+
+TEST_CASE("Integration: defer unwinds intermediate frames", "[integration][exception][defer]") {
+  REQUIRE(compileAndRun(
+      "class Box {\n"
+      "    int value;\n"
+      "    Box(int v) { value = v; }\n"
+      "}\n"
+      "func deep() -> void { throw 9; }\n"
+      "func middle(Box^ b) -> void {\n"
+      "    defer b->value = 5;\n"
+      "    deep();\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box(0);\n"
+      "    try { middle(b); }\n"
+      "    catch (int e) { return b->value + e; }\n"
+      "    return 0;\n"
+      "}\n") == 14);
+}
+
 TEST_CASE("Integration: generic function monomorphization", "[integration][generics]") {
   REQUIRE(compileAndRun(
       "func id<T>(T x) -> T { return x; }\n"

@@ -17,6 +17,8 @@ public:
   std::string toString() const override;
 
   std::unique_ptr<Expression> expr;
+  // 语义层填写的异常类型标签；0 表示未知。
+  int exceptionTag = 0;
 };
 
 } // namespace ast

@@ -19,6 +19,8 @@ public:
 
   std::unique_ptr<Parameter> param;
   std::unique_ptr<Statement> body;
+  // 语义层填写的 catch 类型标签；0 表示 catch(...)。
+  int catchTag = 0;
 };
 
 } // namespace ast

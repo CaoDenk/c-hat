@@ -5,12 +5,21 @@
 #include "../types/ClassType.h"
 #include "../types/InterfaceType.h"
 #include "../types/TypeFactory.h"
+#include "../types/ArrayType.h"
+#include "../types/FunctionType.h"
+#include "../types/LiteralViewType.h"
+#include "../types/NullableType.h"
+#include "../types/ReadonlyType.h"
+#include "../types/SliceType.h"
+#include "../types/TupleType.h"
+#include "../types/UnionType.h"
 #include "../types/PointerType.h"
 #include "../types/ReferenceType.h"
 #include "ModuleSymbol.h"
 #include "ClassSymbol.h"
 #include "ConceptSymbol.h"
 #include "TypeMetadata.h"
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <set>
@@ -165,6 +174,116 @@ SemanticAnalyzer::analyzeStatementOnly(ast::Statement *statement) {
 void SemanticAnalyzer::analyzeDeclarationOnly(ast::Declaration *declaration) {
   analyzeDeclaration(declaration);
 }
+
+namespace {
+
+// 异常类型标签。throw 和 catch 在语义阶段写入同一套标签，codegen 只比较
+// 整数即可；类/接口使用稳定 FNV-1a 哈希，避免所有聚合类型都退化成同一个
+// 标签。标签 0 保留给 catch(...) 或无法确定的类型。
+int exceptionTagForType(const std::shared_ptr<types::Type> &type) {
+  if (!type) {
+    return 0;
+  }
+
+  std::shared_ptr<types::Type> base = type;
+  while (auto readonlyType =
+             std::dynamic_pointer_cast<types::ReadonlyType>(base)) {
+    base = readonlyType->getBaseType();
+  }
+  while (auto nullableType =
+             std::dynamic_pointer_cast<types::NullableType>(base)) {
+    base = nullableType->getBaseType();
+  }
+
+  if (auto primitive = std::dynamic_pointer_cast<types::PrimitiveType>(base)) {
+    switch (primitive->getKind()) {
+    case types::PrimitiveType::Kind::Bool:
+      return 1;
+    case types::PrimitiveType::Kind::Byte:
+      return 2;
+    case types::PrimitiveType::Kind::SByte:
+      return 3;
+    case types::PrimitiveType::Kind::Short:
+      return 4;
+    case types::PrimitiveType::Kind::UShort:
+      return 5;
+    case types::PrimitiveType::Kind::Int:
+      return 6;
+    case types::PrimitiveType::Kind::UInt:
+      return 7;
+    case types::PrimitiveType::Kind::Long:
+      return 8;
+    case types::PrimitiveType::Kind::ULong:
+      return 9;
+    case types::PrimitiveType::Kind::Float:
+      return 10;
+    case types::PrimitiveType::Kind::Double:
+      return 11;
+    case types::PrimitiveType::Kind::Fp16:
+      return 12;
+    case types::PrimitiveType::Kind::Bf16:
+      return 13;
+    case types::PrimitiveType::Kind::Char:
+      return 14;
+    case types::PrimitiveType::Kind::Void:
+      return 0;
+    }
+  }
+
+  auto hashTag = [](int kind, int nested) {
+    uint32_t hash = 2166136261u;
+    hash ^= static_cast<uint32_t>(kind);
+    hash *= 16777619u;
+    hash ^= static_cast<uint32_t>(nested);
+    hash *= 16777619u;
+    return static_cast<int>((hash & 0x3fffffffu) | 0x40000000u);
+  };
+
+  if (auto pointer = std::dynamic_pointer_cast<types::PointerType>(base)) {
+    return hashTag(20, exceptionTagForType(pointer->getPointeeType()));
+  }
+  if (auto reference = std::dynamic_pointer_cast<types::ReferenceType>(base)) {
+    return hashTag(21, exceptionTagForType(reference->getBaseType()));
+  }
+  if (std::dynamic_pointer_cast<types::LiteralViewType>(base)) {
+    return 22;
+  }
+  if (auto array = std::dynamic_pointer_cast<types::ArrayType>(base)) {
+    return hashTag(23, exceptionTagForType(array->getElementType()));
+  }
+  if (auto slice = std::dynamic_pointer_cast<types::SliceType>(base)) {
+    return hashTag(24, exceptionTagForType(slice->getElementType()));
+  }
+  if (std::dynamic_pointer_cast<types::FunctionType>(base)) {
+    return 25;
+  }
+  if (std::dynamic_pointer_cast<types::TupleType>(base)) {
+    return 26;
+  }
+  if (std::dynamic_pointer_cast<types::UnionType>(base)) {
+    return 27;
+  }
+
+  std::string name;
+  if (auto classType = std::dynamic_pointer_cast<types::ClassType>(base)) {
+    name = classType->getName();
+  } else if (auto interfaceType =
+                 std::dynamic_pointer_cast<types::InterfaceType>(base)) {
+    name = interfaceType->getName();
+  } else {
+    name = base->toString();
+  }
+
+  uint32_t hash = 2166136261u;
+  for (unsigned char ch : name) {
+    hash ^= ch;
+    hash *= 16777619u;
+  }
+  // 与基本类型/内建标签区分开，同时保持 int 可表示。
+  return static_cast<int>((hash & 0x3fffffffu) | 0x40000000u);
+}
+
+} // namespace
 
 void SemanticAnalyzer::initializeBuiltinSymbols() {
   // 添加基本类型到符号表
@@ -2805,6 +2924,7 @@ SemanticAnalyzer::analyzeTryStmt(ast::TryStmt *tryStmt) {
       if (!catchType) {
         error("Invalid catch parameter type", *catchStmt);
       } else {
+        catchStmt->catchTag = exceptionTagForType(catchType);
         auto catchSymbol =
             std::make_shared<VariableSymbol>(catchStmt->param->name, catchType);
         symbolTable.addSymbol(catchSymbol);
@@ -2872,12 +2992,16 @@ SemanticAnalyzer::analyzeThrowStmt(ast::ThrowStmt *throwStmt) {
       error("Invalid throw expression", *throwStmt);
       return nullptr;
     }
+    throwStmt->exceptionTag = exceptionTagForType(throwType);
   }
 
   return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeDeferStmt(ast::DeferStmt *deferStmt) {
+  if (deferStmt->expr) {
+    analyzeExpression(deferStmt->expr.get());
+  }
   return nullptr;
 }
 

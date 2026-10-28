@@ -1,5 +1,6 @@
 #include "LLVMCodeGenerator.h"
 #include "../Diagnostics.h"
+#include "../ast/AstClone.h"
 #include <ctime>
 #include <iostream>
 #include <llvm/IR/Constants.h>
@@ -31,6 +32,13 @@ llvm::GlobalVariable *getExceptionValueGlobal(llvm::Module *module) {
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(module->getContext()), 0));
 }
 
+llvm::GlobalVariable *getExceptionTypeGlobal(llvm::Module *module) {
+  return getOrCreateGlobal(
+      module, "c_hat_exception_type",
+      llvm::Type::getInt64Ty(module->getContext()),
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(module->getContext()), 0));
+}
+
 llvm::GlobalVariable *getExceptionHandlerGlobal(llvm::Module *module) {
   return getOrCreateGlobal(
       module, "c_hat_exception_handler",
@@ -40,6 +48,69 @@ llvm::GlobalVariable *getExceptionHandlerGlobal(llvm::Module *module) {
 }
 
 // 把任意标量压成 i64，存进全局异常槽。
+// 递归检查语句树中是否包含 defer。只有包含 defer 的函数才需要安装
+// 函数级 setjmp 清理帧，避免给所有函数增加开销。
+bool statementContainsDefer(const ast::Statement *stmt) {
+  if (!stmt) {
+    return false;
+  }
+  switch (stmt->getType()) {
+  case ast::NodeType::DeferStmt:
+    return true;
+  case ast::NodeType::CompoundStmt: {
+    auto *compound = static_cast<const ast::CompoundStmt *>(stmt);
+    for (const auto &node : compound->statements) {
+      if (auto *child = dynamic_cast<const ast::Statement *>(node.get())) {
+        if (statementContainsDefer(child)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  case ast::NodeType::IfStmt: {
+    auto *ifStmt = static_cast<const ast::IfStmt *>(stmt);
+    return statementContainsDefer(ifStmt->thenBranch.get()) ||
+           statementContainsDefer(ifStmt->elseBranch.get());
+  }
+  case ast::NodeType::WhileStmt: {
+    auto *whileStmt = static_cast<const ast::WhileStmt *>(stmt);
+    return statementContainsDefer(whileStmt->body.get());
+  }
+  case ast::NodeType::DoWhileStmt: {
+    auto *doWhile = static_cast<const ast::DoWhileStmt *>(stmt);
+    return statementContainsDefer(doWhile->body.get());
+  }
+  case ast::NodeType::ForStmt: {
+    auto *forStmt = static_cast<const ast::ForStmt *>(stmt);
+    return statementContainsDefer(forStmt->body.get());
+  }
+  case ast::NodeType::MatchStmt: {
+    auto *matchStmt = static_cast<const ast::MatchStmt *>(stmt);
+    for (const auto &arm : matchStmt->arms) {
+      if (arm && statementContainsDefer(arm->body.get())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case ast::NodeType::TryStmt: {
+    auto *tryStmt = static_cast<const ast::TryStmt *>(stmt);
+    if (statementContainsDefer(tryStmt->tryBlock.get())) {
+      return true;
+    }
+    for (const auto &catchStmt : tryStmt->catchStmts) {
+      if (catchStmt && statementContainsDefer(catchStmt->body.get())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
 llvm::Value *toExceptionWord(llvm::IRBuilder<> *builder, llvm::Value *value) {
   llvm::Type *i64Ty = builder->getInt64Ty();
   llvm::Type *ty = value->getType();
@@ -450,8 +521,7 @@ normal_var_path:
     }
   }
 
-  llvm::AllocaInst *alloca =
-      builder()->CreateAlloca(varType, nullptr, varDecl->name);
+  llvm::AllocaInst *alloca = createEntryAlloca(varType, varDecl->name);
 
   // 检查是否是切片类型且初始化值是数组初始化表达式，进行临时数组生命周期延长
   if (isSliceType && sliceElementType && varDecl->initializer) {
@@ -464,7 +534,7 @@ normal_var_path:
       llvm::ArrayType *arrayType =
           llvm::ArrayType::get(sliceElementType, arraySize);
       llvm::AllocaInst *tempArrayAlloca =
-          builder()->CreateAlloca(arrayType, nullptr, "temp_array");
+          createEntryAlloca(arrayType, "temp_array");
 
       // 填充数组元素
       for (size_t i = 0; i < arraySize; ++i) {
@@ -577,7 +647,7 @@ llvm::Value *LLVMCodeGenerator::generateTupleDestructuringDecl(
 
     // 为元素创建局部变量
     llvm::AllocaInst *alloca =
-        builder()->CreateAlloca(elementValue->getType(), nullptr, name);
+        createEntryAlloca(elementValue->getType(), name);
     builder()->CreateStore(elementValue, alloca);
 
     namedValues_[name] = alloca;
@@ -691,6 +761,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   namedValues_.clear();
   deferExpressions_.clear();
+  deferFlags_.clear();
   lateVariables_.clear();
 
   size_t paramIndex = 0;
@@ -710,11 +781,106 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
     }
   }
 
+  bool hasDefer = false;
+  if (auto *bodyStmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+    hasDefer = statementContainsDefer(bodyStmt);
+  }
+  llvm::Value *functionPrevHandler = nullptr;
+  llvm::BasicBlock *functionCleanupBB = nullptr;
+
+  // 含 defer 的函数安装自己的 setjmp 清理帧。这样异常穿过本函数
+  // （即使本函数没有 try）时，longjmp 会先回到这里执行 defer，
+  // 再继续向外传播。
+  if (hasDefer) {
+    llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+    auto *excHandler = getExceptionHandlerGlobal(module());
+    auto *jmpBuf = builder()->CreateAlloca(
+        llvm::ArrayType::get(llvm::Type::getInt8Ty(context()), 256), nullptr,
+        "fn.jmpbuf");
+    jmpBuf->setAlignment(llvm::Align(16));
+    auto *oldHandler =
+        builder()->CreateAlloca(ptrTy, nullptr, "fn.oldhandler");
+    functionPrevHandler =
+        builder()->CreateLoad(ptrTy, excHandler, "fn.prev.handler");
+    builder()->CreateStore(functionPrevHandler, oldHandler);
+    builder()->CreateStore(jmpBuf, excHandler);
+    exceptionHandlerStack_.push_back(oldHandler);
+
+#ifdef _WIN32
+    const char *setjmpName = "_setjmp";
+#else
+    const char *setjmpName = "setjmp";
+#endif
+    llvm::FunctionCallee setjmpFn = module()->getOrInsertFunction(
+        setjmpName, llvm::FunctionType::get(llvm::Type::getInt32Ty(context()),
+                                            {ptrTy}, false));
+    if (auto *setjmpFunc =
+            llvm::dyn_cast<llvm::Function>(setjmpFn.getCallee())) {
+      setjmpFunc->addFnAttr(llvm::Attribute::ReturnsTwice);
+    }
+    llvm::Value *setjmpResult =
+        builder()->CreateCall(setjmpFn, {jmpBuf}, "fn.setjmp");
+    llvm::Value *thrown = builder()->CreateICmpNE(
+        setjmpResult,
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+        "fn.thrown");
+    functionCleanupBB =
+        llvm::BasicBlock::Create(context(), "fn.cleanup", function);
+    llvm::BasicBlock *bodyBB =
+        llvm::BasicBlock::Create(context(), "fn.body", function);
+    builder()->CreateCondBr(thrown, functionCleanupBB, bodyBB);
+    builder()->SetInsertPoint(bodyBB);
+  }
+
   if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
     generateStatement(std::unique_ptr<ast::Statement>(
         static_cast<ast::Statement *>(funcDecl->body.release())));
 
     llvm::BasicBlock *lastBlock = &function->back();
+
+    // 先为异常路径生成清理块，再生成正常返回路径，避免正常路径
+    // 消费掉 defer AST 后异常清理块无节点可生成。
+    if (hasDefer) {
+      exceptionHandlerStack_.pop_back();
+      llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+      auto *excHandler = getExceptionHandlerGlobal(module());
+      builder()->SetInsertPoint(functionCleanupBB);
+      emitDeferCleanup(false);
+      builder()->CreateStore(functionPrevHandler, excHandler);
+
+      llvm::Value *outerHandler =
+          builder()->CreateLoad(ptrTy, excHandler, "fn.outer.handler");
+      llvm::BasicBlock *rethrowBB =
+          llvm::BasicBlock::Create(context(), "fn.rethrow", function);
+      llvm::BasicBlock *abortBB =
+          llvm::BasicBlock::Create(context(), "fn.abort", function);
+      llvm::Value *noHandler = builder()->CreateICmpEQ(
+          outerHandler, llvm::ConstantPointerNull::get(ptrTy),
+          "fn.no.handler");
+      builder()->CreateCondBr(noHandler, abortBB, rethrowBB);
+
+      builder()->SetInsertPoint(rethrowBB);
+      llvm::FunctionCallee longjmpFn = module()->getOrInsertFunction(
+          "longjmp",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context()),
+                                  {ptrTy, llvm::Type::getInt32Ty(context())},
+                                  false));
+      builder()->CreateCall(longjmpFn,
+                            {outerHandler,
+                             llvm::ConstantInt::get(
+                                 llvm::Type::getInt32Ty(context()), 1)});
+      builder()->CreateUnreachable();
+
+      builder()->SetInsertPoint(abortBB);
+      llvm::FunctionCallee abortFn = module()->getOrInsertFunction(
+          "abort",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(context()), false));
+      builder()->CreateCall(abortFn);
+      builder()->CreateUnreachable();
+
+      builder()->SetInsertPoint(lastBlock);
+    }
+
     if (!lastBlock->getTerminator()) {
       // 为已初始化的 late 变量调用析构函数
       for (const auto &[varName, info] : lateVariables_) {
@@ -725,17 +891,18 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       }
 
       // 执行 defer 语句（按相反顺序）
-      while (!deferExpressions_.empty()) {
-        auto deferExpr = std::move(deferExpressions_.back());
-        deferExpressions_.pop_back();
-        generateExpression(std::move(deferExpr));
+      emitDeferCleanup(true);
+      deferExpressions_.clear();
+      deferFlags_.clear();
+
+      if (hasDefer) {
+        auto *excHandler = getExceptionHandlerGlobal(module());
+        builder()->CreateStore(functionPrevHandler, excHandler);
       }
 
       if (returnType->isVoidTy()) {
-        builder()->SetInsertPoint(lastBlock);
         builder()->CreateRetVoid();
       } else {
-        builder()->SetInsertPoint(lastBlock);
         builder()->CreateRet(llvm::Constant::getNullValue(returnType));
       }
     }
@@ -743,6 +910,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   currentFunction_ = prevFunction;
   deferExpressions_.clear();
+  deferFlags_.clear();
 
   return function;
 }
@@ -976,6 +1144,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
 
     namedValues_.clear();
     deferExpressions_.clear();
+    deferFlags_.clear();
     lateVariables_.clear();
 
     size_t paramIndex = 0;
@@ -996,6 +1165,56 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
       }
     }
 
+    bool hasDefer = false;
+    if (auto *bodyStmt =
+            dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+      hasDefer = statementContainsDefer(bodyStmt);
+    }
+    llvm::Value *functionPrevHandler = nullptr;
+    llvm::BasicBlock *functionCleanupBB = nullptr;
+
+    if (hasDefer) {
+      llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+      auto *excHandler = getExceptionHandlerGlobal(module());
+      auto *jmpBuf = builder()->CreateAlloca(
+          llvm::ArrayType::get(llvm::Type::getInt8Ty(context()), 256),
+          nullptr, "fn.jmpbuf");
+      jmpBuf->setAlignment(llvm::Align(16));
+      auto *oldHandler =
+          builder()->CreateAlloca(ptrTy, nullptr, "fn.oldhandler");
+      functionPrevHandler =
+          builder()->CreateLoad(ptrTy, excHandler, "fn.prev.handler");
+      builder()->CreateStore(functionPrevHandler, oldHandler);
+      builder()->CreateStore(jmpBuf, excHandler);
+      exceptionHandlerStack_.push_back(oldHandler);
+
+#ifdef _WIN32
+      const char *setjmpName = "_setjmp";
+#else
+      const char *setjmpName = "setjmp";
+#endif
+      llvm::FunctionCallee setjmpFn = module()->getOrInsertFunction(
+          setjmpName,
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(context()), {ptrTy},
+                                  false));
+      if (auto *setjmpFunc =
+              llvm::dyn_cast<llvm::Function>(setjmpFn.getCallee())) {
+        setjmpFunc->addFnAttr(llvm::Attribute::ReturnsTwice);
+      }
+      llvm::Value *setjmpResult =
+          builder()->CreateCall(setjmpFn, {jmpBuf}, "fn.setjmp");
+      llvm::Value *thrown = builder()->CreateICmpNE(
+          setjmpResult,
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+          "fn.thrown");
+      functionCleanupBB =
+          llvm::BasicBlock::Create(context(), "fn.cleanup", function);
+      llvm::BasicBlock *bodyBB =
+          llvm::BasicBlock::Create(context(), "fn.body", function);
+      builder()->CreateCondBr(thrown, functionCleanupBB, bodyBB);
+      builder()->SetInsertPoint(bodyBB);
+    }
+
     if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
       generateStatement(std::unique_ptr<ast::Statement>(
           static_cast<ast::Statement *>(funcDecl->body.release())));
@@ -1003,6 +1222,49 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
       // 检查函数是否还有基本块
       if (!function->empty()) {
         llvm::BasicBlock *lastBlock = &function->back();
+
+        if (hasDefer) {
+          exceptionHandlerStack_.pop_back();
+          llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+          auto *excHandler = getExceptionHandlerGlobal(module());
+          builder()->SetInsertPoint(functionCleanupBB);
+          emitDeferCleanup(false);
+          builder()->CreateStore(functionPrevHandler, excHandler);
+
+          llvm::Value *outerHandler =
+              builder()->CreateLoad(ptrTy, excHandler, "fn.outer.handler");
+          llvm::BasicBlock *rethrowBB =
+              llvm::BasicBlock::Create(context(), "fn.rethrow", function);
+          llvm::BasicBlock *abortBB =
+              llvm::BasicBlock::Create(context(), "fn.abort", function);
+          llvm::Value *noHandler = builder()->CreateICmpEQ(
+              outerHandler, llvm::ConstantPointerNull::get(ptrTy),
+              "fn.no.handler");
+          builder()->CreateCondBr(noHandler, abortBB, rethrowBB);
+
+          builder()->SetInsertPoint(rethrowBB);
+          llvm::FunctionCallee longjmpFn = module()->getOrInsertFunction(
+              "longjmp",
+              llvm::FunctionType::get(llvm::Type::getVoidTy(context()),
+                                      {ptrTy,
+                                       llvm::Type::getInt32Ty(context())},
+                                      false));
+          builder()->CreateCall(longjmpFn,
+                                {outerHandler,
+                                 llvm::ConstantInt::get(
+                                     llvm::Type::getInt32Ty(context()), 1)});
+          builder()->CreateUnreachable();
+
+          builder()->SetInsertPoint(abortBB);
+          llvm::FunctionCallee abortFn = module()->getOrInsertFunction(
+              "abort",
+              llvm::FunctionType::get(llvm::Type::getVoidTy(context()), false));
+          builder()->CreateCall(abortFn);
+          builder()->CreateUnreachable();
+
+          builder()->SetInsertPoint(lastBlock);
+        }
+
         c_hat::debugStream() << "Debug: lastBlock = " << lastBlock->getName().str()
                   << std::endl;
         c_hat::debugStream() << "Debug: lastBlock has terminator = "
@@ -1069,10 +1331,13 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
           }
 
           // 执行 defer 语句（按相反顺序）
-          while (!deferExpressions_.empty()) {
-            auto deferExpr = std::move(deferExpressions_.back());
-            deferExpressions_.pop_back();
-            generateExpression(std::move(deferExpr));
+          emitDeferCleanup(true);
+          deferExpressions_.clear();
+          deferFlags_.clear();
+
+          if (hasDefer) {
+            auto *excHandler = getExceptionHandlerGlobal(module());
+            builder()->CreateStore(functionPrevHandler, excHandler);
           }
 
           if (returnType->isVoidTy()) {
@@ -1097,6 +1362,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     currentFunction_ = prevFunction;
     c_hat::debugStream() << "Debug: Before clearing deferExpressions_" << std::endl;
     deferExpressions_.clear();
+    deferFlags_.clear();
   }
 
   c_hat::debugStream() << "Debug: Before returning function" << std::endl;
@@ -1265,6 +1531,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     namedValues_.clear();
     deferExpressions_.clear();
+    deferFlags_.clear();
     lateVariables_.clear();
 
     auto prevClassName = currentClassName_;
@@ -1293,12 +1560,105 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
       }
     }
 
+    bool hasDefer = false;
+    if (auto *bodyStmt =
+            dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+      hasDefer = statementContainsDefer(bodyStmt);
+    }
+    llvm::Value *functionPrevHandler = nullptr;
+    llvm::BasicBlock *functionCleanupBB = nullptr;
+
+    if (hasDefer) {
+      llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+      auto *excHandler = getExceptionHandlerGlobal(module());
+      auto *jmpBuf = builder()->CreateAlloca(
+          llvm::ArrayType::get(llvm::Type::getInt8Ty(context()), 256),
+          nullptr, "fn.jmpbuf");
+      jmpBuf->setAlignment(llvm::Align(16));
+      auto *oldHandler =
+          builder()->CreateAlloca(ptrTy, nullptr, "fn.oldhandler");
+      functionPrevHandler =
+          builder()->CreateLoad(ptrTy, excHandler, "fn.prev.handler");
+      builder()->CreateStore(functionPrevHandler, oldHandler);
+      builder()->CreateStore(jmpBuf, excHandler);
+      exceptionHandlerStack_.push_back(oldHandler);
+
+#ifdef _WIN32
+      const char *setjmpName = "_setjmp";
+#else
+      const char *setjmpName = "setjmp";
+#endif
+      llvm::FunctionCallee setjmpFn = module()->getOrInsertFunction(
+          setjmpName,
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(context()), {ptrTy},
+                                  false));
+      if (auto *setjmpFunc =
+              llvm::dyn_cast<llvm::Function>(setjmpFn.getCallee())) {
+        setjmpFunc->addFnAttr(llvm::Attribute::ReturnsTwice);
+      }
+      llvm::Value *setjmpResult =
+          builder()->CreateCall(setjmpFn, {jmpBuf}, "fn.setjmp");
+      llvm::Value *thrown = builder()->CreateICmpNE(
+          setjmpResult,
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+          "fn.thrown");
+      functionCleanupBB =
+          llvm::BasicBlock::Create(context(), "fn.cleanup", function);
+      llvm::BasicBlock *bodyBB =
+          llvm::BasicBlock::Create(context(), "fn.body", function);
+      builder()->CreateCondBr(thrown, functionCleanupBB, bodyBB);
+      builder()->SetInsertPoint(bodyBB);
+    }
+
     // 处理函数体
     if (auto *stmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
       generateStatement(std::unique_ptr<ast::Statement>(
           static_cast<ast::Statement *>(funcDecl->body.release())));
 
       llvm::BasicBlock *lastBlock = &function->back();
+
+      if (hasDefer) {
+        exceptionHandlerStack_.pop_back();
+        llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+        auto *excHandler = getExceptionHandlerGlobal(module());
+        builder()->SetInsertPoint(functionCleanupBB);
+        emitDeferCleanup(false);
+        builder()->CreateStore(functionPrevHandler, excHandler);
+
+        llvm::Value *outerHandler =
+            builder()->CreateLoad(ptrTy, excHandler, "fn.outer.handler");
+        llvm::BasicBlock *rethrowBB =
+            llvm::BasicBlock::Create(context(), "fn.rethrow", function);
+        llvm::BasicBlock *abortBB =
+            llvm::BasicBlock::Create(context(), "fn.abort", function);
+        llvm::Value *noHandler = builder()->CreateICmpEQ(
+            outerHandler, llvm::ConstantPointerNull::get(ptrTy),
+            "fn.no.handler");
+        builder()->CreateCondBr(noHandler, abortBB, rethrowBB);
+
+        builder()->SetInsertPoint(rethrowBB);
+        llvm::FunctionCallee longjmpFn = module()->getOrInsertFunction(
+            "longjmp",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context()),
+                                    {ptrTy,
+                                     llvm::Type::getInt32Ty(context())},
+                                    false));
+        builder()->CreateCall(longjmpFn,
+                              {outerHandler,
+                               llvm::ConstantInt::get(
+                                   llvm::Type::getInt32Ty(context()), 1)});
+        builder()->CreateUnreachable();
+
+        builder()->SetInsertPoint(abortBB);
+        llvm::FunctionCallee abortFn = module()->getOrInsertFunction(
+            "abort",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(context()), false));
+        builder()->CreateCall(abortFn);
+        builder()->CreateUnreachable();
+
+        builder()->SetInsertPoint(lastBlock);
+      }
+
       if (!lastBlock->getTerminator()) {
         // 为已初始化的 late 变量调用析构函数
         for (const auto &[varName, info] : lateVariables_) {
@@ -1309,17 +1669,18 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         }
 
         // 执行 defer 语句（按相反顺序）
-        while (!deferExpressions_.empty()) {
-          auto deferExpr = std::move(deferExpressions_.back());
-          deferExpressions_.pop_back();
-          generateExpression(std::move(deferExpr));
+        emitDeferCleanup(true);
+        deferExpressions_.clear();
+        deferFlags_.clear();
+
+        if (hasDefer) {
+          auto *excHandler = getExceptionHandlerGlobal(module());
+          builder()->CreateStore(functionPrevHandler, excHandler);
         }
 
         if (returnType->isVoidTy()) {
-          builder()->SetInsertPoint(lastBlock);
           builder()->CreateRetVoid();
         } else {
-          builder()->SetInsertPoint(lastBlock);
           builder()->CreateRet(llvm::Constant::getNullValue(returnType));
         }
       }
@@ -1328,10 +1689,27 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     currentFunction_ = prevFunction;
     currentClassName_ = prevClassName;
     deferExpressions_.clear();
+    deferFlags_.clear();
   }
 
   functions_[mangledName] = function;
   return function;
+}
+
+llvm::AllocaInst *
+LLVMCodeGenerator::createEntryAlloca(llvm::Type *type,
+                                     const std::string &name) {
+  llvm::Function *func = currentFunction_;
+  if (!func) {
+    llvm::BasicBlock *block = builder()->GetInsertBlock();
+    if (!block) {
+      return builder()->CreateAlloca(type, nullptr, name);
+    }
+    func = block->getParent();
+  }
+  llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                 func->getEntryBlock().begin());
+  return entryBuilder.CreateAlloca(type, nullptr, name);
 }
 
 // 辅助函数：获取 literalview 类型
@@ -2566,12 +2944,18 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     std::string methodName = className + "_" + member->member;
     auto it = functions_.find(methodName);
     if (it != functions_.end()) {
+      if (it->second->getReturnType()->isVoidTy()) {
+        return builder()->CreateCall(it->second, args);
+      }
       return builder()->CreateCall(it->second, args, "mcall");
     }
 
     // 扩展方法/普通函数回退：把对象作为第一个参数
     it = functions_.find(member->member);
     if (it != functions_.end()) {
+      if (it->second->getReturnType()->isVoidTy()) {
+        return builder()->CreateCall(it->second, args);
+      }
       return builder()->CreateCall(it->second, args, "mcall");
     }
 
@@ -2824,7 +3208,7 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
   // 创建临时数组
   llvm::ArrayType *arrayType = llvm::ArrayType::get(elementType, size);
   llvm::AllocaInst *tempArrayAlloca =
-      builder()->CreateAlloca(arrayType, nullptr, "temp_array");
+      createEntryAlloca(arrayType, "temp_array");
 
   // 初始化元素
   for (size_t i = 0; i < size; ++i) {
@@ -2859,7 +3243,7 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
 
   // 分配切片变量
   llvm::AllocaInst *sliceAlloca =
-      builder()->CreateAlloca(sliceStructType, nullptr, "slice");
+      createEntryAlloca(sliceStructType, "slice");
 
   // 计算临时数组的指针
   llvm::Value *arrayPtr = builder()->CreateGEP(
@@ -2917,8 +3301,8 @@ llvm::Value *LLVMCodeGenerator::generateStructInitExpr(
   }
 
   // 分配结构体
-  llvm::AllocaInst *alloca = builder()->CreateAlloca(structTy, nullptr,
-                                                      structName.empty() ? "anon" : structName);
+  llvm::AllocaInst *alloca = createEntryAlloca(
+      structTy, structName.empty() ? "anon" : structName);
 
   // 填充字段
   for (size_t i = 0; i < structInitExpr->fields.size(); ++i) {
@@ -2949,8 +3333,7 @@ llvm::Value *LLVMCodeGenerator::generateTupleExpr(
 
   llvm::StructType *tupleType =
       llvm::StructType::create(context(), elementTypes, "tuple");
-  llvm::AllocaInst *alloca =
-      builder()->CreateAlloca(tupleType, nullptr, "tuple");
+  llvm::AllocaInst *alloca = createEntryAlloca(tupleType, "tuple");
 
   return alloca;
 }
@@ -3209,6 +3592,7 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     }
 
     if (returnType->isVoidTy()) {
+      emitDeferCleanup(false);
       restoreExceptionHandlers();
       builder()->CreateRetVoid();
       return nullptr;
@@ -3226,16 +3610,20 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
       }
     }
 
+    emitDeferCleanup(false);
     restoreExceptionHandlers();
     builder()->CreateRet(retVal);
   } else {
     if (returnType->isVoidTy()) {
+      emitDeferCleanup(false);
       restoreExceptionHandlers();
       builder()->CreateRetVoid();
     } else if (returnType->isIntegerTy()) {
+      emitDeferCleanup(false);
       restoreExceptionHandlers();
       builder()->CreateRet(llvm::ConstantInt::get(returnType, 0));
     } else {
+      emitDeferCleanup(false);
       restoreExceptionHandlers();
       builder()->CreateRet(llvm::Constant::getNullValue(returnType));
     }
@@ -3470,10 +3858,10 @@ llvm::Value *LLVMCodeGenerator::generateForeachStmt(
   llvm::BasicBlock *afterBB =
       llvm::BasicBlock::Create(context(), "foreachafter");
 
-  llvm::AllocaInst *indexAlloca = builder()->CreateAlloca(
-      llvm::Type::getInt32Ty(context()), nullptr, "foreach.index");
+  llvm::AllocaInst *indexAlloca =
+      createEntryAlloca(llvm::Type::getInt32Ty(context()), "foreach.index");
   llvm::AllocaInst *iterAlloca =
-      builder()->CreateAlloca(elemTy, nullptr, iterVar->name + ".iter");
+      createEntryAlloca(elemTy, iterVar->name + ".iter");
 
   if (isRange) {
     builder()->CreateStore(rangeStart, indexAlloca);
@@ -3685,8 +4073,8 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
       if (auto *ident =
               dynamic_cast<ast::Identifier *>(pattern->value.get())) {
         boundName = ident->name;
-        llvm::AllocaInst *binding = builder()->CreateAlloca(
-            matchVal->getType(), nullptr, boundName + ".bind");
+        llvm::AllocaInst *binding =
+            createEntryAlloca(matchVal->getType(), boundName + ".bind");
         builder()->CreateStore(matchVal, binding);
         namedValues_[boundName] = binding;
       }
@@ -3784,17 +4172,17 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
 
 // 生成 try 语句
 //
-// 当前实现使用 setjmp/longjmp 作为异常传播机制（v1）：
-//   - throw 把值写入全局槽，然后 longjmp 到最近的 handler。
-//   - try 在栈上分配 jmp_buf，保存/恢复全局 handler。
-//   - catch 目前不做类型匹配：第一个 catch 分支处理所有异常。
-// 限制：跨函数 throw 会跳过中途的 defer/析构；类型匹配/嵌套 catch 链尚未实现。
+// 异常传播仍使用 setjmp/longjmp：throw 把值/类型标签写入全局槽，
+// longjmp 到最近的 handler。catch 根据类型标签顺序匹配；未匹配的
+// 异常会继续向外交给上一层 handler。
 llvm::Value *
 LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   auto *excValue = getExceptionValueGlobal(module());
+  auto *excType = getExceptionTypeGlobal(module());
   auto *excHandler = getExceptionHandlerGlobal(module());
   llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
+  llvm::Type *i64Ty = llvm::Type::getInt64Ty(context());
 
   llvm::BasicBlock *tryBB =
       llvm::BasicBlock::Create(context(), "trybody", func);
@@ -3855,13 +4243,14 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   builder()->CreateStore(prevHandler, excHandler);
   builder()->CreateBr(endBB);
 
-  // 异常路径
+  // 异常路径：先把全局 handler 恢复为外层 handler。这样 catch 体内部
+  // 再次 throw 时会正确传播，而不是跳回已经失效的当前 jmp_buf。
   func->insert(func->end(), catchBB);
   builder()->SetInsertPoint(catchBB);
   builder()->CreateStore(prevHandler, excHandler);
 
-  if (tryStmt->catchStmts.empty()) {
-    // 没有 catch：继续向外抛
+  // 生成“没有 catch 匹配”时的向外传播代码。
+  auto emitRethrow = [&]() {
     llvm::Value *outerHandler =
         builder()->CreateLoad(ptrTy, excHandler, "outer.handler");
     llvm::BasicBlock *rethrowBB =
@@ -3889,33 +4278,85 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
                                          false));
     builder()->CreateCall(abortFn);
     builder()->CreateUnreachable();
-  } else {
-    // v1：第一个 catch 分支处理所有异常；类型匹配留待后续实现。
-    auto &catchStmt = *tryStmt->catchStmts[0];
-    llvm::Value *excWord =
-        builder()->CreateLoad(llvm::Type::getInt64Ty(context()), excValue,
-                              "exc.word");
+  };
 
-    if (catchStmt.param && !catchStmt.param->name.empty() &&
-        catchStmt.param->name != "...") {
-      llvm::Type *paramType = llvm::Type::getInt32Ty(context());
-      if (catchStmt.param->type) {
-        llvm::Type *generated = generateType(catchStmt.param->type.get());
-        if (generated) {
-          paramType = generated;
+  if (tryStmt->catchStmts.empty()) {
+    emitRethrow();
+  } else {
+    // 一次性读取异常值；类型标签在每个 catch 的 dispatch 块读取。
+    llvm::Value *excWord =
+        builder()->CreateLoad(i64Ty, excValue, "exc.word");
+
+    llvm::BasicBlock *dispatchBB = catchBB;
+    for (size_t i = 0; i < tryStmt->catchStmts.size(); ++i) {
+      auto &catchStmt = *tryStmt->catchStmts[i];
+      builder()->SetInsertPoint(dispatchBB);
+
+      llvm::BasicBlock *bodyBB =
+          llvm::BasicBlock::Create(context(), "catch.body", func);
+      llvm::BasicBlock *nextBB =
+          llvm::BasicBlock::Create(context(), "catch.next", func);
+
+      if (catchStmt.catchTag == 0) {
+        // catch(...) 或无法确定类型的 catch：接受所有异常。
+        builder()->CreateBr(bodyBB);
+      } else {
+        llvm::Value *throwTag =
+            builder()->CreateLoad(i64Ty, excType, "exc.tag");
+        llvm::Value *matches = builder()->CreateICmpEQ(
+            throwTag,
+            llvm::ConstantInt::get(i64Ty, catchStmt.catchTag),
+            "catch.match");
+        builder()->CreateCondBr(matches, bodyBB, nextBB);
+      }
+
+      builder()->SetInsertPoint(bodyBB);
+      std::string paramName;
+      llvm::Value *previousBinding = nullptr;
+      bool hadPreviousBinding = false;
+      if (catchStmt.param && !catchStmt.param->name.empty() &&
+          catchStmt.param->name != "...") {
+        paramName = catchStmt.param->name;
+        auto binding = namedValues_.find(paramName);
+        if (binding != namedValues_.end()) {
+          previousBinding = binding->second;
+          hadPreviousBinding = true;
+        }
+
+        llvm::Type *paramType = llvm::Type::getInt32Ty(context());
+        if (catchStmt.param->type) {
+          llvm::Type *generated = generateType(catchStmt.param->type.get());
+          if (generated) {
+            paramType = generated;
+          }
+        }
+        llvm::AllocaInst *catchAlloca =
+            createEntryAlloca(paramType, catchStmt.param->name);
+        builder()->CreateStore(
+            fromExceptionWord(builder(), excWord, paramType), catchAlloca);
+        namedValues_[catchStmt.param->name] = catchAlloca;
+      }
+
+      generateStatement(std::move(catchStmt.body));
+
+      // catch 参数只在 catch 体内部可见，避免泄漏到后续语句。
+      if (!paramName.empty()) {
+        if (hadPreviousBinding) {
+          namedValues_[paramName] = previousBinding;
+        } else {
+          namedValues_.erase(paramName);
         }
       }
-      llvm::AllocaInst *catchAlloca = builder()->CreateAlloca(
-          paramType, nullptr, catchStmt.param->name);
-      builder()->CreateStore(
-          fromExceptionWord(builder(), excWord, paramType), catchAlloca);
-      namedValues_[catchStmt.param->name] = catchAlloca;
+
+      if (!builder()->GetInsertBlock()->getTerminator()) {
+        builder()->CreateBr(endBB);
+      }
+      dispatchBB = nextBB;
     }
 
-    generateStatement(std::move(catchStmt.body));
-    if (!builder()->GetInsertBlock()->getTerminator()) {
-      builder()->CreateBr(endBB);
-    }
+    // 所有 catch 都不匹配：继续向外抛。
+    builder()->SetInsertPoint(dispatchBB);
+    emitRethrow();
   }
 
   func->insert(func->end(), endBB);
@@ -3928,19 +4369,28 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
     std::unique_ptr<ast::ThrowStmt> throwStmt) {
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   auto *excValue = getExceptionValueGlobal(module());
+  auto *excType = getExceptionTypeGlobal(module());
   auto *excHandler = getExceptionHandlerGlobal(module());
   llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
 
-  llvm::Value *value = nullptr;
+  // 无表达式的 `throw;` 是重新抛出：保留当前异常值和类型标签，
+  // 这样外层具体类型的 catch 仍能匹配原始异常。
   if (throwStmt->expr) {
-    value = generateExpression(std::move(throwStmt->expr));
-  }
-  if (!value) {
-    value = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+    llvm::Value *value = generateExpression(std::move(throwStmt->expr));
+    if (!value) {
+      value = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+    }
+    llvm::Value *word = toExceptionWord(builder(), value);
+    builder()->CreateStore(word, excValue);
+    builder()->CreateStore(
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
+                               throwStmt->exceptionTag),
+        excType);
   }
 
-  llvm::Value *word = toExceptionWord(builder(), value);
-  builder()->CreateStore(word, excValue);
+  // 当前函数的 defer 必须在本帧被 longjmp 丢弃前执行。用运行时 flag
+  // 判断 defer 是否真的被执行过，避免执行未进入分支里的 defer。
+  emitDeferCleanup(false);
 
   llvm::Value *handler =
       builder()->CreateLoad(ptrTy, excHandler, "handler");
@@ -3972,11 +4422,77 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
   return nullptr;
 }
 
-// 生成 defer 语句
+// 生成 defer 语句。defer 表达式在函数级收集；额外记录一个 i1 标志，
+// 表示该 defer 语句在运行时是否真的执行到了。这样在 return/throw
+// 的清理路径上不会误执行未进入分支中的 defer。
 llvm::Value *LLVMCodeGenerator::generateDeferStmt(
     std::unique_ptr<ast::DeferStmt> deferStmt) {
+  llvm::Function *func = builder()->GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                 func->getEntryBlock().begin());
+  llvm::AllocaInst *flag = entryBuilder.CreateAlloca(
+      llvm::Type::getInt1Ty(context()), nullptr, "defer.flag");
+  entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
+  builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
+
   deferExpressions_.push_back(std::move(deferStmt->expr));
+  deferFlags_.push_back(flag);
   return nullptr;
+}
+
+// 生成按 LIFO 顺序执行 defer 的代码。每个 defer 都受其运行时 flag
+// 保护；consumeExpressions 为 true 时移动原始 AST（函数正常结束），
+// 否则克隆 AST（return/throw 路径，后续路径仍需使用原始节点）。
+void LLVMCodeGenerator::emitDeferCleanup(bool consumeExpressions) {
+  if (deferExpressions_.empty()) {
+    return;
+  }
+  llvm::Function *func = currentFunction_;
+  if (!func) {
+    return;
+  }
+  llvm::Type *i1Ty = llvm::Type::getInt1Ty(context());
+
+  for (size_t i = deferExpressions_.size(); i-- > 0;) {
+    if (!deferExpressions_[i]) {
+      continue;
+    }
+    llvm::AllocaInst *flag =
+        i < deferFlags_.size() ? deferFlags_[i] : nullptr;
+    llvm::BasicBlock *thenBB =
+        llvm::BasicBlock::Create(context(), "defer.then", func);
+    llvm::BasicBlock *mergeBB =
+        llvm::BasicBlock::Create(context(), "defer.cont", func);
+
+    if (flag) {
+      llvm::Value *enabled =
+          builder()->CreateLoad(i1Ty, flag, "defer.enabled");
+      builder()->CreateCondBr(enabled, thenBB, mergeBB);
+    } else {
+      builder()->CreateBr(thenBB);
+    }
+
+    builder()->SetInsertPoint(thenBB);
+    if (consumeExpressions) {
+      generateExpression(std::move(deferExpressions_[i]));
+    } else {
+      auto cloned = ast::cloneExprWithSubst(deferExpressions_[i].get(), {});
+      if (cloned) {
+        generateExpression(std::move(cloned));
+      }
+      // 清理路径已经执行过该 defer；清除 flag，避免同一函数随后
+      // 正常结束（例如 throw 被同函数 catch 捕获）时重复执行。
+      if (flag && builder()->GetInsertBlock() &&
+          !builder()->GetInsertBlock()->getTerminator()) {
+        builder()->CreateStore(llvm::ConstantInt::getFalse(context()), flag);
+      }
+    }
+    if (builder()->GetInsertBlock() &&
+        !builder()->GetInsertBlock()->getTerminator()) {
+      builder()->CreateBr(mergeBB);
+    }
+    builder()->SetInsertPoint(mergeBB);
+  }
 }
 
 // 生成 getter 声明（独立，无 class 上下文）
@@ -4240,6 +4756,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   currentFunction_ = function;
   namedValues_.clear();
   deferExpressions_.clear();
+  deferFlags_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *selfArg = &(*argIt++);
@@ -4268,7 +4785,9 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
     if (!function->empty()) {
       llvm::BasicBlock *lastBlock = &function->back();
       if (!lastBlock->getTerminator()) {
-        builder()->SetInsertPoint(lastBlock);
+        emitDeferCleanup(true);
+        deferExpressions_.clear();
+        deferFlags_.clear();
         if (returnType->isVoidTy()) {
           builder()->CreateRetVoid();
         } else {
@@ -4279,6 +4798,8 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   }
 
   currentFunction_ = prevFunction;
+  deferExpressions_.clear();
+  deferFlags_.clear();
   return function;
 }
 

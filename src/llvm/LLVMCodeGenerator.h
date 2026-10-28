@@ -113,6 +113,9 @@ private:
   llvm::Value *
   generateCompoundStmt(std::unique_ptr<ast::CompoundStmt> compoundStmt);
   llvm::Value *generateReturnStmt(std::unique_ptr<ast::ReturnStmt> returnStmt);
+  // 生成按 LIFO 顺序执行 defer 的代码；consumeExpressions 为 true 时
+  // 会移动原始 AST（仅函数正常结束时使用）。
+  void emitDeferCleanup(bool consumeExpressions);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
@@ -193,6 +196,10 @@ private:
   bool isReadonlyType(ast::Type *type);
 
   // 辅助函数
+  // 在函数入口块创建 alloca。defer 的异常清理块可能从入口直接到达，
+  // 因此 defer 可能引用的局部变量必须由入口块支配。
+  llvm::AllocaInst *createEntryAlloca(llvm::Type *type,
+                                      const std::string &name);
   llvm::Type *getLiteralViewType();
   std::string getTypeName(ast::Type *type);
   std::string getLLVMTypeName(llvm::Type *type);
@@ -205,6 +212,8 @@ private:
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
+  // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
+  std::vector<llvm::AllocaInst *> deferFlags_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
   std::vector<llvm::Value *> exceptionHandlerStack_;
   std::vector<std::string> namespaceStack_;

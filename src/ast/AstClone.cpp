@@ -275,7 +275,9 @@ std::unique_ptr<Statement> cloneStmtImpl(const Statement *stmt,
     if (s->expr) {
       expr = cloneExprImpl(s->expr.get(), subst);
     }
-    return std::make_unique<ThrowStmt>(std::move(expr));
+    auto cloned = std::make_unique<ThrowStmt>(std::move(expr));
+    cloned->exceptionTag = s->exceptionTag;
+    return cloned;
   }
   case NodeType::DeferStmt: {
     auto *s = static_cast<const DeferStmt *>(stmt);
@@ -290,8 +292,10 @@ std::unique_ptr<Statement> cloneStmtImpl(const Statement *stmt,
       if (catchStmt->param) {
         param = cloneParameter(catchStmt->param.get(), subst);
       }
-      catches.push_back(std::make_unique<CatchStmt>(
-          std::move(param), cloneStmtImpl(catchStmt->body.get(), subst)));
+      auto clonedCatch = std::make_unique<CatchStmt>(
+          std::move(param), cloneStmtImpl(catchStmt->body.get(), subst));
+      clonedCatch->catchTag = catchStmt->catchTag;
+      catches.push_back(std::move(clonedCatch));
     }
     return std::make_unique<TryStmt>(
         cloneStmtImpl(s->tryBlock.get(), subst), std::move(catches));
