@@ -1,7 +1,9 @@
 #include "LLVMCodeGenerator.h"
 #include "../Diagnostics.h"
 #include "../ast/AstClone.h"
+#include <cctype>
 #include <ctime>
+#include <functional>
 #include <iostream>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
@@ -142,6 +144,33 @@ llvm::Value *toExceptionWord(llvm::IRBuilder<> *builder, llvm::Value *value) {
   return builder->CreatePtrToInt(slot, i64Ty, "exc.ptrtoint");
 }
 
+// 把任意标量条件转换成 i1，避免对 double/pointer 使用 ICmp。
+llvm::Value *toBoolean(llvm::IRBuilder<> *builder, llvm::Value *value,
+                       const char *name) {
+  if (!value) {
+    return nullptr;
+  }
+  llvm::Type *type = value->getType();
+  if (type->isIntegerTy(1)) {
+    return value;
+  }
+  if (type->isFloatingPointTy()) {
+    return builder->CreateFCmpONE(
+        value, llvm::ConstantFP::get(type, 0.0), name);
+  }
+  if (type->isIntegerTy()) {
+    return builder->CreateICmpNE(
+        value, llvm::ConstantInt::get(type, 0), name);
+  }
+  if (type->isPointerTy()) {
+    return builder->CreateICmpNE(
+        value, llvm::ConstantPointerNull::get(
+                   llvm::cast<llvm::PointerType>(type)),
+        name);
+  }
+  return value;
+}
+
 llvm::Value *fromExceptionWord(llvm::IRBuilder<> *builder,
                                llvm::Value *word, llvm::Type *targetTy) {
   if (targetTy->isIntegerTy()) {
@@ -200,9 +229,11 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
         type == ast::NodeType::InterfaceDecl) {
       generateDeclaration(std::move(decl));
     } else if (type == ast::NodeType::EnumDecl) {
-      // 收集枚举类型名
+      // 收集枚举类型名，并生成 Color_Green 形式的全局常量。
       auto *enumDecl = static_cast<ast::EnumDecl *>(decl.get());
       enumTypes_.insert(enumDecl->name);
+      generateEnumDecl(std::unique_ptr<ast::EnumDecl>(
+          static_cast<ast::EnumDecl *>(decl.release())));
     }
   }
 
@@ -305,6 +336,29 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   llvm::Type *varType = nullptr;
   bool isSliceType = false;
   llvm::Type *sliceElementType = nullptr;
+
+  // 无显式类型的普通表达式：先求值，再按值的 LLVM 类型分配变量。
+  // 这样 `var x = a[0] + a[1]` 不会因为无法静态推断而退化成 int。
+  auto *initializerMember =
+      dynamic_cast<ast::MemberExpr *>(varDecl->initializer.get());
+  if (!varDecl->type && varDecl->initializer &&
+      (dynamic_cast<ast::BinaryExpr *>(varDecl->initializer.get()) ||
+       dynamic_cast<ast::UnaryExpr *>(varDecl->initializer.get()) ||
+       dynamic_cast<ast::SubscriptExpr *>(varDecl->initializer.get()) ||
+       dynamic_cast<ast::ConditionalExpr *>(varDecl->initializer.get()) ||
+       (initializerMember && initializerMember->member != "len" &&
+        initializerMember->member != "ptr"))) {
+    llvm::Value *initValue =
+        generateExpression(std::move(varDecl->initializer));
+    if (!initValue) {
+      return nullptr;
+    }
+    llvm::AllocaInst *inferredAlloca =
+        createEntryAlloca(initValue->getType(), varDecl->name);
+    builder()->CreateStore(initValue, inferredAlloca);
+    namedValues_[varDecl->name] = inferredAlloca;
+    return inferredAlloca;
+  }
 
   if (varDecl->type) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
@@ -419,6 +473,20 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
         // 对于其他成员，暂时使用 int 作为默认类型
         varType = llvm::Type::getInt32Ty(context());
       }
+    } else if (auto *newExpr =
+                   dynamic_cast<ast::NewExpr *>(varDecl->initializer.get())) {
+      if (auto *arrayType =
+              dynamic_cast<ast::ArrayType *>(newExpr->type.get())) {
+        varType = getOrCreateSliceType(generateType(arrayType->baseType.get()));
+      } else if (auto *allocatedType =
+                     dynamic_cast<ast::Type *>(newExpr->type.get())) {
+        llvm::Type *llvmAllocated = generateType(allocatedType);
+        varType = llvmAllocated
+                      ? static_cast<llvm::Type *>(llvmAllocated->getPointerTo())
+                      : llvm::Type::getInt32Ty(context());
+      } else {
+        varType = llvm::Type::getInt32Ty(context());
+      }
     } else if (auto *arrayInitExpr = dynamic_cast<ast::ArrayInitExpr *>(
                    varDecl->initializer.get())) {
       // 对于数组初始化表达式，生成切片类型
@@ -448,6 +516,14 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     } else {
       // 对于其他非字面量初始化器，暂时使用 int 作为默认类型
       varType = llvm::Type::getInt32Ty(context());
+    }
+  }
+
+  if (varDecl->type) {
+    if (auto *pointerType =
+            dynamic_cast<ast::PointerType *>(varDecl->type.get())) {
+      namedValuePointeeTypes_[varDecl->name] =
+          generateType(pointerType->baseType.get());
     }
   }
 
@@ -506,6 +582,21 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   }
 
 normal_var_path:
+  // 元组字面量：生成结构体值并存入局部 alloca。
+  if (varDecl->initializer) {
+    if (dynamic_cast<ast::TupleExpr *>(varDecl->initializer.get())) {
+      llvm::Value *initValue =
+          generateExpression(std::move(varDecl->initializer));
+      if (initValue && initValue->getType()->isStructTy()) {
+        llvm::AllocaInst *tupleAlloca =
+            createEntryAlloca(initValue->getType(), varDecl->name);
+        builder()->CreateStore(initValue, tupleAlloca);
+        namedValues_[varDecl->name] = tupleAlloca;
+        return tupleAlloca;
+      }
+    }
+  }
+
   // 检查是否是数组初始化表达式
   if (varDecl->initializer) {
     if (auto *arrayInitExpr =
@@ -523,57 +614,84 @@ normal_var_path:
 
   llvm::AllocaInst *alloca = createEntryAlloca(varType, varDecl->name);
 
-  // 检查是否是切片类型且初始化值是数组初始化表达式，进行临时数组生命周期延长
+  // 切片初始化：数组字面量、数组变量、切片变量、new T[n] 或切片区间。
   if (isSliceType && sliceElementType && varDecl->initializer) {
+    llvm::StructType *sliceType = getOrCreateSliceType(sliceElementType);
     if (auto *arrayInit =
             dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
-      // 计算数组大小
       size_t arraySize = arrayInit->elements.size();
-
-      // 创建临时数组
       llvm::ArrayType *arrayType =
           llvm::ArrayType::get(sliceElementType, arraySize);
       llvm::AllocaInst *tempArrayAlloca =
           createEntryAlloca(arrayType, "temp_array");
 
-      // 填充数组元素
       for (size_t i = 0; i < arraySize; ++i) {
         auto &element = arrayInit->elements[i];
         llvm::Value *elementValue = generateExpression(std::move(element));
-
-        // 计算数组元素的地址
-        llvm::Value *indices[] = {
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)};
         llvm::Value *elementPtr = builder()->CreateGEP(
-            arrayType, tempArrayAlloca, indices, "element_ptr");
-
-        // 存储元素值
+            arrayType, tempArrayAlloca,
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
+            "element_ptr");
         builder()->CreateStore(elementValue, elementPtr);
       }
 
-      // 计算临时数组的指针和长度
       llvm::Value *arrayPtr = builder()->CreateGEP(
           arrayType, tempArrayAlloca,
           {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)});
-
-      // 假设切片类型是一个结构体，包含 ptr 和 len 两个成员
-      // 这里需要根据实际的切片类型定义来调整
       llvm::Value *sliceValue = builder()->CreateInsertValue(
-          llvm::UndefValue::get(varType), arrayPtr, 0);
+          llvm::UndefValue::get(sliceType), arrayPtr, 0);
       sliceValue = builder()->CreateInsertValue(
           sliceValue,
-          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), arraySize),
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), arraySize),
           1);
-
-      // 存储切片值到变量
       builder()->CreateStore(sliceValue, alloca);
     } else {
-      // 对于其他类型的初始化器，正常处理
-      if (varDecl->initializer) {
-        llvm::Value *initValue =
-            generateExpression(std::move(varDecl->initializer));
+      llvm::Value *initValue =
+          generateExpression(std::move(varDecl->initializer));
+      if (auto *initAlloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
+        llvm::Type *allocatedType = initAlloca->getAllocatedType();
+        if (allocatedType->isArrayTy()) {
+          auto *arrayType = llvm::cast<llvm::ArrayType>(allocatedType);
+          llvm::Value *arrayPtr = builder()->CreateGEP(
+              arrayType, initAlloca,
+              {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+               llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)});
+          llvm::Value *sliceValue = builder()->CreateInsertValue(
+              llvm::UndefValue::get(sliceType), arrayPtr, 0);
+          sliceValue = builder()->CreateInsertValue(
+              sliceValue,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                     arrayType->getNumElements()),
+              1);
+          builder()->CreateStore(sliceValue, alloca);
+        } else if (isSliceStructType(allocatedType)) {
+          llvm::Value *sliceValue =
+              builder()->CreateLoad(allocatedType, initAlloca, "slice.load");
+          builder()->CreateStore(sliceValue, alloca);
+        } else {
+          builder()->CreateStore(initValue, alloca);
+        }
+      } else if (initValue->getType()->isArrayTy()) {
+        // int[] s = fixedArray; 数组值先落到临时数组，再取首元素指针。
+        auto *arrayType = llvm::cast<llvm::ArrayType>(initValue->getType());
+        llvm::AllocaInst *tmp =
+            createEntryAlloca(arrayType, "slice.array.tmp");
+        builder()->CreateStore(initValue, tmp);
+        llvm::Value *arrayPtr = builder()->CreateGEP(
+            arrayType, tmp,
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)});
+        llvm::Value *sliceValue = builder()->CreateInsertValue(
+            llvm::UndefValue::get(sliceType), arrayPtr, 0);
+        sliceValue = builder()->CreateInsertValue(
+            sliceValue,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                   arrayType->getNumElements()),
+            1);
+        builder()->CreateStore(sliceValue, alloca);
+      } else {
         builder()->CreateStore(initValue, alloca);
       }
     }
@@ -637,19 +755,37 @@ llvm::Value *LLVMCodeGenerator::generateTupleDestructuringDecl(
     return nullptr;
   }
 
-  // 假设元组是一个结构体，我们需要提取各个元素
-  // 这里需要根据实际的元组类型定义来调整
+  // 元组表达式返回 alloca；函数调用可能返回结构体值。
+  llvm::Value *tupleValue = initValue;
+  llvm::StructType *tupleType = nullptr;
+  if (auto *tupleAlloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
+    tupleType = llvm::dyn_cast<llvm::StructType>(
+        tupleAlloca->getAllocatedType());
+    if (tupleType) {
+      tupleValue =
+          builder()->CreateLoad(tupleType, tupleAlloca, "tuple.load");
+    }
+  } else if (auto *structType =
+                 llvm::dyn_cast<llvm::StructType>(initValue->getType())) {
+    tupleType = structType;
+  }
+  if (!tupleType) {
+    error("Tuple destructuring requires a tuple value");
+    return nullptr;
+  }
+
   for (size_t i = 0; i < tupleDecl->names.size(); ++i) {
     const std::string &name = tupleDecl->names[i];
-
-    // 提取元组元素
-    llvm::Value *elementValue = builder()->CreateExtractValue(initValue, i);
-
-    // 为元素创建局部变量
+    if (i >= tupleType->getNumElements()) {
+      error("Tuple destructuring has too many names");
+      return nullptr;
+    }
+    llvm::Value *elementValue =
+        builder()->CreateExtractValue(tupleValue, static_cast<unsigned>(i),
+                                      name + ".tuple.elem");
     llvm::AllocaInst *alloca =
         createEntryAlloca(elementValue->getType(), name);
     builder()->CreateStore(elementValue, alloca);
-
     namedValues_[name] = alloca;
   }
 
@@ -760,6 +896,8 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   currentFunction_ = function;
 
   namedValues_.clear();
+
+  namedValuePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
   lateVariables_.clear();
@@ -775,6 +913,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
           builder()->CreateAlloca(arg->getType(), nullptr, param->name);
       builder()->CreateStore(arg, alloca);
       namedValues_[param->name] = alloca;
+      if (auto *pointerType =
+              dynamic_cast<ast::PointerType *>(param->type.get())) {
+        namedValuePointeeTypes_[param->name] =
+            generateType(pointerType->baseType.get());
+      }
 
       ++argIt;
       ++paramIndex;
@@ -1143,6 +1286,8 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     currentFunction_ = function;
 
     namedValues_.clear();
+
+    namedValuePointeeTypes_.clear();
     deferExpressions_.clear();
     deferFlags_.clear();
     lateVariables_.clear();
@@ -1270,6 +1415,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
         c_hat::debugStream() << "Debug: lastBlock has terminator = "
                   << (lastBlock->getTerminator() != nullptr) << std::endl;
         if (!lastBlock->getTerminator()) {
+          builder()->SetInsertPoint(lastBlock);
           c_hat::debugStream() << "Debug: Adding default return statement" << std::endl;
 
           // 检查是否有异常
@@ -1530,6 +1676,8 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     currentFunction_ = function;
 
     namedValues_.clear();
+
+    namedValuePointeeTypes_.clear();
     deferExpressions_.clear();
     deferFlags_.clear();
     lateVariables_.clear();
@@ -1557,6 +1705,11 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
             builder()->CreateAlloca(arg->getType(), nullptr, param->name);
         builder()->CreateStore(arg, alloca);
         namedValues_[param->name] = alloca;
+        if (auto *pointerType =
+                dynamic_cast<ast::PointerType *>(param->type.get())) {
+          namedValuePointeeTypes_[param->name] =
+              generateType(pointerType->baseType.get());
+        }
       }
     }
 
@@ -1660,6 +1813,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
       }
 
       if (!lastBlock->getTerminator()) {
+        builder()->SetInsertPoint(lastBlock);
         // 为已初始化的 late 变量调用析构函数
         for (const auto &[varName, info] : lateVariables_) {
           if (info.isInitialized) {
@@ -1710,6 +1864,105 @@ LLVMCodeGenerator::createEntryAlloca(llvm::Type *type,
   llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                  func->getEntryBlock().begin());
   return entryBuilder.CreateAlloca(type, nullptr, name);
+}
+
+llvm::StructType *
+LLVMCodeGenerator::getOrCreateSliceType(llvm::Type *elementType) {
+  if (!elementType) {
+    elementType = llvm::Type::getInt32Ty(context());
+  }
+  auto existing = sliceTypesByElement_.find(elementType);
+  if (existing != sliceTypesByElement_.end()) {
+    return existing->second;
+  }
+
+  std::string suffix = "int";
+  if (elementType->isIntegerTy(1)) {
+    suffix = "bool";
+  } else if (elementType->isIntegerTy(8)) {
+    suffix = "byte";
+  } else if (elementType->isIntegerTy(16)) {
+    suffix = "short";
+  } else if (elementType->isIntegerTy(32)) {
+    suffix = "int";
+  } else if (elementType->isIntegerTy(64)) {
+    suffix = "long";
+  } else if (elementType->isFloatTy()) {
+    suffix = "float";
+  } else if (elementType->isDoubleTy()) {
+    suffix = "double";
+  } else if (elementType->isPointerTy()) {
+    suffix = "ptr";
+  } else if (auto *structType = llvm::dyn_cast<llvm::StructType>(elementType)) {
+    suffix = structType->hasName() ? structType->getName().str() : "struct";
+    for (char &c : suffix) {
+      if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+        c = '_';
+      }
+    }
+  }
+
+  std::string name = "Slice_" + suffix;
+  if (sliceTypes_.find(name) != sliceTypes_.end()) {
+    name += "_" + std::to_string(sliceTypes_.size());
+  }
+  llvm::StructType *sliceType = llvm::StructType::create(
+      context(),
+      {llvm::PointerType::getUnqual(context()),
+       llvm::Type::getInt32Ty(context())},
+      name);
+  sliceTypes_[name] = sliceType;
+  sliceTypesByElement_[elementType] = sliceType;
+  sliceElementTypes_[sliceType] = elementType;
+  return sliceType;
+}
+
+llvm::Type *
+LLVMCodeGenerator::getSliceElementType(llvm::StructType *sliceType) {
+  if (!sliceType) {
+    return llvm::Type::getInt32Ty(context());
+  }
+  auto it = sliceElementTypes_.find(sliceType);
+  if (it != sliceElementTypes_.end()) {
+    return it->second;
+  }
+  std::string name = sliceType->hasName() ? sliceType->getName().str() : "";
+  if (name.find("byte") != std::string::npos) {
+    return llvm::Type::getInt8Ty(context());
+  }
+  if (name.find("double") != std::string::npos) {
+    return llvm::Type::getDoubleTy(context());
+  }
+  if (name.find("float") != std::string::npos) {
+    return llvm::Type::getFloatTy(context());
+  }
+  if (name.find("long") != std::string::npos) {
+    return llvm::Type::getInt64Ty(context());
+  }
+  if (name.find("short") != std::string::npos) {
+    return llvm::Type::getInt16Ty(context());
+  }
+  if (name.find("bool") != std::string::npos) {
+    return llvm::Type::getInt1Ty(context());
+  }
+  if (name.find("ptr") != std::string::npos) {
+    return llvm::PointerType::getUnqual(context());
+  }
+  return llvm::Type::getInt32Ty(context());
+}
+
+bool LLVMCodeGenerator::isSliceStructType(llvm::Type *type) {
+  auto *structType = llvm::dyn_cast_or_null<llvm::StructType>(type);
+  if (!structType) {
+    return false;
+  }
+  if (sliceElementTypes_.find(structType) != sliceElementTypes_.end()) {
+    return true;
+  }
+  if (!structType->hasName()) {
+    return false;
+  }
+  return structType->getName().str().rfind("Slice_", 0) == 0;
 }
 
 // 辅助函数：获取 literalview 类型
@@ -2174,6 +2427,53 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
     return nullptr;
   }
 
+  // new T[n]：分配连续数组并返回 { ptr, len } 切片。
+  if (auto *arrayType = dynamic_cast<ast::ArrayType *>(typeNode)) {
+    llvm::Type *elementType = generateType(arrayType->baseType.get());
+    if (!elementType) {
+      elementType = llvm::Type::getInt32Ty(context());
+    }
+    if (!arrayType->size) {
+      error("Array new expression requires a size");
+      return nullptr;
+    }
+    llvm::Value *count = generateExpression(arrayType->size->clone());
+    if (!count) {
+      return nullptr;
+    }
+    llvm::Value *count64 = count;
+    if (!count64->getType()->isIntegerTy(64)) {
+      count64 = builder()->CreateIntCast(
+          count64, llvm::Type::getInt64Ty(context()), false, "new.count64");
+    }
+    llvm::Value *count32 = count;
+    if (count32->getType() != llvm::Type::getInt32Ty(context())) {
+      count32 = builder()->CreateIntCast(
+          count32, llvm::Type::getInt32Ty(context()), false, "new.count32");
+    }
+
+    uint64_t elementSize =
+        module()->getDataLayout().getTypeAllocSize(elementType).getFixedValue();
+    llvm::Value *bytes = builder()->CreateMul(
+        count64,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), elementSize),
+        "new.bytes");
+    llvm::FunctionCallee mallocFn = module()->getOrInsertFunction(
+        "malloc", llvm::FunctionType::get(
+                      llvm::PointerType::getUnqual(context()),
+                      {llvm::Type::getInt64Ty(context())}, false));
+    llvm::Value *raw =
+        builder()->CreateCall(mallocFn, {bytes}, "malloc.result");
+    llvm::Value *ptr = builder()->CreatePointerCast(
+        raw, llvm::PointerType::getUnqual(context()), "array.ptr");
+
+    llvm::StructType *sliceType = getOrCreateSliceType(elementType);
+    llvm::Value *sliceValue =
+        builder()->CreateInsertValue(llvm::UndefValue::get(sliceType), ptr, 0);
+    sliceValue = builder()->CreateInsertValue(sliceValue, count32, 1);
+    return sliceValue;
+  }
+
   llvm::Type *type = generateType(typeNode);
   if (!type) {
     error("Unknown type in new expression");
@@ -2232,38 +2532,46 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
 // 生成 delete 表达式
 llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     std::unique_ptr<ast::DeleteExpr> deleteExpr) {
-  // 生成表达式
   llvm::Value *exprValue = generateExpression(std::move(deleteExpr->expr));
   if (!exprValue) {
     return nullptr;
   }
 
-  // 如果是类类型，调用析构函数
-  // 构造 ~ClassName 函数名，在 functions_ 中查找
+  // 切片值 { ptr, len } 释放底层 ptr；指针值直接释放。
+  llvm::Value *ptrValue = exprValue;
+  llvm::Type *valueType = exprValue->getType();
+  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(exprValue)) {
+    llvm::Type *allocatedType = alloca->getAllocatedType();
+    if (isSliceStructType(allocatedType)) {
+      llvm::Value *sliceValue =
+          builder()->CreateLoad(allocatedType, alloca, "delete.slice");
+      ptrValue = builder()->CreateExtractValue(sliceValue, 0, "delete.ptr");
+    } else if (allocatedType->isPointerTy()) {
+      ptrValue =
+          builder()->CreateLoad(allocatedType, alloca, "delete.ptr.load");
+    }
+  } else if (valueType->isStructTy() && isSliceStructType(valueType)) {
+    ptrValue = builder()->CreateExtractValue(exprValue, 0, "delete.ptr");
+  }
+
+  // 类指针：调用 ClassName_~ClassName(this)。
   if (!deleteExpr->typeName.empty()) {
-    std::string dtorName = "~" + deleteExpr->typeName;
+    std::string dtorName =
+        deleteExpr->typeName + "_~" + deleteExpr->typeName;
     auto it = functions_.find(dtorName);
     if (it != functions_.end()) {
-      llvm::Function *destructor = it->second;
-      builder()->CreateCall(destructor, {exprValue});
+      builder()->CreateCall(it->second, {ptrValue});
     }
   }
 
-  // 获取 free 函数
   llvm::FunctionType *freeType = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context()),
-      {llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0)}, false);
+      {llvm::PointerType::getUnqual(context())}, false);
   llvm::FunctionCallee freeFunc =
       module()->getOrInsertFunction("free", freeType);
-
-  // 类型转换为 void*
   llvm::Value *voidPtr = builder()->CreatePointerCast(
-      exprValue, llvm::PointerType::get(llvm::Type::getInt8Ty(context()), 0),
-      "void.ptr");
-
-  // 调用 free
+      ptrValue, llvm::PointerType::getUnqual(context()), "void.ptr");
   builder()->CreateCall(freeFunc, {voidPtr});
-
   return nullptr;
 }
 
@@ -2339,30 +2647,29 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
       llvmType = llvm::Type::getInt32Ty(context());
     }
   } else if (auto *sliceType = dynamic_cast<ast::SliceType *>(type)) {
-    // 生成切片类型
-    std::string sliceTypeName =
-        "Slice_" + getTypeName(sliceType->baseType.get());
-    auto sliceIt = sliceTypes_.find(sliceTypeName);
-    if (sliceIt != sliceTypes_.end()) {
-      llvmType = sliceIt->second;
-    } else {
-      // 生成元素类型
-      llvm::Type *elementType = generateType(sliceType->baseType.get());
-      if (!elementType) {
-        elementType = llvm::Type::getInt32Ty(context());
+    // 生成切片类型：{ element*, i32 len }
+    llvm::Type *elementType = generateType(sliceType->baseType.get());
+    llvmType = getOrCreateSliceType(elementType);
+  } else if (auto *arrayType = dynamic_cast<ast::ArrayType *>(type)) {
+    // 固定长度数组：只支持字面量长度；动态长度只用于 new T[n]。
+    llvm::Type *elementType = generateType(arrayType->baseType.get());
+    size_t arraySize = 0;
+    if (auto *sizeLiteral =
+            dynamic_cast<ast::Literal *>(arrayType->size.get())) {
+      if (sizeLiteral->type == ast::Literal::Type::Integer) {
+        arraySize = static_cast<size_t>(std::stoull(sizeLiteral->value));
       }
-
-      // 创建切片类型的结构体
-      std::vector<llvm::Type *> fields;
-      fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
-      fields.push_back(llvm::Type::getInt32Ty(context()));      // len
-      llvm::StructType *sliceStructType =
-          llvm::StructType::create(context(), fields, sliceTypeName);
-
-      // 存储到 sliceTypes_ 映射中
-      sliceTypes_[sliceTypeName] = sliceStructType;
-      llvmType = sliceStructType;
     }
+    llvmType = llvm::ArrayType::get(elementType, arraySize);
+  } else if (auto *tupleType = dynamic_cast<ast::TupleType *>(type)) {
+    std::vector<llvm::Type *> elementTypes;
+    for (const auto &element : tupleType->elementTypes) {
+      llvm::Type *elementType = generateType(element.get());
+      if (elementType) {
+        elementTypes.push_back(elementType);
+      }
+    }
+    llvmType = llvm::StructType::get(context(), elementTypes);
   } else if (auto *pointerType = dynamic_cast<ast::PointerType *>(type)) {
     // 生成指针类型
     llvm::Type *pointeeType = generateType(pointerType->baseType.get());
@@ -3043,6 +3350,17 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
 // 生成成员表达式
 llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     std::unique_ptr<ast::MemberExpr> memberExpr) {
+  // 枚举成员：Color.Green 对应全局常量 Color_Green。
+  if (auto *objectIdent =
+          dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+    std::string enumGlobalName =
+        objectIdent->name + "_" + memberExpr->member;
+    if (auto *global = module()->getNamedGlobal(enumGlobalName)) {
+      return builder()->CreateLoad(global->getValueType(), global,
+                                   "enum.value");
+    }
+  }
+
   llvm::Value *object = generateExpression(std::move(memberExpr->object));
   if (!object) {
     return nullptr;
@@ -3050,6 +3368,65 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
 
   unsigned idx = memberExpr->memberIndex;
   const std::string &memberName = memberExpr->member;
+
+  // 数组/切片的内建属性 len / ptr。
+  if (memberName == "len" || memberName == "ptr") {
+    llvm::Type *objectType = object->getType();
+    auto *objectAlloca = llvm::dyn_cast<llvm::AllocaInst>(object);
+    if (objectAlloca) {
+      objectType = objectAlloca->getAllocatedType();
+    }
+
+    if (objectType->isArrayTy()) {
+      auto *arrayType = llvm::cast<llvm::ArrayType>(objectType);
+      llvm::Value *arrayPtr = object;
+      if (!objectAlloca) {
+        llvm::AllocaInst *tmp =
+            createEntryAlloca(objectType, memberName + ".array.tmp");
+        builder()->CreateStore(object, tmp);
+        arrayPtr = tmp;
+      }
+      if (memberName == "len") {
+        return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                      arrayType->getNumElements());
+      }
+      return builder()->CreateGEP(
+          arrayType, arrayPtr,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+          "array.ptr");
+    }
+
+    if (isSliceStructType(objectType)) {
+      llvm::Value *sliceValue = object;
+      if (objectAlloca) {
+        sliceValue =
+            builder()->CreateLoad(objectType, objectAlloca, "slice.value");
+      }
+      if (memberName == "len") {
+        llvm::Value *len = builder()->CreateExtractValue(sliceValue, 1,
+                                                         "slice.len");
+        if (len->getType() != llvm::Type::getInt32Ty(context())) {
+          len = builder()->CreateIntCast(len,
+                                         llvm::Type::getInt32Ty(context()),
+                                         false, "slice.len32");
+        }
+        return len;
+      }
+      return builder()->CreateExtractValue(sliceValue, 0, "slice.ptr");
+    }
+
+    if (objectType->isPointerTy()) {
+      llvm::Value *ptr = object;
+      if (objectAlloca) {
+        ptr = builder()->CreateLoad(objectType, objectAlloca, "ptr.value");
+      }
+      if (memberName == "len") {
+        return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+      }
+      return ptr;
+    }
+  }
 
   // 语义层可能没有填 memberIndex；用当前类/结构体的字段表补上。
   std::string structName = memberExpr->structName;
@@ -3112,28 +3489,333 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
 // 生成下标表达式
 llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     std::unique_ptr<ast::SubscriptExpr> subscriptExpr, bool isLValue) {
-  llvm::Value *object = generateExpression(std::move(subscriptExpr->object));
-  llvm::Value *index = generateExpression(std::move(subscriptExpr->index));
+  struct ArrayBase {
+    llvm::Value *ptr = nullptr;
+    llvm::Type *elementType = nullptr;
+    llvm::ArrayType *arrayType = nullptr;
+    llvm::StructType *tupleType = nullptr;
+    llvm::Value *length = nullptr;
+  };
 
-  if (!object || !index) {
+  std::function<ArrayBase(ast::Expression *)> getBase;
+  std::function<llvm::Value *(ArrayBase &, llvm::Value *)> getElementPtr;
+
+  getElementPtr = [&](ArrayBase &base, llvm::Value *index) -> llvm::Value * {
+    if (!index) {
+      return nullptr;
+    }
+    if (index->getType() != llvm::Type::getInt32Ty(context())) {
+      if (index->getType()->isIntegerTy()) {
+        index = builder()->CreateIntCast(index,
+                                         llvm::Type::getInt32Ty(context()),
+                                         true, "index32");
+      }
+    }
+    if (base.tupleType) {
+      auto *constantIndex = llvm::dyn_cast<llvm::ConstantInt>(index);
+      if (!constantIndex) {
+        error("Tuple subscript must be a compile-time constant");
+        return nullptr;
+      }
+      return builder()->CreateStructGEP(
+          base.tupleType, base.ptr,
+          static_cast<unsigned>(constantIndex->getZExtValue()),
+          "tuple.elem.ptr");
+    }
+    if (base.arrayType) {
+      return builder()->CreateGEP(
+          base.arrayType, base.ptr,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           index},
+          "element_ptr");
+    }
+    return builder()->CreateGEP(base.elementType, base.ptr, index,
+                                "element_ptr");
+  };
+
+  getBase = [&](ast::Expression *expr) -> ArrayBase {
+    ArrayBase result;
+
+    // 标识符必须取 alloca 本身，否则 a[0] = x 会写到临时数组。
+    if (auto *ident = dynamic_cast<ast::Identifier *>(expr)) {
+      auto it = namedValues_.find(ident->name);
+      if (it == namedValues_.end()) {
+        error("Unknown variable: " + ident->name);
+        return result;
+      }
+      llvm::Value *value = it->second;
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(value)) {
+        llvm::Type *allocatedType = alloca->getAllocatedType();
+        if (allocatedType->isArrayTy()) {
+          result.ptr = alloca;
+          result.arrayType = llvm::cast<llvm::ArrayType>(allocatedType);
+          result.elementType = result.arrayType->getElementType();
+          result.length = llvm::ConstantInt::get(
+              llvm::Type::getInt32Ty(context()),
+              result.arrayType->getNumElements());
+          return result;
+        }
+        if (isSliceStructType(allocatedType)) {
+          auto *structType = llvm::cast<llvm::StructType>(allocatedType);
+          llvm::Value *sliceValue =
+              builder()->CreateLoad(structType, alloca, "slice.value");
+          result.ptr = builder()->CreateExtractValue(sliceValue, 0, "slice.ptr");
+          result.length =
+              builder()->CreateExtractValue(sliceValue, 1, "slice.len");
+          if (result.length->getType() !=
+              llvm::Type::getInt32Ty(context())) {
+            result.length = builder()->CreateIntCast(
+                result.length, llvm::Type::getInt32Ty(context()), false,
+                "slice.len32");
+          }
+          result.elementType = getSliceElementType(structType);
+          return result;
+        }
+        if (allocatedType->isPointerTy()) {
+          result.ptr =
+              builder()->CreateLoad(allocatedType, alloca, "ptr.value");
+          auto pointeeIt = namedValuePointeeTypes_.find(ident->name);
+          result.elementType =
+              pointeeIt != namedValuePointeeTypes_.end() && pointeeIt->second
+                  ? pointeeIt->second
+                  : llvm::Type::getInt32Ty(context());
+          return result;
+        }
+        if (allocatedType->isStructTy()) {
+          result.ptr = alloca;
+          result.tupleType = llvm::cast<llvm::StructType>(allocatedType);
+          return result;
+        }
+      } else {
+        if (value->getType()->isStructTy() &&
+            isSliceStructType(value->getType())) {
+          auto *structType = llvm::cast<llvm::StructType>(value->getType());
+          result.ptr = builder()->CreateExtractValue(value, 0, "slice.ptr");
+          result.length =
+              builder()->CreateExtractValue(value, 1, "slice.len");
+          if (result.length->getType() !=
+              llvm::Type::getInt32Ty(context())) {
+            result.length = builder()->CreateIntCast(
+                result.length, llvm::Type::getInt32Ty(context()), false,
+                "slice.len32");
+          }
+          result.elementType = getSliceElementType(structType);
+          return result;
+        }
+        if (value->getType()->isStructTy() &&
+            !isSliceStructType(value->getType())) {
+          auto *structType = llvm::cast<llvm::StructType>(value->getType());
+          llvm::AllocaInst *tmp =
+              createEntryAlloca(structType, "tuple.base.tmp");
+          builder()->CreateStore(value, tmp);
+          result.ptr = tmp;
+          result.tupleType = structType;
+          return result;
+        }
+        if (value->getType()->isArrayTy()) {
+          auto *arrayType = llvm::cast<llvm::ArrayType>(value->getType());
+          llvm::AllocaInst *tmp =
+              createEntryAlloca(arrayType, "array.base.tmp");
+          builder()->CreateStore(value, tmp);
+          result.ptr = tmp;
+          result.arrayType = arrayType;
+          result.elementType = arrayType->getElementType();
+          result.length = llvm::ConstantInt::get(
+              llvm::Type::getInt32Ty(context()), arrayType->getNumElements());
+          return result;
+        }
+        if (value->getType()->isPointerTy()) {
+          result.ptr = value;
+          result.elementType = llvm::Type::getInt32Ty(context());
+          return result;
+        }
+      }
+      return result;
+    }
+
+    // 嵌套下标：a[i][j] 必须让内层返回元素地址，而不是加载成临时值。
+    if (auto *sub = dynamic_cast<ast::SubscriptExpr *>(expr)) {
+      ArrayBase inner = getBase(sub->object.get());
+      llvm::Value *innerIndex =
+          generateExpression(sub->index->clone());
+      llvm::Value *innerPtr = getElementPtr(inner, innerIndex);
+      result.ptr = innerPtr;
+      if (inner.tupleType) {
+        auto *constantIndex = llvm::dyn_cast<llvm::ConstantInt>(innerIndex);
+        if (!constantIndex) {
+          error("Tuple subscript must be a compile-time constant");
+          return result;
+        }
+        unsigned tupleIndex =
+            static_cast<unsigned>(constantIndex->getZExtValue());
+        if (tupleIndex >= inner.tupleType->getNumElements()) {
+          error("Tuple subscript out of range");
+          return result;
+        }
+        llvm::Type *tupleElementType =
+            inner.tupleType->getElementType(tupleIndex);
+        if (tupleElementType->isStructTy()) {
+          result.tupleType = llvm::cast<llvm::StructType>(tupleElementType);
+        } else {
+          result.elementType = tupleElementType;
+        }
+      } else if (inner.elementType && inner.elementType->isArrayTy()) {
+        result.arrayType = llvm::cast<llvm::ArrayType>(inner.elementType);
+        result.elementType = result.arrayType->getElementType();
+        result.length = llvm::ConstantInt::get(
+            llvm::Type::getInt32Ty(context()),
+            result.arrayType->getNumElements());
+      } else {
+        result.elementType = inner.elementType;
+        result.length = inner.length;
+      }
+      return result;
+    }
+
+    llvm::Value *object = generateExpression(expr->clone());
+    if (!object) {
+      return result;
+    }
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+      llvm::Type *allocatedType = alloca->getAllocatedType();
+      if (allocatedType->isArrayTy()) {
+        result.ptr = alloca;
+        result.arrayType = llvm::cast<llvm::ArrayType>(allocatedType);
+        result.elementType = result.arrayType->getElementType();
+        result.length = llvm::ConstantInt::get(
+            llvm::Type::getInt32Ty(context()),
+            result.arrayType->getNumElements());
+        return result;
+      }
+      if (isSliceStructType(allocatedType)) {
+        auto *structType = llvm::cast<llvm::StructType>(allocatedType);
+        llvm::Value *sliceValue =
+            builder()->CreateLoad(structType, alloca, "slice.value");
+        result.ptr = builder()->CreateExtractValue(sliceValue, 0, "slice.ptr");
+        result.length = builder()->CreateExtractValue(sliceValue, 1, "slice.len");
+        if (result.length->getType() != llvm::Type::getInt32Ty(context())) {
+          result.length = builder()->CreateIntCast(
+              result.length, llvm::Type::getInt32Ty(context()), false,
+              "slice.len32");
+        }
+        result.elementType = getSliceElementType(structType);
+        return result;
+      }
+      if (allocatedType->isPointerTy()) {
+        result.ptr = builder()->CreateLoad(allocatedType, alloca, "ptr.value");
+        result.elementType = llvm::Type::getInt32Ty(context());
+        return result;
+      }
+    }
+
+    if (object->getType()->isStructTy() &&
+        isSliceStructType(object->getType())) {
+      auto *structType = llvm::cast<llvm::StructType>(object->getType());
+      result.ptr = builder()->CreateExtractValue(object, 0, "slice.ptr");
+      result.length = builder()->CreateExtractValue(object, 1, "slice.len");
+      if (result.length->getType() != llvm::Type::getInt32Ty(context())) {
+        result.length = builder()->CreateIntCast(
+            result.length, llvm::Type::getInt32Ty(context()), false,
+            "slice.len32");
+      }
+      result.elementType = getSliceElementType(structType);
+      return result;
+    }
+    if (object->getType()->isStructTy() &&
+        !isSliceStructType(object->getType())) {
+      auto *structType = llvm::cast<llvm::StructType>(object->getType());
+      llvm::AllocaInst *tmp =
+          createEntryAlloca(structType, "tuple.base.tmp");
+      builder()->CreateStore(object, tmp);
+      result.ptr = tmp;
+      result.tupleType = structType;
+      return result;
+    }
+    if (object->getType()->isArrayTy()) {
+      auto *arrayType = llvm::cast<llvm::ArrayType>(object->getType());
+      llvm::AllocaInst *tmp = createEntryAlloca(arrayType, "array.base.tmp");
+      builder()->CreateStore(object, tmp);
+      result.ptr = tmp;
+      result.arrayType = arrayType;
+      result.elementType = arrayType->getElementType();
+      result.length = llvm::ConstantInt::get(
+          llvm::Type::getInt32Ty(context()), arrayType->getNumElements());
+      return result;
+    }
+    if (object->getType()->isPointerTy()) {
+      result.ptr = object;
+      result.elementType = llvm::Type::getInt32Ty(context());
+      return result;
+    }
+    return result;
+  };
+
+  // 切片区间：a[start..end]，半开区间。
+  if (auto *range = dynamic_cast<ast::BinaryExpr *>(subscriptExpr->index.get());
+      range && range->op == ast::BinaryExpr::Op::Range) {
+    ArrayBase base = getBase(subscriptExpr->object.get());
+    if (!base.ptr || !base.elementType) {
+      error("Invalid array base in slice expression");
+      return nullptr;
+    }
+    llvm::Value *start = generateExpression(range->left->clone());
+    llvm::Value *end = generateExpression(range->right->clone());
+    if (!start || !end) {
+      return nullptr;
+    }
+    if (start->getType() != llvm::Type::getInt32Ty(context())) {
+      start = builder()->CreateIntCast(start,
+                                       llvm::Type::getInt32Ty(context()), true,
+                                       "slice.start32");
+    }
+    if (end->getType() != llvm::Type::getInt32Ty(context())) {
+      end = builder()->CreateIntCast(end, llvm::Type::getInt32Ty(context()),
+                                     true, "slice.end32");
+    }
+    llvm::Value *ptr = getElementPtr(base, start);
+    llvm::Value *len =
+        builder()->CreateSub(end, start, "slice.len");
+    llvm::StructType *sliceType = getOrCreateSliceType(base.elementType);
+    llvm::Value *sliceValue =
+        builder()->CreateInsertValue(llvm::UndefValue::get(sliceType), ptr, 0);
+    sliceValue = builder()->CreateInsertValue(sliceValue, len, 1);
+    return sliceValue;
+  }
+
+  ArrayBase base = getBase(subscriptExpr->object.get());
+  if (!base.ptr || (!base.elementType && !base.tupleType)) {
+    error("Invalid array base in subscript");
     return nullptr;
   }
-
-  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
-    object =
-        builder()->CreateLoad(alloca->getAllocatedType(), alloca, "load_obj");
+  llvm::Value *index = generateExpression(std::move(subscriptExpr->index));
+  if (base.tupleType) {
+    auto *constantIndex = llvm::dyn_cast<llvm::ConstantInt>(index);
+    if (!constantIndex) {
+      error("Tuple subscript must be a compile-time constant");
+      return nullptr;
+    }
+    unsigned tupleIndex =
+        static_cast<unsigned>(constantIndex->getZExtValue());
+    if (tupleIndex >= base.tupleType->getNumElements()) {
+      error("Tuple subscript out of range");
+      return nullptr;
+    }
+    llvm::Value *elementPtr = builder()->CreateStructGEP(
+        base.tupleType, base.ptr, tupleIndex, "tuple.elem.ptr");
+    if (isLValue) {
+      return elementPtr;
+    }
+    return builder()->CreateLoad(base.tupleType->getElementType(tupleIndex),
+                                 elementPtr, "tuple.elem");
   }
-
-  llvm::Value *ptr = builder()->CreateExtractValue(object, 0);
-  llvm::Value *elementPtr = builder()->CreateGEP(
-      llvm::Type::getInt32Ty(context()), ptr, index, "element_ptr");
-
+  llvm::Value *elementPtr = getElementPtr(base, index);
+  if (!elementPtr) {
+    return nullptr;
+  }
   if (isLValue) {
     return elementPtr;
   }
-
-  return builder()->CreateLoad(llvm::Type::getInt32Ty(context()), elementPtr,
-                               "element");
+  return builder()->CreateLoad(base.elementType, elementPtr, "element");
 }
 
 // 生成 this 表达式
@@ -3226,20 +3908,7 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
   }
 
   // 创建切片类型
-  std::string sliceTypeName = "Slice_int";
-  auto it = sliceTypes_.find(sliceTypeName);
-  llvm::StructType *sliceStructType;
-  if (it != sliceTypes_.end()) {
-    sliceStructType = it->second;
-  } else {
-    // 创建切片类型的结构体
-    std::vector<llvm::Type *> fields;
-    fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
-    fields.push_back(llvm::Type::getInt32Ty(context()));      // len
-    sliceStructType =
-        llvm::StructType::create(context(), fields, sliceTypeName);
-    sliceTypes_[sliceTypeName] = sliceStructType;
-  }
+  llvm::StructType *sliceStructType = getOrCreateSliceType(elementType);
 
   // 分配切片变量
   llvm::AllocaInst *sliceAlloca =
@@ -3322,20 +3991,25 @@ llvm::Value *LLVMCodeGenerator::generateStructInitExpr(
 // 生成元组表达式
 llvm::Value *LLVMCodeGenerator::generateTupleExpr(
     std::unique_ptr<ast::TupleExpr> tupleExpr) {
-  // 创建元组类型
+  std::vector<llvm::Value *> values;
   std::vector<llvm::Type *> elementTypes;
   for (auto &element : tupleExpr->elements) {
-    llvm::Value *val = generateExpression(std::move(element));
-    if (val) {
-      elementTypes.push_back(val->getType());
+    llvm::Value *value = generateExpression(std::move(element));
+    if (!value) {
+      return nullptr;
     }
+    values.push_back(value);
+    elementTypes.push_back(value->getType());
   }
 
   llvm::StructType *tupleType =
-      llvm::StructType::create(context(), elementTypes, "tuple");
-  llvm::AllocaInst *alloca = createEntryAlloca(tupleType, "tuple");
-
-  return alloca;
+      llvm::StructType::get(context(), elementTypes);
+  llvm::Value *tupleValue = llvm::UndefValue::get(tupleType);
+  for (size_t i = 0; i < values.size(); ++i) {
+    tupleValue = builder()->CreateInsertValue(
+        tupleValue, values[i], static_cast<unsigned>(i), "tuple.insert");
+  }
+  return tupleValue;
 }
 
 // 生成 lambda 表达式
@@ -3372,6 +4046,8 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
   currentFunction_ = func;
 
   namedValues_.clear();
+
+  namedValuePointeeTypes_.clear();
   size_t paramIndex = 0;
   for (auto argIt = func->args().begin();
        argIt != func->args().end() && paramIndex < lambdaExpr->params.size();
@@ -3384,6 +4060,11 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
           builder()->CreateAlloca(argIt->getType(), nullptr, param->name);
       builder()->CreateStore(argIt, alloca);
       namedValues_[param->name] = alloca;
+      if (auto *pointerType =
+              dynamic_cast<ast::PointerType *>(param->type.get())) {
+        namedValuePointeeTypes_[param->name] =
+            generateType(pointerType->baseType.get());
+      }
     }
   }
 
@@ -3433,8 +4114,7 @@ llvm::Value *LLVMCodeGenerator::generateConditionalExpr(
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   llvm::Value *cond = generateExpression(std::move(condExpr->condition));
   if (!cond) return nullptr;
-  cond = builder()->CreateICmpNE(
-      cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
+  cond = toBoolean(builder(), cond, "ifcond");
 
   llvm::BasicBlock *thenBB =
       llvm::BasicBlock::Create(context(), "condthen", func);
@@ -3545,7 +4225,8 @@ LLVMCodeGenerator::generateExprStmt(std::unique_ptr<ast::ExprStmt> exprStmt) {
 // 生成复合语句
 llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
     std::unique_ptr<ast::CompoundStmt> compoundStmt) {
-  for (auto &stmt : compoundStmt->statements) {
+  for (size_t i = 0; i < compoundStmt->statements.size(); ++i) {
+    auto &stmt = compoundStmt->statements[i];
     if (!stmt) {
       continue;
     }
@@ -3555,9 +4236,15 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
           static_cast<ast::Statement *>(stmt.release())));
     }
 
+    // return/throw/goto 之后可能还有 label 语句；不能直接停止生成，
+    // 否则 label 目标块会缺少内容或 terminator。把后续语句放进
+    // 一个不可达块，label 语句会自行切换到目标块。
     if (builder()->GetInsertBlock() &&
-        builder()->GetInsertBlock()->getTerminator()) {
-      break;
+        builder()->GetInsertBlock()->getTerminator() &&
+        i + 1 < compoundStmt->statements.size()) {
+      llvm::BasicBlock *deadBlock = llvm::BasicBlock::Create(
+          context(), "unreachable", currentFunction_);
+      builder()->SetInsertPoint(deadBlock);
     }
   }
   return nullptr;
@@ -3589,6 +4276,15 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     llvm::Value *retVal = generateExpression(std::move(returnStmt->expr));
     if (!retVal) {
       return nullptr;
+    }
+
+    // 元组/结构体字面量目前以 alloca 形式返回；函数 ABI 返回结构体值。
+    if (returnType->isStructTy() && retVal->getType()->isPointerTy()) {
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(retVal)) {
+        if (alloca->getAllocatedType() == returnType) {
+          retVal = builder()->CreateLoad(returnType, alloca, "ret.struct");
+        }
+      }
     }
 
     if (returnType->isVoidTy()) {
@@ -3639,8 +4335,7 @@ LLVMCodeGenerator::generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt) {
     return nullptr;
   }
 
-  cond = builder()->CreateICmpNE(
-      cond, llvm::ConstantInt::get(cond->getType(), 0), "ifcond");
+  cond = toBoolean(builder(), cond, "ifcond");
 
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(context(), "then", func);
@@ -3687,8 +4382,7 @@ llvm::Value *LLVMCodeGenerator::generateWhileStmt(
   if (!cond) {
     return nullptr;
   }
-  cond = builder()->CreateICmpNE(
-      cond, llvm::ConstantInt::get(cond->getType(), 0), "whilecond");
+  cond = toBoolean(builder(), cond, "whilecond");
   builder()->CreateCondBr(cond, bodyBB, afterBB);
 
   // 生成循环体
@@ -3730,14 +4424,17 @@ llvm::Value *LLVMCodeGenerator::generateDoWhileStmt(
   generateStatement(std::move(doWhileStmt->body));
   breakTargets_.pop_back();
   continueTargets_.pop_back();
+  if (builder()->GetInsertBlock() &&
+      !builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateBr(condBB);
+  }
 
   // 生成条件块
   func->insert(func->end(), condBB);
   builder()->SetInsertPoint(condBB);
   llvm::Value *cond = generateExpression(std::move(doWhileStmt->condition));
   if (cond) {
-    cond = builder()->CreateICmpNE(
-        cond, llvm::ConstantInt::get(cond->getType(), 0), "dowhilecond");
+    cond = toBoolean(builder(), cond, "dowhilecond");
     builder()->CreateCondBr(cond, bodyBB, afterBB);
   } else {
     builder()->CreateBr(afterBB);
@@ -3962,8 +4659,7 @@ LLVMCodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
   if (forStmt->condition) {
     cond = generateExpression(std::move(forStmt->condition));
     if (cond) {
-      cond = builder()->CreateICmpNE(
-          cond, llvm::ConstantInt::get(cond->getType(), 0), "forcond");
+      cond = toBoolean(builder(), cond, "forcond");
     }
   }
   if (cond) {
@@ -4134,8 +4830,7 @@ llvm::Value *LLVMCodeGenerator::generateMatchStmt(
     if (arm->guard) {
       llvm::Value *guardVal = generateExpression(arm->guard->clone());
       if (guardVal) {
-        guardVal = builder()->CreateICmpNE(
-            guardVal, llvm::ConstantInt::get(guardVal->getType(), 0), "guard");
+        guardVal = toBoolean(builder(), guardVal, "guard");
         cond = cond ? builder()->CreateAnd(cond, guardVal, "matchguard")
                     : guardVal;
       }
@@ -4552,6 +5247,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  namedValuePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -4635,6 +5331,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  namedValuePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -4755,6 +5452,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  namedValuePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
 
@@ -4776,6 +5474,11 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
           builder()->CreateAlloca(arg->getType(), nullptr, param->name);
       builder()->CreateStore(arg, alloca);
       namedValues_[param->name] = alloca;
+      if (auto *pointerType =
+              dynamic_cast<ast::PointerType *>(param->type.get())) {
+        namedValuePointeeTypes_[param->name] =
+            generateType(pointerType->baseType.get());
+      }
     }
   }
 
@@ -4785,6 +5488,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
     if (!function->empty()) {
       llvm::BasicBlock *lastBlock = &function->back();
       if (!lastBlock->getTerminator()) {
+        builder()->SetInsertPoint(lastBlock);
         emitDeferCleanup(true);
         deferExpressions_.clear();
         deferFlags_.clear();

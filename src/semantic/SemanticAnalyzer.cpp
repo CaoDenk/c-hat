@@ -2557,6 +2557,18 @@ std::shared_ptr<types::Type> SemanticAnalyzer::analyzeStatement(
     return analyzeIfStmt(static_cast<ast::IfStmt *>(stmt));
   case ast::NodeType::WhileStmt:
     return analyzeWhileStmt(static_cast<ast::WhileStmt *>(stmt));
+  case ast::NodeType::DoWhileStmt: {
+    auto *doWhile = static_cast<ast::DoWhileStmt *>(stmt);
+    symbolTable.enterScope();
+    loopDepth_++;
+    analyzeStatement(doWhile->body.get());
+    loopDepth_--;
+    if (doWhile->condition) {
+      analyzeExpression(doWhile->condition.get());
+    }
+    symbolTable.exitScope();
+    return nullptr;
+  }
   case ast::NodeType::ForStmt:
     return analyzeForStmt(static_cast<ast::ForStmt *>(stmt));
   case ast::NodeType::ReturnStmt:
@@ -2769,6 +2781,14 @@ SemanticAnalyzer::analyzeIfStmt(ast::IfStmt *ifStmt) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeWhileStmt(ast::WhileStmt *whileStmt) {
+  symbolTable.enterScope();
+  loopDepth_++;
+  analyzeStatement(whileStmt->body.get());
+  loopDepth_--;
+  if (whileStmt->condition) {
+    analyzeExpression(whileStmt->condition.get());
+  }
+  symbolTable.exitScope();
   return nullptr;
 }
 std::shared_ptr<types::Type>
@@ -4238,6 +4258,25 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
+  // 枚举成员访问：Color.Green
+  if (auto *objectIdent =
+          dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+    const TypeMetadata *metadata =
+        MetadataRegistry::instance().getType(objectIdent->name);
+    if (metadata && metadata->isEnum) {
+      auto memberSymbol = symbolTable.lookupSymbol(memberExpr->member);
+      if (memberSymbol &&
+          memberSymbol->getType() == SymbolType::Variable) {
+        return types::TypeFactory::getPrimitiveType(
+            types::PrimitiveType::Kind::Int);
+      }
+      error("Unknown enum member: " + objectIdent->name + "." +
+                memberExpr->member,
+            *memberExpr);
+      return nullptr;
+    }
+  }
+
   // 分析对象表达式
   auto objectType = analyzeExpression(memberExpr->object.get());
   if (!objectType) {
@@ -4478,6 +4517,38 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
     }
   }
 
+  // 切片区间 a[start..end] 返回同元素类型的切片。
+  if (auto *range =
+          dynamic_cast<ast::BinaryExpr *>(subscriptExpr->index.get());
+      range && range->op == ast::BinaryExpr::Op::Range) {
+    std::shared_ptr<types::Type> elementType;
+    if (arrayType->isArray()) {
+      elementType =
+          std::dynamic_pointer_cast<types::ArrayType>(arrayType)
+              ->getElementType();
+    } else if (arrayType->isSlice()) {
+      elementType =
+          std::dynamic_pointer_cast<types::SliceType>(arrayType)
+              ->getElementType();
+    } else if (arrayType->isPointer()) {
+      elementType =
+          std::dynamic_pointer_cast<types::PointerType>(arrayType)
+              ->getPointeeType();
+    } else {
+      error("Range subscript requires an array, slice, or pointer",
+            *subscriptExpr);
+      return nullptr;
+    }
+
+    auto startType = analyzeExpression(range->left.get());
+    auto endType = analyzeExpression(range->right.get());
+    if (!startType || !endType) {
+      error("Invalid range bounds in slice expression", *subscriptExpr);
+      return nullptr;
+    }
+    return std::make_shared<types::SliceType>(elementType);
+  }
+
   // 分析下标表达式
   auto indexType = analyzeExpression(subscriptExpr->index.get());
   if (!indexType) {
@@ -4503,10 +4574,30 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
     return std::make_shared<types::ReferenceType>(pointer->getPointeeType());
   }
 
-  error("Subscript can only be used with arrays, slices, or pointers",
+  // 元组下标：必须是编译期常量。
+  if (arrayType->isTuple()) {
+    auto tupleType = std::dynamic_pointer_cast<types::TupleType>(arrayType);
+    auto *literal =
+        dynamic_cast<ast::Literal *>(subscriptExpr->index.get());
+    if (!literal || literal->type != ast::Literal::Type::Integer) {
+      error("Tuple subscript must be a compile-time integer constant",
+            *subscriptExpr);
+      return nullptr;
+    }
+    size_t index = static_cast<size_t>(std::stoull(literal->value));
+    if (index >= tupleType->getElementTypes().size()) {
+      error("Tuple subscript out of range", *subscriptExpr);
+      return nullptr;
+    }
+    return std::make_shared<types::ReferenceType>(
+        tupleType->getElementTypes()[index]);
+  }
+
+  error("Subscript can only be used with arrays, slices, pointers, or tuples",
         *subscriptExpr);
   return nullptr;
 }
+
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNewExpr(ast::NewExpr *newExpr) {
   // 分析类型
@@ -4530,7 +4621,11 @@ SemanticAnalyzer::analyzeNewExpr(ast::NewExpr *newExpr) {
       hasConstructor = true;
     }
     (void)hasConstructor;
-    // 返回指针类型
+    // new T[n] 返回 T[] 切片；new T(...) 返回 T^。
+    if (allocatedType->isArray()) {
+      auto arrayType = std::dynamic_pointer_cast<types::ArrayType>(allocatedType);
+      return std::make_shared<types::SliceType>(arrayType->getElementType());
+    }
     return types::TypeFactory::getPointerType(allocatedType, false);
   }
   error("Invalid type in new expression", *newExpr);
@@ -4546,8 +4641,13 @@ SemanticAnalyzer::analyzeDeleteExpr(ast::DeleteExpr *deleteExpr) {
   if (!exprType) {
     return nullptr;
   }
+  if (exprType->isSlice()) {
+    // delete[] slice：释放切片底层数组。
+    return types::TypeFactory::getPrimitiveType(
+        types::PrimitiveType::Kind::Void);
+  }
   if (!exprType->isPointer()) {
-    error("delete can only be applied to pointers", *deleteExpr);
+    error("delete can only be applied to pointers or slices", *deleteExpr);
     return nullptr;
   }
   // 获取指针指向的类型，如果是类类型则记录类名（供 LLVM CodeGen 查找析构函数）
@@ -5114,6 +5214,14 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
   // 特殊处理 string 类型
   if (typeName == "string") {
     return std::make_shared<types::ClassType>("string");
+  }
+
+  // 枚举底层类型是 int。
+  const TypeMetadata *metadata =
+      MetadataRegistry::instance().getType(typeName);
+  if (metadata && metadata->isEnum) {
+    return types::TypeFactory::getPrimitiveType(
+        types::PrimitiveType::Kind::Int);
   }
 
   // 检查符号表

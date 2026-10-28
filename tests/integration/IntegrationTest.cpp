@@ -196,6 +196,61 @@ TEST_CASE("Integration: foreach", "[integration][foreach]") {
       "}\n") == 10);
 }
 
+TEST_CASE("Integration: array and slice properties", "[integration][array]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[3] a;\n"
+      "    a[0] = 20;\n"
+      "    a[1] = 22;\n"
+      "    int^ p = a.ptr;\n"
+      "    return a.len + p[0] + p[1];\n"
+      "}\n") == 45);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[4] a = [10, 20, 12, 0];\n"
+      "    int[] s = a[1..3];\n"
+      "    s[0] = 40;\n"
+      "    int^ p = s.ptr;\n"
+      "    return a.len + s.len + p[0] + p[1];\n"
+      "}\n") == 58);
+}
+
+TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var a = new int[3];\n"
+      "    a[0] = 20;\n"
+      "    a[1] = 22;\n"
+      "    var r = a[0] + a[1] + a.len;\n"
+      "    delete[] a;\n"
+      "    return r;\n"
+      "}\n") == 45);
+}
+
+TEST_CASE("Integration: tuple access and destructuring", "[integration][tuple]") {
+  REQUIRE(compileAndRun(
+      "func pair() -> (int, int) { return (20, 22); }\n"
+      "func main() -> int {\n"
+      "    var (a, b) = pair();\n"
+      "    var t = (1, 2);\n"
+      "    return a + b + t[0] + t[1];\n"
+      "}\n") == 45);
+}
+
+TEST_CASE("Integration: do-while goto and enum", "[integration][control]") {
+  REQUIRE(compileAndRun(
+      "enum Color { Red, Green, Blue }\n"
+      "func main() -> int {\n"
+      "    var i = 0;\n"
+      "    do { i = i + 1; } while (i < 3);\n"
+      "    goto done;\n"
+      "    i = 99;\n"
+      "done:\n"
+      "    return i + Color.Green;\n"
+      "}\n") == 4);
+}
+
 TEST_CASE("Integration: try/catch", "[integration][exception]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

@@ -2020,6 +2020,8 @@ std::unique_ptr<ast::Statement> Parser::parseStatement() {
     return attachAttributes(parseIfStmt());
   } else if (match(lexer::TokenType::While)) {
     return attachAttributes(parseWhileStmt());
+  } else if (match(lexer::TokenType::Do)) {
+    return attachAttributes(parseDoWhileStmt());
   } else if (match(lexer::TokenType::Return)) {
     return attachAttributes(parseReturnStmt());
   } else if (match(lexer::TokenType::Yield)) {

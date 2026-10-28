@@ -200,6 +200,11 @@ private:
   // 因此 defer 可能引用的局部变量必须由入口块支配。
   llvm::AllocaInst *createEntryAlloca(llvm::Type *type,
                                       const std::string &name);
+  // 数组/切片辅助：同一种 LLVM 元素类型复用同一个切片结构体，
+  // 并记录元素类型，避免从名字猜类型。
+  llvm::StructType *getOrCreateSliceType(llvm::Type *elementType);
+  llvm::Type *getSliceElementType(llvm::StructType *sliceType);
+  bool isSliceStructType(llvm::Type *type);
   llvm::Type *getLiteralViewType();
   std::string getTypeName(ast::Type *type);
   std::string getLLVMTypeName(llvm::Type *type);
@@ -211,6 +216,7 @@ private:
   std::string currentClassName_;
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
+  std::unordered_map<std::string, llvm::Type *> namedValuePointeeTypes_;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
   std::vector<llvm::AllocaInst *> deferFlags_;
@@ -224,6 +230,8 @@ private:
   // 类型映射
   std::unordered_map<std::string, llvm::StructType *> structTypes_;
   std::unordered_map<std::string, llvm::StructType *> sliceTypes_;
+  std::unordered_map<llvm::Type *, llvm::StructType *> sliceTypesByElement_;
+  std::unordered_map<llvm::StructType *, llvm::Type *> sliceElementTypes_;
   std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       structInfo_;
   std::unordered_map<std::string, llvm::Function *> functions_;
