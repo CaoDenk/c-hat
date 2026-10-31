@@ -1740,14 +1740,13 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     auto prevClassName = currentClassName_;
     currentClassName_ = className;
 
-    // 处理 this 指针（静态方法没有 this）。
+    // 处理 self 指针（静态方法没有 self）。
     auto argIt = function->args().begin();
     llvm::Value *thisArg = nullptr;
     if (!funcDecl->isStatic) {
       thisArg = &(*argIt++);
-      thisArg->setName("this");
-      // 成员函数体内可以通过 this/self 访问当前对象
-      namedValues_["this"] = thisArg;
+      thisArg->setName("self");
+      // 成员函数体内通过 self 访问当前对象
       namedValues_["self"] = thisArg;
     }
 
@@ -2891,7 +2890,7 @@ LLVMCodeGenerator::generateIdentifier(std::unique_ptr<ast::Identifier> ident) {
   // 成员函数体内的裸字段名（如 self.x 写成 x）按当前类的字段解析。
   if (!currentClassName_.empty()) {
     auto classIt = structInfo_.find(currentClassName_);
-    auto thisIt = namedValues_.find("this");
+    auto thisIt = namedValues_.find("self");
     if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
       auto fieldIt = classIt->second.find(ident->name);
       if (fieldIt != classIt->second.end()) {
@@ -3535,7 +3534,7 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
           memberExpr->object.get())) {
     if (!currentClassName_.empty()) {
       auto classIt = structInfo_.find(currentClassName_);
-      auto thisIt = namedValues_.find("this");
+      auto thisIt = namedValues_.find("self");
       if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
         auto fieldIt = classIt->second.find(ident->name);
         if (fieldIt != classIt->second.end()) {
@@ -4062,11 +4061,11 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
 // 生成 this 表达式
 llvm::Value *
 LLVMCodeGenerator::generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr) {
-  auto it = namedValues_.find("this");
+  auto it = namedValues_.find("self");
   if (it != namedValues_.end()) {
     return it->second;
   }
-  error("'this' not found in current context");
+  error("'self' not found in current context");
   return nullptr;
 }
 
@@ -5492,8 +5491,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
-  thisArg->setName("this");
-  namedValues_["this"] = thisArg;
+  thisArg->setName("self");
   namedValues_["self"] = thisArg;
   auto prevClassName = currentClassName_;
   currentClassName_ = className;
@@ -5581,8 +5579,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
-  thisArg->setName("this");
-  namedValues_["this"] = thisArg;
+  thisArg->setName("self");
   namedValues_["self"] = thisArg;
   auto prevClassName = currentClassName_;
   currentClassName_ = className;
@@ -5770,7 +5767,7 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
     // 裸字段名作为赋值目标：x = v（等价于 self.x = v）
     if (!currentClassName_.empty()) {
       auto classIt = structInfo_.find(currentClassName_);
-      auto thisIt = namedValues_.find("this");
+      auto thisIt = namedValues_.find("self");
       if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
         auto fieldIt = classIt->second.find(ident->name);
         if (fieldIt != classIt->second.end()) {
@@ -5853,7 +5850,7 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
       // 出真正的对象指针。
       if (!currentClassName_.empty()) {
         auto classIt = structInfo_.find(currentClassName_);
-        auto thisIt = namedValues_.find("this");
+        auto thisIt = namedValues_.find("self");
         if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
           auto fieldIt = classIt->second.find(objectIdentName);
           if (fieldIt != classIt->second.end()) {
