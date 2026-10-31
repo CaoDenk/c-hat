@@ -806,6 +806,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
       tempSpecifiers += "virtual ";
     } else if (match(lexer::TokenType::Abstract)) {
       tempSpecifiers += "abstract ";
+    } else if (match(lexer::TokenType::Override)) {
+      tempSpecifiers += "override ";
     } else {
       break;
     }
@@ -844,6 +846,8 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
       specifiers += (specifiers.empty() ? "" : " ") + std::string("virtual");
     } else if (match(lexer::TokenType::Abstract)) {
       specifiers += (specifiers.empty() ? "" : " ") + std::string("abstract");
+    } else if (match(lexer::TokenType::Override)) {
+      specifiers += (specifiers.empty() ? "" : " ") + std::string("override");
     } else {
       break;
     }
@@ -1174,7 +1178,9 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
   if (match(lexer::TokenType::Colon)) {
     if (match(lexer::TokenType::Super)) {
       expect(lexer::TokenType::LParen, "Expected '(' after 'super'");
-      superCall = parseExpression();
+      if (!check(lexer::TokenType::RParen)) {
+        superCall = parseExpression();
+      }
       expect(lexer::TokenType::RParen, "Expected ')' after super arguments");
     }
   }
@@ -3603,6 +3609,28 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
     return std::make_unique<ast::Parameter>(name, std::unique_ptr<ast::Type>(),
                                             nullptr, false, isSelf,
                                             isSelfImmutable);
+  }
+
+  // 支持 name: Type 形式的参数（属性 setter 文档使用 value: int）。
+  if (check(lexer::TokenType::Identifier)) {
+    ParserState nameState = saveState();
+    std::string potentialName = currentToken->getValue();
+    advance();
+    if (match(lexer::TokenType::Colon)) {
+      auto namedType = parseType();
+      if (!namedType) {
+        error("Expected type after ':' in parameter");
+        return nullptr;
+      }
+      std::unique_ptr<ast::Expression> defaultValue;
+      if (match(lexer::TokenType::Assign)) {
+        defaultValue = parseExpression();
+      }
+      return std::make_unique<ast::Parameter>(
+          potentialName, std::move(namedType), std::move(defaultValue),
+          false);
+    }
+    restoreState(nameState);
   }
 
   if (!check(lexer::TokenType::Identifier) && !isTypeKeyword() &&

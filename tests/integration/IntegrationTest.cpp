@@ -251,6 +251,66 @@ TEST_CASE("Integration: do-while goto and enum", "[integration][control]") {
       "}\n") == 4);
 }
 
+TEST_CASE("Integration: properties", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "class Counter {\n"
+      "    private int _count;\n"
+      "    public set count(value: int) { _count = value; }\n"
+      "    public get count -> int { return _count; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Counter^ c = new Counter();\n"
+      "    c->count = 42;\n"
+      "    return c->count;\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: inheritance", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "class Animal {\n"
+      "    int x;\n"
+      "    Animal(int v) { x = v; }\n"
+      "    func speak() -> int { return x; }\n"
+      "    func base_only() -> int { return x; }\n"
+      "}\n"
+      "class Dog : Animal {\n"
+      "    Dog(int v) : super(v) { }\n"
+      "    override func speak() -> int { return x + 1; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Dog^ d = new Dog(41);\n"
+      "    return d->speak() + d->base_only() - 41;\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: static members", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "class Counter {\n"
+      "    public static int count = 40;\n"
+      "    public static func get_count() -> int { return count; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Counter.count = 40;\n"
+      "    return Counter.get_count() + 2;\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: explicit delete calls destructor", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; Box(int v) { value = v; } }\n"
+      "class R {\n"
+      "    Box^ out;\n"
+      "    R(Box^ b) { out = b; }\n"
+      "    ~R() { out->value = 42; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box(0);\n"
+      "    R^ r = new R(b);\n"
+      "    delete r;\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: try/catch", "[integration][exception]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

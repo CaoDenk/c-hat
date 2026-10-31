@@ -1525,11 +1525,64 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   std::unordered_map<std::string, unsigned> memberIndices;
   std::vector<std::unique_ptr<ast::Node>> functions;
 
+  classBaseNames_[classDecl->name] = classDecl->baseClass;
+  if (!classDecl->baseClass.empty()) {
+    auto baseIt = structTypes_.find(classDecl->baseClass);
+    if (baseIt != structTypes_.end()) {
+      llvm::StructType *baseType = baseIt->second;
+      for (unsigned i = 0; i < baseType->getNumElements(); ++i) {
+        memberTypes.push_back(baseType->getElementType(i));
+      }
+      auto baseInfoIt = structInfo_.find(classDecl->baseClass);
+      if (baseInfoIt != structInfo_.end()) {
+        for (const auto &[name, index] : baseInfoIt->second) {
+          memberIndices[name] = index;
+        }
+      }
+    }
+  }
+
   for (size_t i = 0; i < classDecl->members.size(); ++i) {
     auto &member = classDecl->members[i];
     if (auto *varDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
       if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
         llvm::Type *memberType = generateType(typeNode);
+        bool isStatic =
+            varDecl->specifiers.find("static") != std::string::npos;
+        if (isStatic) {
+          llvm::Constant *initializer =
+              llvm::Constant::getNullValue(memberType);
+          if (auto *literal = dynamic_cast<ast::Literal *>(
+                  varDecl->initializer.get())) {
+            switch (literal->type) {
+            case ast::Literal::Type::Integer:
+              initializer = llvm::ConstantInt::get(
+                  memberType, std::stoll(literal->value), true);
+              break;
+            case ast::Literal::Type::Floating:
+              initializer =
+                  llvm::ConstantFP::get(memberType,
+                                        std::stod(literal->value));
+              break;
+            case ast::Literal::Type::Boolean:
+              initializer = llvm::ConstantInt::get(
+                  memberType, literal->value == "true" ? 1 : 0);
+              break;
+            case ast::Literal::Type::Character:
+              initializer = llvm::ConstantInt::get(
+                  memberType,
+                  literal->value.empty() ? 0 : literal->value[0]);
+              break;
+            default:
+              break;
+            }
+          }
+          new llvm::GlobalVariable(
+              *module(), memberType, false,
+              llvm::GlobalValue::InternalLinkage, initializer,
+              classDecl->name + "_" + varDecl->name);
+          continue;
+        }
         memberTypes.push_back(memberType);
         memberIndices[varDecl->name] =
             static_cast<unsigned>(memberTypes.size() - 1);
@@ -1639,7 +1692,9 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   llvm::PointerType *thisType = classType->getPointerTo();
 
   std::vector<llvm::Type *> paramTypes;
-  paramTypes.push_back(thisType);
+  if (!funcDecl->isStatic) {
+    paramTypes.push_back(thisType);
+  }
 
   for (auto &paramNode : funcDecl->params) {
     if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
@@ -1685,13 +1740,16 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     auto prevClassName = currentClassName_;
     currentClassName_ = className;
 
-    // 处理 this 指针
+    // 处理 this 指针（静态方法没有 this）。
     auto argIt = function->args().begin();
-    llvm::Value *thisArg = &(*argIt++);
-    thisArg->setName("this");
-    // 成员函数体内可以通过 this/self 访问当前对象
-    namedValues_["this"] = thisArg;
-    namedValues_["self"] = thisArg;
+    llvm::Value *thisArg = nullptr;
+    if (!funcDecl->isStatic) {
+      thisArg = &(*argIt++);
+      thisArg->setName("this");
+      // 成员函数体内可以通过 this/self 访问当前对象
+      namedValues_["this"] = thisArg;
+      namedValues_["self"] = thisArg;
+    }
 
     // 处理其他参数
     size_t paramIndex = 0;
@@ -1709,6 +1767,29 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
                 dynamic_cast<ast::PointerType *>(param->type.get())) {
           namedValuePointeeTypes_[param->name] =
               generateType(pointerType->baseType.get());
+        }
+      }
+    }
+
+    // 派生类构造函数：调用基类构造函数。
+    if (isConstructor) {
+      auto baseIt = classBaseNames_.find(className);
+      if (baseIt != classBaseNames_.end() && !baseIt->second.empty()) {
+        std::string baseClassName = baseIt->second;
+        auto baseCtorIt =
+            functions_.find(baseClassName + "_" + baseClassName);
+        if (baseCtorIt != functions_.end() &&
+            (funcDecl->superCall ||
+             baseCtorIt->second->arg_size() == 1)) {
+          std::vector<llvm::Value *> baseArgs = {thisArg};
+          if (funcDecl->superCall) {
+            llvm::Value *superArg =
+                generateExpression(std::move(funcDecl->superCall));
+            if (superArg) {
+              baseArgs.push_back(superArg);
+            }
+          }
+          builder()->CreateCall(baseCtorIt->second, baseArgs);
         }
       }
     }
@@ -2798,6 +2879,15 @@ LLVMCodeGenerator::generateIdentifier(std::unique_ptr<ast::Identifier> ident) {
     return value;
   }
 
+  // 静态字段：ClassName_field。
+  if (!currentClassName_.empty()) {
+    if (auto *global = module()->getNamedGlobal(
+            currentClassName_ + "_" + ident->name)) {
+      return builder()->CreateLoad(global->getValueType(), global,
+                                   ident->name + ".static");
+    }
+  }
+
   // 成员函数体内的裸字段名（如 self.x 写成 x）按当前类的字段解析。
   if (!currentClassName_.empty()) {
     auto classIt = structInfo_.find(currentClassName_);
@@ -2912,6 +3002,55 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     return result;
   }
   case ast::BinaryExpr::Op::Assign: {
+    // 属性 setter：ClassName_set_prop(this, value)。
+    if (auto *memberExpr =
+            dynamic_cast<ast::MemberExpr *>(binaryExpr->left.get())) {
+      std::string propertyOwner = memberExpr->structName;
+      if (propertyOwner.empty()) {
+        propertyOwner = currentClassName_;
+      }
+      if (!propertyOwner.empty()) {
+        auto setterIt =
+            functions_.find(propertyOwner + "_set_" + memberExpr->member);
+        std::string setterOwner = propertyOwner;
+        while (setterIt == functions_.end()) {
+          auto baseIt = classBaseNames_.find(setterOwner);
+          if (baseIt == classBaseNames_.end() || baseIt->second.empty()) {
+            break;
+          }
+          setterOwner = baseIt->second;
+          setterIt = functions_.find(setterOwner + "_set_" +
+                                     memberExpr->member);
+        }
+        if (setterIt != functions_.end()) {
+          llvm::Value *object =
+              generateExpression(std::move(memberExpr->object));
+          llvm::Value *rhs =
+              generateExpression(std::move(binaryExpr->right));
+          if (!object || !rhs) {
+            return nullptr;
+          }
+          llvm::Value *thisPtr = object;
+          if (auto *objectAlloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+            if (objectAlloca->getAllocatedType()->isStructTy()) {
+              thisPtr = objectAlloca;
+            } else if (objectAlloca->getAllocatedType()->isPointerTy()) {
+              thisPtr = builder()->CreateLoad(
+                  objectAlloca->getAllocatedType(), objectAlloca,
+                  "pset.this.load");
+            }
+          } else if (object->getType()->isStructTy()) {
+            llvm::AllocaInst *tmp =
+                createEntryAlloca(object->getType(), "pset.this");
+            builder()->CreateStore(object, tmp);
+            thisPtr = tmp;
+          }
+          builder()->CreateCall(setterIt->second, {thisPtr, rhs});
+          return rhs;
+        }
+      }
+    }
+
     llvm::Value *lhsPtr = getExpressionLValue(std::move(binaryExpr->left));
     llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
     if (!lhsPtr || !rhs) {
@@ -3206,6 +3345,24 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   // 成员方法调用：obj.method(args) / ptr->method(args)
   if (auto *member =
           dynamic_cast<ast::MemberExpr *>(callExpr->callee.get())) {
+    // 静态方法：ClassName.method(...)，没有 this 参数。
+    if (auto *objectIdent =
+            dynamic_cast<ast::Identifier *>(member->object.get())) {
+      auto staticIt =
+          functions_.find(objectIdent->name + "_" + member->member);
+      if (staticIt != functions_.end() &&
+          staticIt->second->arg_size() == callExpr->args.size()) {
+        std::vector<llvm::Value *> args;
+        for (auto &arg : callExpr->args) {
+          args.push_back(generateExpression(std::move(arg)));
+        }
+        if (staticIt->second->getReturnType()->isVoidTy()) {
+          return builder()->CreateCall(staticIt->second, args);
+        }
+        return builder()->CreateCall(staticIt->second, args, "scall");
+      }
+    }
+
     llvm::Value *object = generateExpression(std::move(member->object));
     if (!object) {
       return nullptr;
@@ -3250,6 +3407,16 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
 
     std::string methodName = className + "_" + member->member;
     auto it = functions_.find(methodName);
+    // 继承方法：在基类中查找 Class_method。
+    std::string ownerClass = className;
+    while (it == functions_.end()) {
+      auto baseIt = classBaseNames_.find(ownerClass);
+      if (baseIt == classBaseNames_.end() || baseIt->second.empty()) {
+        break;
+      }
+      ownerClass = baseIt->second;
+      it = functions_.find(ownerClass + "_" + member->member);
+    }
     if (it != functions_.end()) {
       if (it->second->getReturnType()->isVoidTy()) {
         return builder()->CreateCall(it->second, args);
@@ -3361,13 +3528,87 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     }
   }
 
-  llvm::Value *object = generateExpression(std::move(memberExpr->object));
+  llvm::Value *object = nullptr;
+  // 裸字段名如果本身是指针（如 out->value 中的 out），先加载字段值，
+  // 否则会把字段地址误当成对象指针。
+  if (auto *ident = dynamic_cast<ast::Identifier *>(
+          memberExpr->object.get())) {
+    if (!currentClassName_.empty()) {
+      auto classIt = structInfo_.find(currentClassName_);
+      auto thisIt = namedValues_.find("this");
+      if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
+        auto fieldIt = classIt->second.find(ident->name);
+        if (fieldIt != classIt->second.end()) {
+          auto *structType = structTypes_[currentClassName_];
+          llvm::Type *fieldType =
+              structType->getElementType(fieldIt->second);
+          if (fieldType->isPointerTy()) {
+            llvm::Value *fieldPtr = builder()->CreateStructGEP(
+                structType, thisIt->second, fieldIt->second,
+                ident->name + ".ptr");
+            object = builder()->CreateLoad(fieldType, fieldPtr,
+                                           ident->name + ".load");
+          }
+        }
+      }
+    }
+  }
+  if (!object) {
+    object = generateExpression(std::move(memberExpr->object));
+  }
   if (!object) {
     return nullptr;
   }
 
   unsigned idx = memberExpr->memberIndex;
   const std::string &memberName = memberExpr->member;
+
+  // 属性 getter：ClassName_get_prop(this)。
+  std::string propertyOwner = memberExpr->structName;
+  if (propertyOwner.empty()) {
+    propertyOwner = currentClassName_;
+  }
+  if (propertyOwner.empty()) {
+    llvm::Type *objectType = object->getType();
+    if (auto *objectAlloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+      objectType = objectAlloca->getAllocatedType();
+    }
+    if (auto *structType = llvm::dyn_cast<llvm::StructType>(objectType)) {
+      if (structType->hasName()) {
+        propertyOwner = structType->getName().str();
+      }
+    }
+  }
+  if (!propertyOwner.empty()) {
+    auto getterIt = functions_.find(propertyOwner + "_get_" + memberName);
+    std::string getterOwner = propertyOwner;
+    while (getterIt == functions_.end()) {
+      auto baseIt = classBaseNames_.find(getterOwner);
+      if (baseIt == classBaseNames_.end() || baseIt->second.empty()) {
+        break;
+      }
+      getterOwner = baseIt->second;
+      getterIt = functions_.find(getterOwner + "_get_" + memberName);
+    }
+    if (getterIt != functions_.end()) {
+      llvm::Value *thisPtr = object;
+      if (auto *objectAlloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+        if (objectAlloca->getAllocatedType()->isStructTy()) {
+          thisPtr = objectAlloca;
+        } else if (objectAlloca->getAllocatedType()->isPointerTy()) {
+          thisPtr = builder()->CreateLoad(
+              objectAlloca->getAllocatedType(), objectAlloca,
+              "pget.this.load");
+        }
+      } else if (object->getType()->isStructTy()) {
+        llvm::AllocaInst *tmp =
+            createEntryAlloca(object->getType(), "pget.this");
+        builder()->CreateStore(object, tmp);
+        thisPtr = tmp;
+      }
+      return builder()->CreateCall(getterIt->second, {thisPtr}, "pget");
+    }
+  }
 
   // 数组/切片的内建属性 len / ptr。
   if (memberName == "len" || memberName == "ptr") {
@@ -5252,6 +5493,10 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
   thisArg->setName("this");
+  namedValues_["this"] = thisArg;
+  namedValues_["self"] = thisArg;
+  auto prevClassName = currentClassName_;
+  currentClassName_ = className;
 
   if (getterDecl->arrowExpr) {
     llvm::Value *val = generateExpression(getterDecl->arrowExpr->clone());
@@ -5278,6 +5523,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
     }
   }
 
+  currentClassName_ = prevClassName;
   currentFunction_ = prevFunction;
   return function;
 }
@@ -5336,6 +5582,10 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
   thisArg->setName("this");
+  namedValues_["this"] = thisArg;
+  namedValues_["self"] = thisArg;
+  auto prevClassName = currentClassName_;
+  currentClassName_ = className;
 
   if (setterDecl->param) {
     llvm::Value *valArg = &(*argIt++);
@@ -5363,6 +5613,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
     }
   }
 
+  currentClassName_ = prevClassName;
   currentFunction_ = prevFunction;
   return function;
 }
@@ -5547,6 +5798,13 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   }
 
   if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(expr.get())) {
+    if (auto *objectIdent =
+            dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+      if (auto *global = module()->getNamedGlobal(
+              objectIdent->name + "_" + memberExpr->member)) {
+        return global;
+      }
+    }
     std::string structName = memberExpr->structName;
     if (structName.empty()) {
       structName = currentClassName_;
@@ -5575,6 +5833,11 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
       return nullptr;
     }
 
+    std::string objectIdentName;
+    if (auto *objectIdent =
+            dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+      objectIdentName = objectIdent->name;
+    }
     llvm::Value *objectPtr =
         getExpressionLValue(std::move(memberExpr->object));
     if (!objectPtr) {
@@ -5584,6 +5847,25 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
       if (alloca->getAllocatedType()->isPointerTy()) {
         objectPtr = builder()->CreateLoad(alloca->getAllocatedType(), alloca,
                                           "member.obj.load");
+      }
+    } else if (!objectIdentName.empty()) {
+      // out.value 中 out 是指针字段：objectPtr 是字段地址，需要先 load
+      // 出真正的对象指针。
+      if (!currentClassName_.empty()) {
+        auto classIt = structInfo_.find(currentClassName_);
+        auto thisIt = namedValues_.find("this");
+        if (classIt != structInfo_.end() && thisIt != namedValues_.end()) {
+          auto fieldIt = classIt->second.find(objectIdentName);
+          if (fieldIt != classIt->second.end()) {
+            llvm::StructType *ownerType = structTypes_[currentClassName_];
+            llvm::Type *fieldType =
+                ownerType->getElementType(fieldIt->second);
+            if (fieldType->isPointerTy()) {
+              objectPtr = builder()->CreateLoad(fieldType, objectPtr,
+                                                "member.obj.load");
+            }
+          }
+        }
       }
     }
 

@@ -229,6 +229,7 @@ private:
 
   // 类型映射
   std::unordered_map<std::string, llvm::StructType *> structTypes_;
+  std::unordered_map<std::string, std::string> classBaseNames_;
   std::unordered_map<std::string, llvm::StructType *> sliceTypes_;
   std::unordered_map<llvm::Type *, llvm::StructType *> sliceTypesByElement_;
   std::unordered_map<llvm::StructType *, llvm::Type *> sliceElementTypes_;

@@ -1418,7 +1418,13 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
         classType->addProperty(property);
       }
 
-      // 分析 setter 方法体
+      // 分析 setter 方法体；参数只在 setter 作用域内可见。
+      symbolTable.enterScope();
+      if (auto *paramNode =
+              dynamic_cast<ast::Parameter *>(setterDecl->param.get())) {
+        symbolTable.addSymbol(std::make_shared<VariableSymbol>(
+            paramNode->name, propertyType));
+      }
       if (setterDecl->body) {
         if (auto *compoundStmt =
                 dynamic_cast<ast::CompoundStmt *>(setterDecl->body.get())) {
@@ -1430,6 +1436,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
       if (setterDecl->arrowExpr) {
         analyzeExpression(setterDecl->arrowExpr.get());
       }
+      symbolTable.exitScope();
     } else if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
       analyzeDeclaration(decl);
     } else if (auto *stmt = dynamic_cast<ast::Statement *>(member.get())) {
@@ -4400,6 +4407,7 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
                 *memberExpr);
           return nullptr;
         }
+        memberExpr->structName = classType->getName();
         return property->type;
       } else if (property && !property->hasGetter) {
         error("Property has no getter: " + memberExpr->member, *memberExpr);

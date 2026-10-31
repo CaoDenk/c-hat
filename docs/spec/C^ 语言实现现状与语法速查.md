@@ -4,7 +4,7 @@
 > 规范/设计文档里的示例如果与本文冲突，以本文和测试代码为准。
 > 目的：避免“文档写了一套、parser 认另一套、codegen 只认第三套”。
 
-最后更新：2026-10-29
+最后更新：2026-10-31
 
 ---
 
@@ -268,7 +268,7 @@ extern "C" {
 
 > 下面的“端到端”指 `--run` 或“生成 .o → 链接 → 运行”实际跑通，不只是 parser/semantic 单元测试通过。
 
-### 端到端可用（2026-10-29 实测）
+### 端到端可用（2026-10-31 实测）
 
 - 函数定义/调用（整数参数）、`return`
 - 变量声明、算术/比较/逻辑表达式
@@ -284,6 +284,10 @@ extern "C" {
 - `extern "C"` 调用 libc（如 `puts`）
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
+- 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
+- 单继承：基类字段布局、`: super(...)`、`override`、继承方法调用（本次修复；静态派发）
+- `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
+- 显式 `delete` 调用析构函数（本次修复）
 - 结构体字段赋值/读取 `p.x = 7; return p.x;`（本次修复）
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
 - `foreach`：数组、切片、`a..b` 范围、可选的 index 变量（本次修复）
@@ -311,6 +315,14 @@ extern "C" {
 - `new T[n]` 只分配原始内存，不会逐个调用元素构造/析构函数。
 - 枚举可用于 `Color.Green` / `Color::Green` 和整数比较，但 `match` 的枚举模式、穷尽性检查尚未实现。
 
+### OOP 当前边界
+
+- 继承目前是**静态派发**：`Animal^ a = new Dog(...); a->speak()` 调用 `Animal_speak`，不会走 `Dog_speak`；虚表/接口动态派发尚未实现。
+- 派生类构造函数支持 `: super(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
+- `static` 字段初始化目前只支持字面量；静态方法不能访问实例成员（语义层会检查）。
+- 自动析构/RAII 仍未实现；显式 `delete` 已能调用 `ClassName_~ClassName`。
+- 多继承、接口作为参数类型/动态派发、属性与继承的复杂交互仍不完整。
+
 ### 异常实现限制（v1）
 
 - 当前用 `setjmp` / `longjmp` 传播异常，不是文档里描述的零开销表驱动模型。
@@ -323,7 +335,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 27 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 31 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 
