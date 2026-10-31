@@ -189,10 +189,10 @@ TEST_CASE("Class: Polymorphism", "[class][polymorphism]") {
   }
 }
 
-TEST_CASE("Class: super keyword", "[class][inheritance][super]") {
+TEST_CASE("Class: base keyword", "[class][inheritance][base]") {
   SECTION("Call base class constructor") {
     REQUIRE(analyzeSource("class Animal { public Animal(int age) { } } class "
-                          "Dog : Animal { public Dog() : super(0) { } }") ==
+                          "Dog : Animal { public Dog() : base(0) { } }") ==
             true);
   }
 

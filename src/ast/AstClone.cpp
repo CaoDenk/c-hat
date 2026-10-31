@@ -178,8 +178,8 @@ std::unique_ptr<Expression> cloneExprImpl(const Expression *expr,
   if (dynamic_cast<const SelfExpr *>(expr)) {
     return std::make_unique<SelfExpr>();
   }
-  if (dynamic_cast<const SuperExpr *>(expr)) {
-    return std::make_unique<SuperExpr>();
+  if (dynamic_cast<const BaseExpr *>(expr)) {
+    return std::make_unique<BaseExpr>();
   }
   // 其余表达式（Literal 等）没有类型参数，直接克隆。
   return expr->clone();
@@ -448,16 +448,16 @@ cloneFunctionWithSubst(const FunctionDecl *func, const TypeSubst &subst,
     arrowExpr = cloneExprImpl(func->arrowExpr.get(), subst);
   }
 
-  std::unique_ptr<Expression> superCall;
-  if (func->superCall) {
-    superCall = cloneExprImpl(func->superCall.get(), subst);
+  std::unique_ptr<Expression> baseCall;
+  if (func->baseCall) {
+    baseCall = cloneExprImpl(func->baseCall.get(), subst);
   }
 
   return std::make_unique<FunctionDecl>(
       func->specifiers, newName,
       std::vector<std::unique_ptr<Node>>(), std::move(params),
       std::move(returnType), nullptr, nullptr, std::move(body),
-      std::move(arrowExpr), func->isImmutable, std::move(superCall),
+      std::move(arrowExpr), func->isImmutable, std::move(baseCall),
       func->isVariadic, func->isStatic);
 }
 

@@ -1746,8 +1746,9 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     if (!funcDecl->isStatic) {
       thisArg = &(*argIt++);
       thisArg->setName("self");
-      // 成员函数体内通过 self 访问当前对象
+      // 成员函数体内通过 self 访问当前对象；单继承下 base 与 self 同址。
       namedValues_["self"] = thisArg;
+      namedValues_["base"] = thisArg;
     }
 
     // 处理其他参数
@@ -1778,14 +1779,14 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         auto baseCtorIt =
             functions_.find(baseClassName + "_" + baseClassName);
         if (baseCtorIt != functions_.end() &&
-            (funcDecl->superCall ||
+            (funcDecl->baseCall ||
              baseCtorIt->second->arg_size() == 1)) {
           std::vector<llvm::Value *> baseArgs = {thisArg};
-          if (funcDecl->superCall) {
-            llvm::Value *superArg =
-                generateExpression(std::move(funcDecl->superCall));
-            if (superArg) {
-              baseArgs.push_back(superArg);
+          if (funcDecl->baseCall) {
+            llvm::Value *baseArg =
+                generateExpression(std::move(funcDecl->baseCall));
+            if (baseArg) {
+              baseArgs.push_back(baseArg);
             }
           }
           builder()->CreateCall(baseCtorIt->second, baseArgs);
@@ -2220,9 +2221,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::SelfExpr:
     return generateSelfExpr(std::unique_ptr<ast::SelfExpr>(
         static_cast<ast::SelfExpr *>(expr.release())));
-  case ast::NodeType::SuperExpr:
-    return generateSuperExpr(std::unique_ptr<ast::SuperExpr>(
-        static_cast<ast::SuperExpr *>(expr.release())));
+  case ast::NodeType::BaseExpr:
+    return generateBaseExpr(std::unique_ptr<ast::BaseExpr>(
+        static_cast<ast::BaseExpr *>(expr.release())));
   case ast::NodeType::NewExpr:
     return generateNewExpr(std::unique_ptr<ast::NewExpr>(
         static_cast<ast::NewExpr *>(expr.release())));
@@ -4066,14 +4067,14 @@ LLVMCodeGenerator::generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr) {
   return nullptr;
 }
 
-// 生成 super 表达式
-llvm::Value *LLVMCodeGenerator::generateSuperExpr(
-    std::unique_ptr<ast::SuperExpr> superExpr) {
-  auto it = namedValues_.find("super");
+// 生成 base 表达式
+llvm::Value *LLVMCodeGenerator::generateBaseExpr(
+    std::unique_ptr<ast::BaseExpr> baseExpr) {
+  auto it = namedValues_.find("base");
   if (it != namedValues_.end()) {
     return it->second;
   }
-  error("'super' not found in current context");
+  error("'base' not found in current context");
   return nullptr;
 }
 
@@ -5479,6 +5480,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   llvm::Value *thisArg = &(*argIt++);
   thisArg->setName("self");
   namedValues_["self"] = thisArg;
+  namedValues_["base"] = thisArg;
   auto prevClassName = currentClassName_;
   currentClassName_ = className;
 
@@ -5567,6 +5569,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   llvm::Value *thisArg = &(*argIt++);
   thisArg->setName("self");
   namedValues_["self"] = thisArg;
+  namedValues_["base"] = thisArg;
   auto prevClassName = currentClassName_;
   currentClassName_ = className;
 

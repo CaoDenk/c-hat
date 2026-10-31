@@ -1063,6 +1063,7 @@ bool SemanticAnalyzer::isAwaitableType(
 void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
   // 保存当前的类名
   std::string oldClassName = currentClassName_;
+  auto oldClassType = currentClassType_;
   currentClassName_ = classDecl->name;
 
   // 分析模板参数
@@ -1095,6 +1096,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     error("Class type not found: " + classDecl->name, *classDecl);
     return;
   }
+  currentClassType_ = classType;
 
   // 设置泛型参数
   if (!typeParameters.empty()) {
@@ -1501,6 +1503,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
 
   // 恢复当前的类名
   currentClassName_ = oldClassName;
+  currentClassType_ = oldClassType;
 }
 
 void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
@@ -3247,8 +3250,8 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
     return analyzeArrayInitExpr(static_cast<ast::ArrayInitExpr *>(expression));
   case ast::NodeType::DeleteExpr:
     return analyzeDeleteExpr(static_cast<ast::DeleteExpr *>(expression));
-  case ast::NodeType::SuperExpr:
-    return analyzeSuperExpr(static_cast<ast::SuperExpr *>(expression));
+  case ast::NodeType::BaseExpr:
+    return analyzeBaseExpr(static_cast<ast::BaseExpr *>(expression));
   case ast::NodeType::SelfExpr:
     return analyzeSelfExpr(static_cast<ast::SelfExpr *>(expression));
   case ast::NodeType::ExpansionExpr:
@@ -4282,8 +4285,14 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
     }
   }
 
-  // 分析对象表达式
-  auto objectType = analyzeExpression(memberExpr->object.get());
+  // 分析对象表达式；base 只允许作为成员访问的对象。
+  std::shared_ptr<types::Type> objectType;
+  if (auto *baseExpr =
+          dynamic_cast<ast::BaseExpr *>(memberExpr->object.get())) {
+    objectType = analyzeBaseType(baseExpr);
+  } else {
+    objectType = analyzeExpression(memberExpr->object.get());
+  }
   if (!objectType) {
     error("Invalid object type in member expression", *memberExpr);
     return nullptr;
@@ -4667,24 +4676,35 @@ SemanticAnalyzer::analyzeDeleteExpr(ast::DeleteExpr *deleteExpr) {
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }
 std::shared_ptr<types::Type>
-SemanticAnalyzer::analyzeSuperExpr(ast::SuperExpr *superExpr) {
-  // super 关键字返回当前类的基类类型
-  if (!currentClassName_.empty()) {
-    auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
-        symbolTable.lookupSymbol(currentClassName_));
-    if (classSymbol) {
-      auto classType = std::dynamic_pointer_cast<types::ClassType>(classSymbol->getType());
-      if (classType) {
-        auto baseClasses = classType->getBaseClasses();
-        if (!baseClasses.empty()) {
-          return baseClasses[0];
-        }
-      }
+SemanticAnalyzer::analyzeBaseType(ast::BaseExpr *baseExpr) {
+  if (currentFuncIsStatic_) {
+    error("'base' cannot be used in a static method", *baseExpr);
+    return nullptr;
+  }
+  std::shared_ptr<types::ClassType> classType = currentClassType_;
+  if (!classType && !currentClassName_.empty()) {
+    if (auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+            symbolTable.lookupSymbol(currentClassName_))) {
+      classType = std::dynamic_pointer_cast<types::ClassType>(
+          classSymbol->getType());
     }
   }
-  error("'super' can only be used inside a class with a base class", *superExpr);
+  if (classType) {
+    auto baseClasses = classType->getBaseClasses();
+    if (!baseClasses.empty()) {
+      return baseClasses[0];
+    }
+  }
+  error("'base' can only be used inside a class with a base class", *baseExpr);
   return nullptr;
 }
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeBaseExpr(ast::BaseExpr *baseExpr) {
+  error("'base' can only be used for member access", *baseExpr);
+  return nullptr;
+}
+
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeSelfExpr(ast::SelfExpr *selfExpr) {
   if (!currentClassName_.empty()) {

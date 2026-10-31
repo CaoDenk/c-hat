@@ -151,7 +151,7 @@ private:
   generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr,
                         bool isLValue = false);
   llvm::Value *generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
-  llvm::Value *generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
+  llvm::Value *generateBaseExpr(std::unique_ptr<ast::BaseExpr> baseExpr);
   llvm::Value *generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr);
   llvm::Value *generateDeleteExpr(std::unique_ptr<ast::DeleteExpr> deleteExpr);
   llvm::Value *generateFoldExpr(std::unique_ptr<ast::FoldExpr> foldExpr);

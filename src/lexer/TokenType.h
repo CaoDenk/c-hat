@@ -60,7 +60,6 @@ enum class TokenType {
   Null,
   Self,
   Base,
-  Super,
   New,
   Delete,
   If,

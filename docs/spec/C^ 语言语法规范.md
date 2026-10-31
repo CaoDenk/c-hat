@@ -521,7 +521,7 @@ public class Player {
 public class Boss : Player {
   private int _damage_multiplier;
 
-  public Boss(int initial_health, int damage_multiplier) : super(initial_health) {
+  public Boss(int initial_health, int damage_multiplier) : base(initial_health) {
     self._damage_multiplier = damage_multiplier;
   }
   
@@ -1551,7 +1551,7 @@ class Person {
 class Student : Person {
   string student_id;
   
-  Student(string name, int age, string student_id) : super(name, age) {
+  Student(string name, int age, string student_id) : base(name, age) {
     self.student_id = student_id;
   }
   

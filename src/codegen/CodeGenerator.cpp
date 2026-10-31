@@ -253,9 +253,9 @@ CodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expression) {
   case ast::NodeType::NewExpr:
     return generateNewExpr(std::unique_ptr<ast::NewExpr>(
         static_cast<ast::NewExpr *>(expression.release())));
-  case ast::NodeType::SuperExpr:
-    return generateSuperExpr(std::unique_ptr<ast::SuperExpr>(
-        static_cast<ast::SuperExpr *>(expression.release())));
+  case ast::NodeType::BaseExpr:
+    return generateBaseExpr(std::unique_ptr<ast::BaseExpr>(
+        static_cast<ast::BaseExpr *>(expression.release())));
   case ast::NodeType::ExpansionExpr:
     return generateExpansionExpr(std::unique_ptr<ast::ExpansionExpr>(
         static_cast<ast::ExpansionExpr *>(expression.release())));
@@ -515,8 +515,8 @@ CodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
 }
 
 std::string
-CodeGenerator::generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr) {
-  return "super";
+CodeGenerator::generateBaseExpr(std::unique_ptr<ast::BaseExpr> baseExpr) {
+  return "base";
 }
 
 std::string CodeGenerator::generateExpansionExpr(

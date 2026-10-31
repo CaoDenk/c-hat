@@ -6,11 +6,12 @@
 
 最后更新：2026-10-31
 
-> **设计评审进行中**：在继续新增特性前，先冻结基础设计。
-> 当前草案：
+> **设计评审进行中**：核心设计决策已确认，正在按阶段落地。
+> 已确认决策：[设计决策-2026-10-31](../design/设计决策-2026-10-31.md)
+> 评审草案：
 > - [设计评审：类型与代码生成边界](../design/设计评审-类型与代码生成边界.md)
 > - [设计评审：内存与资源模型](../design/设计评审-内存与资源模型.md)
-> 评审完成前，新增语法/高级特性默认冻结。
+> 未落地前，新增语法/高级特性默认冻结。
 
 ---
 
@@ -107,7 +108,7 @@ public:
 
 class Dog : Animal {
 public:
-    Dog(string n) : super(n) { }   // 基类构造用 super(...)
+    Dog(string n) : base(n) { }   // 基类构造用 base(...)
 
     override func speak() -> void {
         base.speak();              // 基类成员用 base.
@@ -116,7 +117,7 @@ public:
 ```
 
 - 继承写 `: Base`，**不写** `: public Base`。
-- 基类构造调用写 `: super(args)`。当前实现只认 `super`，不认 `: base(args)`。
+- 基类构造调用写 `: base(args)`；`super` 已移除。
 - 访问基类成员写 `base.member` / `base.method()`。
 - 多接口：`class Shape : Drawable, Resizable { ... }`。
 
@@ -292,7 +293,7 @@ extern "C" {
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
-- 单继承：基类字段布局、`: super(...)`、`override`、继承方法调用（本次修复；静态派发）
+- 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用（本次修复；静态派发）
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
 - 显式 `delete` 调用析构函数（本次修复）
 - 结构体字段赋值/读取 `p.x = 7; return p.x;`（本次修复）
@@ -325,7 +326,7 @@ extern "C" {
 ### OOP 当前边界
 
 - 继承目前是**静态派发**：`Animal^ a = new Dog(...); a->speak()` 调用 `Animal_speak`，不会走 `Dog_speak`；虚表/接口动态派发尚未实现。
-- 派生类构造函数支持 `: super(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
+- 派生类构造函数支持 `: base(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
 - `static` 字段初始化目前只支持字面量；静态方法不能访问实例成员（语义层会检查）。
 - 自动析构/RAII 仍未实现；显式 `delete` 已能调用 `ClassName_~ClassName`。
 - 多继承、接口作为参数类型/动态派发、属性与继承的复杂交互仍不完整。
@@ -349,7 +350,7 @@ extern "C" {
 | 写法 | 现状 / 建议 |
 |---|---|
 | `func init(...)` 作为构造函数 | 改为 `ClassName(...)` 或 `func ClassName(...)` |
-| `base.init(...)` | 基类构造写 `: super(...)`；基类成员写 `base.x` |
+| `base.init(...)` | 基类构造写 `: base(...)`；基类成员写 `base.x` |
 | `~ { ... }` 匿名析构 | 改为 `~ClassName()` |
 | `: public Base` | 改为 `: Base` |
 | `func<T> foo(...)` | 改为 `func foo<T>(...)` |

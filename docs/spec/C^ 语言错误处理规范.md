@@ -66,13 +66,13 @@ public:
 // 用户自定义异常
 class NetworkError : Exception {
 public:
-    NetworkError(string msg) : super(msg) {}
+    NetworkError(string msg) : base(msg) {}
 }
 
 // 运行时类型判断
 class DivideByZeroError : Exception {
 public:
-    DivideByZeroError(string msg) : super(msg) {}
+    DivideByZeroError(string msg) : base(msg) {}
 }
 ```
 
@@ -113,7 +113,7 @@ class InvalidInputException : Exception {
 public:
     int input_value;
     
-    InvalidInputException(string message, int value) : super(message) {
+    InvalidInputException(string message, int value) : base(message) {
         input_value = value;
     }
 }
@@ -211,11 +211,11 @@ Exception
 class MyException : Exception {
     int error_code;
     
-    MyException(string message, int code) : super(message) {
+    MyException(string message, int code) : base(message) {
         error_code = code;
     }
     
-    MyException(string message) : super(message) {
+    MyException(string message) : base(message) {
         error_code = 0;
     }
 }

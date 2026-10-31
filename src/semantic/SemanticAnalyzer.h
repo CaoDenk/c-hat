@@ -244,8 +244,9 @@ private:
   // 分析delete表达式
   std::shared_ptr<types::Type> analyzeDeleteExpr(ast::DeleteExpr *deleteExpr);
 
-  // 分析super表达式
-  std::shared_ptr<types::Type> analyzeSuperExpr(ast::SuperExpr *superExpr);
+  // 分析 base 表达式（仅允许作为成员访问的对象）
+  std::shared_ptr<types::Type> analyzeBaseExpr(ast::BaseExpr *baseExpr);
+  std::shared_ptr<types::Type> analyzeBaseType(ast::BaseExpr *baseExpr);
 
   // 分析self表达式
   std::shared_ptr<types::Type> analyzeSelfExpr(ast::SelfExpr *selfExpr);
@@ -417,6 +418,8 @@ private:
 
   // 当前类名
   std::string currentClassName_;
+  // 当前类类型（避免构造函数同名符号遮蔽类符号）
+  std::shared_ptr<types::ClassType> currentClassType_;
 
   // 当前方法是否为 static（用于检查静态方法体内非法访问非静态成员）
   bool currentFuncIsStatic_ = false;

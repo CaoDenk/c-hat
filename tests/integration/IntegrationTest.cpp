@@ -271,15 +271,15 @@ TEST_CASE("Integration: inheritance", "[integration][class]") {
       "    int x;\n"
       "    Animal(int v) { x = v; }\n"
       "    func speak() -> int { return x; }\n"
-      "    func base_only() -> int { return x; }\n"
       "}\n"
       "class Dog : Animal {\n"
-      "    Dog(int v) : super(v) { }\n"
-      "    override func speak() -> int { return x + 1; }\n"
+      "    Dog(int v) : base(v) { }\n"
+      "    override func speak() -> int { return base.speak() + 1; }\n"
+      "    func base_x() -> int { return base.x; }\n"
       "}\n"
       "func main() -> int {\n"
       "    Dog^ d = new Dog(41);\n"
-      "    return d->speak() + d->base_only() - 41;\n"
+      "    return d->speak() + d->base_x() - 41;\n"
       "}\n") == 42);
 }
 

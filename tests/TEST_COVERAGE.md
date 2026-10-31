@@ -4,8 +4,8 @@
 > 所有 33 个测试集全部通过（624/624 断言，100%）
 > 
 > 修复历史：
-> - 填充 8 个语义分析桩（analyzeNewExpr/StructInitExpr/this/self/super/delete/lambda/expansion）
-> - parser super 关键字改为 SuperExpr AST，private/protected 继承访问控制检查
+> - 填充 8 个语义分析桩（analyzeNewExpr/StructInitExpr/self/base/delete/lambda/expansion）
+> - parser base 关键字改为 BaseExpr AST，private/protected 继承访问控制检查
 > - generateStructInitExpr LLVM codegen（Point{0,0} 结构体字面量 IR 生成）
 > - 指针减法类型推导（int^ - int^ → int）
 
@@ -19,7 +19,7 @@
 | `array` | 27 | ✅ 全通过 | 数组声明、字面量、切片 |
 | `attribute` | 40 | ✅ 全通过 | 自定义属性系统 |
 | `builtin_vars` | 11 | ✅ 全通过 | 内置变量表达式 |
-| `class_system` | 34 | ✅ 全通过 | 继承、super、访问控制 |
+| `class_system` | 34 | ✅ 全通过 | 继承、base、访问控制 |
 | `coroutine` | 13 | ✅ 全通过 | 协程 basic |
 | `defer` | 4 | ✅ 全通过 | defer 语句 |
 | `exception` | 3 | ✅ 全通过 | try-catch |

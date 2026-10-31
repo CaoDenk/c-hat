@@ -109,8 +109,8 @@ private:
   // 生成new表达式代码
   std::string generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr);
 
-  // 生成super表达式代码
-  std::string generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
+  // 生成 base 表达式代码
+  std::string generateBaseExpr(std::unique_ptr<ast::BaseExpr> baseExpr);
 
   // 生成可变参数展开表达式代码
   std::string

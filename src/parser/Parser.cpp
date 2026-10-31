@@ -1173,15 +1173,15 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
   std::unique_ptr<ast::Node> body;
   std::unique_ptr<ast::Expression> arrowExpr;
 
-  // 解析 super() 构造函数调用
-  std::unique_ptr<ast::Expression> superCall;
+  // 解析 base() 构造函数调用
+  std::unique_ptr<ast::Expression> baseCall;
   if (match(lexer::TokenType::Colon)) {
-    if (match(lexer::TokenType::Super)) {
-      expect(lexer::TokenType::LParen, "Expected '(' after 'super'");
+    if (match(lexer::TokenType::Base)) {
+      expect(lexer::TokenType::LParen, "Expected '(' after 'base'");
       if (!check(lexer::TokenType::RParen)) {
-        superCall = parseExpression();
+        baseCall = parseExpression();
       }
-      expect(lexer::TokenType::RParen, "Expected ')' after super arguments");
+      expect(lexer::TokenType::RParen, "Expected ')' after base arguments");
     }
   }
 
@@ -1212,7 +1212,7 @@ std::unique_ptr<ast::FunctionDecl> Parser::parseFunctionDecl() {
   return std::make_unique<ast::FunctionDecl>(
       specifiers, name, std::move(templateParams), std::move(params),
       std::move(returnType), std::move(whereClause), std::move(requiresClause),
-      std::move(body), std::move(arrowExpr), isImmutable, std::move(superCall),
+      std::move(body), std::move(arrowExpr), isImmutable, std::move(baseCall),
       isVariadic, isStatic);
 }
 
@@ -2779,7 +2779,7 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
   if (match(lexer::TokenType::Self)) {
     expr = std::make_unique<ast::Identifier>("self");
   } else if (match(lexer::TokenType::Base)) {
-    expr = std::make_unique<ast::SuperExpr>();
+    expr = std::make_unique<ast::BaseExpr>();
   } else if (match(lexer::TokenType::BuiltinVar)) {
     std::string name = previousToken->getValue();
     expr = std::make_unique<ast::BuiltinVarExpr>(name);

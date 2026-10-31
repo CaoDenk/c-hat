@@ -326,7 +326,7 @@ class Animal {
 
 // 单继承 (隐式 public)
 class Dog : Animal {
-    public Dog(string new_name) : super(new_name) {
+    public Dog(string new_name) : base(new_name) {
     }
 
     public func speak() -> string {
@@ -349,11 +349,11 @@ string dog_name = dog.get_name(); // "Buddy"（继承自基类）
 
 *   **构造**：使用类名 `ClassName(...)`。
 *   **析构**：使用 `~ClassName()`。
-*   **基类调用**：基类构造使用 `: super(...)`；基类成员使用 `base.member`。
+*   **基类调用**：基类构造使用 `: base(...)`；基类成员使用 `base.member`。
 
 ```cpp
 class Derived : Base {
-    public Derived(int x) : super(x) {
+    public Derived(int x) : base(x) {
         // ...
     }
 
