@@ -150,7 +150,6 @@ private:
   llvm::Value *
   generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr,
                         bool isLValue = false);
-  llvm::Value *generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr);
   llvm::Value *generateSelfExpr(std::unique_ptr<ast::SelfExpr> selfExpr);
   llvm::Value *generateSuperExpr(std::unique_ptr<ast::SuperExpr> superExpr);
   llvm::Value *generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr);

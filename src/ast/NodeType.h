@@ -14,7 +14,6 @@ enum class NodeType {
   CallExpr,
   MemberExpr,
   SubscriptExpr,
-  ThisExpr,
   SelfExpr,
   SuperExpr,
   NewExpr,

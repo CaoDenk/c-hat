@@ -244,9 +244,6 @@ private:
   // 分析delete表达式
   std::shared_ptr<types::Type> analyzeDeleteExpr(ast::DeleteExpr *deleteExpr);
 
-  // 分析this表达式
-  std::shared_ptr<types::Type> analyzeThisExpr(ast::ThisExpr *thisExpr);
-
   // 分析super表达式
   std::shared_ptr<types::Type> analyzeSuperExpr(ast::SuperExpr *superExpr);
 

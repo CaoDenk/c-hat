@@ -175,9 +175,6 @@ std::unique_ptr<Expression> cloneExprImpl(const Expression *expr,
     return std::make_unique<TypeIsExpr>(
         cloneTypeImpl(typeIs->type.get(), subst), typeIs->kind);
   }
-  if (dynamic_cast<const ThisExpr *>(expr)) {
-    return std::make_unique<ThisExpr>();
-  }
   if (dynamic_cast<const SelfExpr *>(expr)) {
     return std::make_unique<SelfExpr>();
   }

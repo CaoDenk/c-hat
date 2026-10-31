@@ -2217,9 +2217,6 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::SubscriptExpr:
     return generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr>(
         static_cast<ast::SubscriptExpr *>(expr.release())));
-  case ast::NodeType::ThisExpr:
-    return generateThisExpr(std::unique_ptr<ast::ThisExpr>(
-        static_cast<ast::ThisExpr *>(expr.release())));
   case ast::NodeType::SelfExpr:
     return generateSelfExpr(std::unique_ptr<ast::SelfExpr>(
         static_cast<ast::SelfExpr *>(expr.release())));
@@ -4056,17 +4053,6 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     return elementPtr;
   }
   return builder()->CreateLoad(base.elementType, elementPtr, "element");
-}
-
-// 生成 this 表达式
-llvm::Value *
-LLVMCodeGenerator::generateThisExpr(std::unique_ptr<ast::ThisExpr> thisExpr) {
-  auto it = namedValues_.find("self");
-  if (it != namedValues_.end()) {
-    return it->second;
-  }
-  error("'self' not found in current context");
-  return nullptr;
 }
 
 // 生成 self 表达式

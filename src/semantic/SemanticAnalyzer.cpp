@@ -3247,8 +3247,6 @@ SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
     return analyzeArrayInitExpr(static_cast<ast::ArrayInitExpr *>(expression));
   case ast::NodeType::DeleteExpr:
     return analyzeDeleteExpr(static_cast<ast::DeleteExpr *>(expression));
-  case ast::NodeType::ThisExpr:
-    return analyzeThisExpr(static_cast<ast::ThisExpr *>(expression));
   case ast::NodeType::SuperExpr:
     return analyzeSuperExpr(static_cast<ast::SuperExpr *>(expression));
   case ast::NodeType::SelfExpr:
@@ -4667,18 +4665,6 @@ SemanticAnalyzer::analyzeDeleteExpr(ast::DeleteExpr *deleteExpr) {
     }
   }
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
-}
-std::shared_ptr<types::Type>
-SemanticAnalyzer::analyzeThisExpr(ast::ThisExpr *thisExpr) {
-  if (!currentClassName_.empty()) {
-    auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
-        symbolTable.lookupSymbol(currentClassName_));
-    if (classSymbol) {
-      return classSymbol->getType();
-    }
-  }
-  error("'this' can only be used inside a class", *thisExpr);
-  return nullptr;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeSuperExpr(ast::SuperExpr *superExpr) {
