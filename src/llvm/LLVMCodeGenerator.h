@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../ast/AstNodes.h"
+#include "../semantic/SemanticModel.h"
 #include "../semantic/SymbolTable.h"
 #include "LLVMIRGenerator.h"
 #include <llvm/IR/IRBuilder.h>
@@ -18,6 +19,7 @@ namespace llvm_codegen {
 class LLVMCodeGenerator {
 public:
   explicit LLVMCodeGenerator(const std::string &moduleName);
+  void setSemanticModel(const c_hat::semantic::SemanticModel *model) { semanticModel_ = model; }
   ~LLVMCodeGenerator() = default;
 
   llvm::Module *getModule() { return generator_.getModule(); }
@@ -199,6 +201,8 @@ private:
   // 因此 defer 可能引用的局部变量必须由入口块支配。
   llvm::AllocaInst *createEntryAlloca(llvm::Type *type,
                                       const std::string &name);
+  llvm::Type *lowerSemanticType(
+      const std::shared_ptr<c_hat::types::Type> &type);
   // 数组/切片辅助：同一种 LLVM 元素类型复用同一个切片结构体，
   // 并记录元素类型，避免从名字猜类型。
   llvm::StructType *getOrCreateSliceType(llvm::Type *elementType);
@@ -215,6 +219,7 @@ private:
   std::string currentClassName_;
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
+  const c_hat::semantic::SemanticModel *semanticModel_ = nullptr;
   std::unordered_map<std::string, llvm::Type *> namedValuePointeeTypes_;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。

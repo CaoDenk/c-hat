@@ -252,6 +252,7 @@ int main(int argc, char *argv[]) {
       std::println("Generating LLVM IR...");
     }
     c_hat::llvm_codegen::LLVMCodeGenerator codeGen("c_hat_module");
+    codeGen.setSemanticModel(&semanticAnalyzer.getSemanticModel());
     codeGen.generate(std::move(program));
     if (verbose) {
       std::println("LLVM IR generated.");

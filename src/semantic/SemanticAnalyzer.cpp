@@ -676,6 +676,7 @@ void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
   if (varDecl->isLate) {
     lateVariables_[varDecl->name] = {isInitialized, varDecl};
   }
+  model_.setDeclarationType(varDecl, varType);
 }
 void SemanticAnalyzer::analyzeTupleDestructuringDecl(
     ast::TupleDestructuringDecl *decl) {
@@ -3229,6 +3230,18 @@ bool SemanticAnalyzer::statementDefinitelyReturns(
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeExpression(ast::Expression *expression) {
+  auto result = analyzeExpressionImpl(expression);
+  if (result) {
+    model_.setExpressionType(expression, result);
+  }
+  return result;
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeExpressionImpl(ast::Expression *expression) {
+  if (!expression) {
+    return nullptr;
+  }
   switch (expression->getType()) {
   case ast::NodeType::BinaryExpr:
     return analyzeBinaryExpr(static_cast<ast::BinaryExpr *>(expression));

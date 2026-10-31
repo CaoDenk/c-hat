@@ -1,6 +1,7 @@
 #include "LLVMCodeGenerator.h"
 #include "../Diagnostics.h"
 #include "../ast/AstClone.h"
+#include "../types/Types.h"
 #include <cctype>
 #include <ctime>
 #include <functional>
@@ -336,6 +337,17 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   llvm::Type *varType = nullptr;
   bool isSliceType = false;
   llvm::Type *sliceElementType = nullptr;
+
+  // Phase 1：优先使用 semantic model 给出的权威类型，不再靠 codegen 猜。
+  if (semanticModel_) {
+    auto semanticType = semanticModel_->getDeclarationType(varDecl.get());
+    if (!semanticType && varDecl->initializer) {
+      semanticType = semanticModel_->getExpressionType(varDecl->initializer.get());
+    }
+    if (semanticType) {
+      varType = lowerSemanticType(semanticType);
+    }
+  }
 
   // 无显式类型的普通表达式：先求值，再按值的 LLVM 类型分配变量。
   // 这样 `var x = a[0] + a[1]` 不会因为无法静态推断而退化成 int。
@@ -2044,6 +2056,136 @@ bool LLVMCodeGenerator::isSliceStructType(llvm::Type *type) {
     return false;
   }
   return structType->getName().str().rfind("Slice_", 0) == 0;
+}
+
+llvm::Type *LLVMCodeGenerator::lowerSemanticType(
+    const std::shared_ptr<types::Type> &type) {
+  if (!type) {
+    return nullptr;
+  }
+
+  if (auto *readonlyType = dynamic_cast<types::ReadonlyType *>(type.get())) {
+    return lowerSemanticType(readonlyType->getBaseType());
+  }
+  if (auto *nullableType = dynamic_cast<types::NullableType *>(type.get())) {
+    llvm::Type *baseType = lowerSemanticType(nullableType->getBaseType());
+    if (!baseType) {
+      return nullptr;
+    }
+    return llvm::StructType::get(context(), {baseType,
+                                            llvm::Type::getInt1Ty(context())});
+  }
+  if (auto *primitiveType = dynamic_cast<types::PrimitiveType *>(type.get())) {
+    switch (primitiveType->getKind()) {
+    case types::PrimitiveType::Kind::Void:
+      return llvm::Type::getVoidTy(context());
+    case types::PrimitiveType::Kind::Bool:
+      return llvm::Type::getInt1Ty(context());
+    case types::PrimitiveType::Kind::Byte:
+    case types::PrimitiveType::Kind::SByte:
+      return llvm::Type::getInt8Ty(context());
+    case types::PrimitiveType::Kind::Short:
+    case types::PrimitiveType::Kind::UShort:
+      return llvm::Type::getInt16Ty(context());
+    case types::PrimitiveType::Kind::Int:
+    case types::PrimitiveType::Kind::UInt:
+    case types::PrimitiveType::Kind::Char:
+      return llvm::Type::getInt32Ty(context());
+    case types::PrimitiveType::Kind::Long:
+    case types::PrimitiveType::Kind::ULong:
+      return llvm::Type::getInt64Ty(context());
+    case types::PrimitiveType::Kind::Float:
+      return llvm::Type::getFloatTy(context());
+    case types::PrimitiveType::Kind::Double:
+      return llvm::Type::getDoubleTy(context());
+    case types::PrimitiveType::Kind::Fp16:
+      return llvm::Type::getHalfTy(context());
+    case types::PrimitiveType::Kind::Bf16:
+      return llvm::Type::getBFloatTy(context());
+    }
+  }
+  if (auto *pointerType = dynamic_cast<types::PointerType *>(type.get())) {
+    llvm::Type *pointeeType = lowerSemanticType(pointerType->getPointeeType());
+    if (!pointeeType) {
+      pointeeType = llvm::Type::getInt8Ty(context());
+    }
+    return llvm::PointerType::getUnqual(context());
+  }
+  if (auto *referenceType = dynamic_cast<types::ReferenceType *>(type.get())) {
+    llvm::Type *baseType = lowerSemanticType(referenceType->getBaseType());
+    if (!baseType) {
+      baseType = llvm::Type::getInt8Ty(context());
+    }
+    return llvm::PointerType::getUnqual(context());
+  }
+  if (auto *arrayType = dynamic_cast<types::ArrayType *>(type.get())) {
+    llvm::Type *elementType = lowerSemanticType(arrayType->getElementType());
+    if (!elementType) {
+      elementType = llvm::Type::getInt32Ty(context());
+    }
+    return llvm::ArrayType::get(elementType, arrayType->getSize());
+  }
+  if (auto *sliceType = dynamic_cast<types::SliceType *>(type.get())) {
+    llvm::Type *elementType = lowerSemanticType(sliceType->getElementType());
+    if (!elementType) {
+      elementType = llvm::Type::getInt32Ty(context());
+    }
+    return getOrCreateSliceType(elementType);
+  }
+  if (auto *tupleType = dynamic_cast<types::TupleType *>(type.get())) {
+    std::vector<llvm::Type *> elementTypes;
+    for (const auto &elementType : tupleType->getElementTypes()) {
+      llvm::Type *llvmElementType = lowerSemanticType(elementType);
+      if (llvmElementType) {
+        elementTypes.push_back(llvmElementType);
+      }
+    }
+    return llvm::StructType::get(context(), elementTypes);
+  }
+  if (auto *literalViewType =
+          dynamic_cast<types::LiteralViewType *>(type.get())) {
+    return getLiteralViewType();
+  }
+  if (auto *classType = dynamic_cast<types::ClassType *>(type.get())) {
+    auto it = structTypes_.find(classType->getName());
+    if (it != structTypes_.end()) {
+      return it->second;
+    }
+    if (classType->getName() == "string") {
+      return getLiteralViewType();
+    }
+    return nullptr;
+  }
+  if (auto *interfaceType =
+          dynamic_cast<types::InterfaceType *>(type.get())) {
+    auto it = structTypes_.find(interfaceType->getName());
+    if (it != structTypes_.end()) {
+      return it->second;
+    }
+    return nullptr;
+  }
+  if (auto *functionType = dynamic_cast<types::FunctionType *>(type.get())) {
+    llvm::Type *returnType = lowerSemanticType(functionType->getReturnType());
+    if (!returnType) {
+      returnType = llvm::Type::getVoidTy(context());
+    }
+    std::vector<llvm::Type *> paramTypes;
+    for (const auto &paramType : functionType->getParameterTypes()) {
+      llvm::Type *llvmParamType = lowerSemanticType(paramType);
+      if (llvmParamType) {
+        paramTypes.push_back(llvmParamType);
+      }
+    }
+    return llvm::PointerType::getUnqual(context());
+  }
+  if (auto *unionType = dynamic_cast<types::UnionType *>(type.get())) {
+    const auto &members = unionType->getMemberTypes();
+    if (!members.empty()) {
+      return lowerSemanticType(members.front());
+    }
+    return nullptr;
+  }
+  return nullptr;
 }
 
 // 辅助函数：获取 literalview 类型

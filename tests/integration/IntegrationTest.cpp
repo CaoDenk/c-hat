@@ -19,6 +19,7 @@ static int compileAndRun(const std::string &source) {
   if (analyzer.hasError()) return -2;
 
   llvm_codegen::LLVMCodeGenerator codeGen("test_module");
+  codeGen.setSemanticModel(&analyzer.getSemanticModel());
   codeGen.generate(std::move(program));
   if (!codeGen.verifyIR()) return -3;
   if (!codeGen.hasJIT()) return -4;

@@ -5,6 +5,7 @@
 #include "../types/Type.h"
 #include "ExtensionRegistry.h"
 #include "ModuleLoader.h"
+#include "SemanticModel.h"
 #include "SymbolTable.h"
 #include <memory>
 #include <set>
@@ -43,9 +44,15 @@ public:
   // 检查是否有错误
   bool hasError() const { return hasError_; }
 
+  // 语义模型
+  const SemanticModel &getSemanticModel() const { return model_; }
+
 private:
   // 符号表
   SymbolTable symbolTable;
+
+  // 语义模型：表达式/声明的权威类型
+  SemanticModel model_;
 
   // 模块加载器
   std::unique_ptr<ModuleLoader> moduleLoader_;
@@ -214,6 +221,8 @@ private:
 
   // 分析表达式
   std::shared_ptr<types::Type> analyzeExpression(ast::Expression *expression);
+  std::shared_ptr<types::Type>
+  analyzeExpressionImpl(ast::Expression *expression);
 
   // 分析二元表达式
   std::shared_ptr<types::Type> analyzeBinaryExpr(ast::BinaryExpr *binaryExpr);
