@@ -337,200 +337,35 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   llvm::Type *varType = nullptr;
   bool isSliceType = false;
   llvm::Type *sliceElementType = nullptr;
+  std::shared_ptr<types::Type> semanticType;
 
   // Phase 1：优先使用 semantic model 给出的权威类型，不再靠 codegen 猜。
   if (semanticModel_) {
-    auto semanticType = semanticModel_->getDeclarationType(varDecl.get());
+    semanticType = semanticModel_->getDeclarationType(varDecl.get());
     if (!semanticType && varDecl->initializer) {
       semanticType = semanticModel_->getExpressionType(varDecl->initializer.get());
     }
     if (semanticType) {
       varType = lowerSemanticType(semanticType);
+      if (semanticType->isSlice()) {
+        if (auto *slice =
+                dynamic_cast<types::SliceType *>(semanticType.get())) {
+          isSliceType = true;
+          sliceElementType = lowerSemanticType(slice->getElementType());
+        }
+      }
     }
   }
 
-  // 无显式类型的普通表达式：先求值，再按值的 LLVM 类型分配变量。
-  // 这样 `var x = a[0] + a[1]` 不会因为无法静态推断而退化成 int。
-  auto *initializerMember =
-      dynamic_cast<ast::MemberExpr *>(varDecl->initializer.get());
-  if (!semanticModel_ && !varDecl->type && varDecl->initializer &&
-      (dynamic_cast<ast::BinaryExpr *>(varDecl->initializer.get()) ||
-       dynamic_cast<ast::UnaryExpr *>(varDecl->initializer.get()) ||
-       dynamic_cast<ast::SubscriptExpr *>(varDecl->initializer.get()) ||
-       dynamic_cast<ast::ConditionalExpr *>(varDecl->initializer.get()) ||
-       (initializerMember && initializerMember->member != "len" &&
-        initializerMember->member != "ptr"))) {
-    llvm::Value *initValue =
-        generateExpression(std::move(varDecl->initializer));
-    if (!initValue) {
-      return nullptr;
-    }
-    llvm::AllocaInst *inferredAlloca =
-        createEntryAlloca(initValue->getType(), varDecl->name);
-    builder()->CreateStore(initValue, inferredAlloca);
-    namedValues_[varDecl->name] = inferredAlloca;
-    return inferredAlloca;
-  }
-
-  if (varDecl->type && !varType) {
+  // 显式类型是 semantic model 缺失时的最后来源；不再从初始化器猜类型。
+  if (!varType && varDecl->type) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
       varType = generateType(typeNode);
-      // 检查是否是切片类型
       if (auto *sliceTypeNode =
               dynamic_cast<const ast::SliceType *>(varDecl->type.get())) {
         isSliceType = true;
         sliceElementType = generateType(sliceTypeNode->baseType.get());
       }
-    }
-  } else if (!varType && semanticModel_) {
-    error("Missing semantic type for variable: " + varDecl->name, varDecl.get());
-    return nullptr;
-  } else if (!varType && varDecl->initializer) {
-    if (auto *literal =
-            dynamic_cast<ast::Literal *>(varDecl->initializer.get())) {
-      switch (literal->type) {
-      case ast::Literal::Type::Integer:
-        varType = llvm::Type::getInt32Ty(context());
-        break;
-      case ast::Literal::Type::Floating:
-        varType = llvm::Type::getDoubleTy(context());
-        break;
-      case ast::Literal::Type::Boolean:
-        varType = llvm::Type::getInt1Ty(context());
-        break;
-      case ast::Literal::Type::Character:
-        varType = llvm::Type::getInt32Ty(context());
-        break;
-      case ast::Literal::Type::String:
-        varType = getLiteralViewType();
-        break;
-      default:
-        throw std::runtime_error(
-            "Cannot infer type from literal for variable: " + varDecl->name);
-      }
-    } else if (auto *callExpr =
-                   dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
-      // 对于函数调用表达式，尝试从函数名获取函数类型
-      if (auto *identifier =
-              dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
-        const std::string &funcName = identifier->name;
-        // 优先使用语义层解析出的 mangled name；否则按 "name@..." 前缀查找。
-        llvm::Function *func = nullptr;
-        if (!callExpr->resolvedMangledName.empty()) {
-          auto it = functions_.find(callExpr->resolvedMangledName);
-          if (it != functions_.end()) {
-            func = it->second;
-          }
-        }
-        if (!func) {
-          auto it = functions_.find(funcName);
-          if (it != functions_.end()) {
-            func = it->second;
-          }
-        }
-        if (!func) {
-          for (auto &[name, candidate] : functions_) {
-            if (name.rfind(funcName + "@", 0) == 0) {
-              func = candidate;
-              break;
-            }
-          }
-        }
-        if (func) {
-          varType = func->getReturnType();
-        } else {
-          // 如果函数未定义，暂时使用 int 作为默认类型
-          varType = llvm::Type::getInt32Ty(context());
-        }
-      } else if (auto *member =
-                     dynamic_cast<ast::MemberExpr *>(callExpr->callee.get())) {
-        // 成员方法调用：用 Class_method 的返回类型推断变量类型。
-        std::string methodName = member->structName + "_" + member->member;
-        auto it = functions_.find(methodName);
-        if (it != functions_.end()) {
-          varType = it->second->getReturnType();
-        } else {
-          varType = llvm::Type::getInt32Ty(context());
-        }
-      } else {
-        // 对于非标识符调用，暂时使用 int 作为默认类型
-        varType = llvm::Type::getInt32Ty(context());
-      }
-    } else if (auto *identifier = dynamic_cast<ast::Identifier *>(
-                   varDecl->initializer.get())) {
-      // 对于标识符表达式，尝试从变量名获取变量类型
-      const std::string &varName = identifier->name;
-      // 检查是否是已定义的变量
-      auto it = namedValues_.find(varName);
-      if (it != namedValues_.end()) {
-        llvm::Value *varValue = it->second;
-        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(varValue)) {
-          varType = alloca->getAllocatedType();
-        } else {
-          // 如果变量不是 AllocaInst，暂时使用 int 作为默认类型
-          varType = llvm::Type::getInt32Ty(context());
-        }
-      } else {
-        // 如果变量未定义，暂时使用 int 作为默认类型
-        varType = llvm::Type::getInt32Ty(context());
-      }
-    } else if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(
-                   varDecl->initializer.get())) {
-      // 对于成员表达式，推断类型
-      std::string memberName = memberExpr->member;
-      if (memberName == "len") {
-        // len 字段是 i32 类型
-        varType = llvm::Type::getInt32Ty(context());
-      } else if (memberName == "ptr") {
-        // ptr 字段是指针类型
-        varType = llvm::PointerType::get(context(), 0);
-      } else {
-        // 对于其他成员，暂时使用 int 作为默认类型
-        varType = llvm::Type::getInt32Ty(context());
-      }
-    } else if (auto *newExpr =
-                   dynamic_cast<ast::NewExpr *>(varDecl->initializer.get())) {
-      if (auto *arrayType =
-              dynamic_cast<ast::ArrayType *>(newExpr->type.get())) {
-        varType = getOrCreateSliceType(generateType(arrayType->baseType.get()));
-      } else if (auto *allocatedType =
-                     dynamic_cast<ast::Type *>(newExpr->type.get())) {
-        llvm::Type *llvmAllocated = generateType(allocatedType);
-        varType = llvmAllocated
-                      ? static_cast<llvm::Type *>(llvmAllocated->getPointerTo())
-                      : llvm::Type::getInt32Ty(context());
-      } else {
-        varType = llvm::Type::getInt32Ty(context());
-      }
-    } else if (auto *arrayInitExpr = dynamic_cast<ast::ArrayInitExpr *>(
-                   varDecl->initializer.get())) {
-      // 对于数组初始化表达式，生成切片类型
-      std::string sliceTypeName = "Slice_int";
-
-      // 检查是否已经存在该切片类型
-      auto it = sliceTypes_.find(sliceTypeName);
-      llvm::StructType *sliceStructType;
-      if (it != sliceTypes_.end()) {
-        sliceStructType = it->second;
-      } else {
-        // 生成元素类型
-        llvm::Type *elementType = llvm::Type::getInt32Ty(context());
-
-        // 创建切片类型的结构体
-        std::vector<llvm::Type *> fields;
-        fields.push_back(llvm::PointerType::get(elementType, 0)); // ptr
-        fields.push_back(llvm::Type::getInt32Ty(context()));      // len
-        sliceStructType =
-            llvm::StructType::create(context(), fields, sliceTypeName);
-
-        // 存储到 sliceTypes_ 映射中
-        sliceTypes_[sliceTypeName] = sliceStructType;
-      }
-
-      varType = sliceStructType;
-    } else {
-      // 对于其他非字面量初始化器，暂时使用 int 作为默认类型
-      varType = llvm::Type::getInt32Ty(context());
     }
   }
 
