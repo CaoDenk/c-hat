@@ -3880,6 +3880,45 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     llvm::Value *length = nullptr;
   };
 
+  std::shared_ptr<types::Type> objectSemanticType;
+  if (semanticModel_) {
+    objectSemanticType =
+        semanticModel_->getExpressionType(subscriptExpr->object.get());
+  }
+  auto semanticElementType = [&]() -> std::shared_ptr<types::Type> {
+    auto type = objectSemanticType;
+    while (type && type->isReference()) {
+      auto reference = std::dynamic_pointer_cast<types::ReferenceType>(type);
+      type = reference ? reference->getBaseType() : nullptr;
+    }
+    while (type && type->isReadonly()) {
+      auto readonly = std::dynamic_pointer_cast<types::ReadonlyType>(type);
+      type = readonly ? readonly->getBaseType() : nullptr;
+    }
+    if (!type) {
+      return nullptr;
+    }
+    if (auto array = std::dynamic_pointer_cast<types::ArrayType>(type)) {
+      return array->getElementType();
+    }
+    if (auto slice = std::dynamic_pointer_cast<types::SliceType>(type)) {
+      return slice->getElementType();
+    }
+    if (auto pointer = std::dynamic_pointer_cast<types::PointerType>(type)) {
+      return pointer->getPointeeType();
+    }
+    return nullptr;
+  };
+  auto applySemanticElementType = [&](ArrayBase &base) {
+    auto elementType = semanticElementType();
+    if (!elementType) {
+      return;
+    }
+    if (llvm::Type *lowered = lowerSemanticType(elementType)) {
+      base.elementType = lowered;
+    }
+  };
+
   std::function<ArrayBase(ast::Expression *)> getBase;
   std::function<llvm::Value *(ArrayBase &, llvm::Value *)> getElementPtr;
 
@@ -4137,6 +4176,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
   if (auto *range = dynamic_cast<ast::BinaryExpr *>(subscriptExpr->index.get());
       range && range->op == ast::BinaryExpr::Op::Range) {
     ArrayBase base = getBase(subscriptExpr->object.get());
+    applySemanticElementType(base);
     if (!base.ptr || !base.elementType) {
       error("Invalid array base in slice expression");
       return nullptr;
@@ -4166,6 +4206,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
   }
 
   ArrayBase base = getBase(subscriptExpr->object.get());
+  applySemanticElementType(base);
   if (!base.ptr || (!base.elementType && !base.tupleType)) {
     error("Invalid array base in subscript");
     return nullptr;
