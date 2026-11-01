@@ -49,8 +49,32 @@ public:
     return it == declarationTypes_.end() ? nullptr : it->second;
   }
 
+  void setTypeNodeType(const ast::Type *typeNode,
+                       std::shared_ptr<types::Type> type) {
+    if (typeNode && type) {
+      typeNodeTypes_[typeNode] = std::move(type);
+    }
+  }
+
+  std::shared_ptr<types::Type>
+  getTypeNodeType(const ast::Type *typeNode) const {
+    if (!typeNode) {
+      return nullptr;
+    }
+    auto it = typeNodeTypes_.find(typeNode);
+    return it == typeNodeTypes_.end() ? nullptr : it->second;
+  }
+
   void dump(std::ostream &out) const {
     out << "=== Semantic Types ===\n";
+    out << "type nodes: " << typeNodeTypes_.size() << "\n";
+    std::vector<std::pair<const ast::Type *, std::shared_ptr<types::Type>>>
+        typeNodes(typeNodeTypes_.begin(), typeNodeTypes_.end());
+    std::sort(typeNodes.begin(), typeNodes.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    for (const auto &[node, type] : typeNodes) {
+      out << "  type " << node << " : " << type->toString() << "\n";
+    }
     out << "declarations: " << declarationTypes_.size() << "\n";
     std::vector<std::pair<const ast::Declaration *, std::shared_ptr<types::Type>>>
         declarations(declarationTypes_.begin(), declarationTypes_.end());
@@ -70,6 +94,8 @@ public:
   }
 
 private:
+  std::unordered_map<const ast::Type *, std::shared_ptr<types::Type>>
+      typeNodeTypes_;
   std::unordered_map<const ast::Expression *, std::shared_ptr<types::Type>>
       expressionTypes_;
   std::unordered_map<const ast::Declaration *, std::shared_ptr<types::Type>>

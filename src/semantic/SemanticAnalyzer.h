@@ -307,6 +307,7 @@ private:
 
   // 分析类型
   std::shared_ptr<types::Type> analyzeType(const ast::Type *type);
+  std::shared_ptr<types::Type> analyzeTypeImpl(const ast::Type *type);
 
   // 根据类型名称分析类型
   std::shared_ptr<types::Type> analyzeTypeByName(const std::string &typeName);

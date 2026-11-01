@@ -2804,6 +2804,15 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
     return nullptr;
   }
 
+  // TypeLowering 优先：semantic 已解析的 AST 类型直接降低。
+  if (semanticModel_) {
+    if (auto semanticType = semanticModel_->getTypeNodeType(type)) {
+      if (llvm::Type *lowered = lowerSemanticType(semanticType)) {
+        return lowered;
+      }
+    }
+  }
+
   // 检查类型缓存
   auto it = typeCache_.find(type);
   if (it != typeCache_.end()) {

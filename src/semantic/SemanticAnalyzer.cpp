@@ -5001,6 +5001,15 @@ SemanticAnalyzer::analyzeBuiltinVarExpr(ast::BuiltinVarExpr *builtinVarExpr) {
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeType(const ast::Type *type) {
+  auto result = analyzeTypeImpl(type);
+  if (result) {
+    model_.setTypeNodeType(type, result);
+  }
+  return result;
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeTypeImpl(const ast::Type *type) {
   if (auto *primitiveType = dynamic_cast<const ast::PrimitiveType *>(type)) {
     return analyzePrimitiveType(primitiveType);
   } else if (auto *pointerType = dynamic_cast<const ast::PointerType *>(type)) {
