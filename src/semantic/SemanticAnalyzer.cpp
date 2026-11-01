@@ -4356,10 +4356,10 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
   if (objectType->isArray()) {
     auto arrayType = std::dynamic_pointer_cast<types::ArrayType>(objectType);
 
-    // 数组的 len 属性
+    // 数组的 len 属性，类型为 long。
     if (memberExpr->member == "len") {
       return types::TypeFactory::getPrimitiveType(
-          types::PrimitiveType::Kind::Int);
+          types::PrimitiveType::Kind::Long);
     }
 
     // 数组的 ptr 属性
@@ -4376,10 +4376,10 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
   if (objectType->isSlice()) {
     auto sliceType = std::dynamic_pointer_cast<types::SliceType>(objectType);
 
-    // 切片的 len 属性
+    // 切片的 len 属性，类型为 long。
     if (memberExpr->member == "len") {
       return types::TypeFactory::getPrimitiveType(
-          types::PrimitiveType::Kind::Int);
+          types::PrimitiveType::Kind::Long);
     }
 
     // 切片的 ptr 属性

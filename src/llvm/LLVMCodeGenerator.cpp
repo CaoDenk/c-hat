@@ -3134,6 +3134,38 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     }
   }
 
+  // 数值二元运算：按较宽的操作数类型提升，避免 i32/i64 混用导致
+  // LLVM IR 验证失败。指针运算和结构体运算不参与提升。
+  if (lhs->getType()->isIntegerTy() || lhs->getType()->isFloatingPointTy()) {
+    if (rhs->getType()->isIntegerTy() ||
+        rhs->getType()->isFloatingPointTy()) {
+      llvm::Type *lhsTy = lhs->getType();
+      llvm::Type *rhsTy = rhs->getType();
+      if (lhsTy->isIntegerTy() && rhsTy->isIntegerTy()) {
+        unsigned lhsBits = lhsTy->getIntegerBitWidth();
+        unsigned rhsBits = rhsTy->getIntegerBitWidth();
+        if (lhsBits < rhsBits) {
+          lhs = builder()->CreateIntCast(lhs, rhsTy, true, "num.cast");
+        } else if (rhsBits < lhsBits) {
+          rhs = builder()->CreateIntCast(rhs, lhsTy, true, "num.cast");
+        }
+      } else if (lhsTy->isFloatingPointTy() && rhsTy->isIntegerTy()) {
+        rhs = builder()->CreateSIToFP(rhs, lhsTy, "num.cast");
+      } else if (lhsTy->isIntegerTy() && rhsTy->isFloatingPointTy()) {
+        lhs = builder()->CreateSIToFP(lhs, rhsTy, "num.cast");
+      } else if (lhsTy->isFloatingPointTy() &&
+                 rhsTy->isFloatingPointTy()) {
+        unsigned lhsBits = lhsTy->getPrimitiveSizeInBits();
+        unsigned rhsBits = rhsTy->getPrimitiveSizeInBits();
+        if (lhsBits < rhsBits) {
+          lhs = builder()->CreateFPExt(lhs, rhsTy, "num.cast");
+        } else if (rhsBits < lhsBits) {
+          rhs = builder()->CreateFPExt(rhs, lhsTy, "num.cast");
+        }
+      }
+    }
+  }
+
   switch (binaryExpr->op) {
   case ast::BinaryExpr::Op::Add:
     if (lhs->getType()->isFloatingPointTy()) {
@@ -3618,7 +3650,7 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
         arrayPtr = tmp;
       }
       if (memberName == "len") {
-        return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
                                       arrayType->getNumElements());
       }
       return builder()->CreateGEP(
@@ -3637,10 +3669,10 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
       if (memberName == "len") {
         llvm::Value *len = builder()->CreateExtractValue(sliceValue, 1,
                                                          "slice.len");
-        if (len->getType() != llvm::Type::getInt32Ty(context())) {
+        if (len->getType() != llvm::Type::getInt64Ty(context())) {
           len = builder()->CreateIntCast(len,
-                                         llvm::Type::getInt32Ty(context()),
-                                         false, "slice.len32");
+                                         llvm::Type::getInt64Ty(context()),
+                                         false, "slice.len64");
         }
         return len;
       }
@@ -3653,7 +3685,7 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
         ptr = builder()->CreateLoad(objectType, objectAlloca, "ptr.value");
       }
       if (memberName == "len") {
-        return llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0);
+        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0);
       }
       return ptr;
     }

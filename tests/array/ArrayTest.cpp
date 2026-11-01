@@ -120,7 +120,7 @@ TEST_CASE("Array: const array", "[array][const]") {
 
 TEST_CASE("Array: Array properties", "[array][properties]") {
   SECTION("Array len property") {
-    REQUIRE(analyzeSource("int[3] arr = [1, 2, 3]; int len = arr.len;") ==
+    REQUIRE(analyzeSource("int[3] arr = [1, 2, 3]; long len = arr.len;") ==
             true);
   }
 
@@ -129,8 +129,8 @@ TEST_CASE("Array: Array properties", "[array][properties]") {
             true);
   }
 
-  SECTION("Array len property returns int") {
-    REQUIRE(analyzeSource("int[3] arr = [1, 2, 3]; int x = arr.len + 1;") ==
+  SECTION("Array len property returns long") {
+    REQUIRE(analyzeSource("int[3] arr = [1, 2, 3]; long x = arr.len + 1;") ==
             true);
   }
 
@@ -147,7 +147,7 @@ TEST_CASE("Array: Array properties", "[array][properties]") {
 
 TEST_CASE("Array: Slice properties", "[array][slice][properties]") {
   SECTION("Slice len property") {
-    REQUIRE(analyzeSource("int[] slice = [1, 2, 3]; int len = slice.len;") ==
+    REQUIRE(analyzeSource("int[] slice = [1, 2, 3]; long len = slice.len;") ==
             true);
   }
 
@@ -156,8 +156,8 @@ TEST_CASE("Array: Slice properties", "[array][slice][properties]") {
             true);
   }
 
-  SECTION("Slice len property returns int") {
-    REQUIRE(analyzeSource("int[] slice = [1, 2, 3]; int x = "
+  SECTION("Slice len property returns long") {
+    REQUIRE(analyzeSource("int[] slice = [1, 2, 3]; long x = "
                           "slice.len + 1;") == true);
   }
 
@@ -175,7 +175,7 @@ TEST_CASE("Array: Array to slice conversion", "[array][slice][conversion]") {
 
   SECTION("Slice can reference array") {
     REQUIRE(analyzeSource("int[5] arr = [1, 2, 3, 4, 5]; int[] "
-                          "slice = arr; int len = slice.len;") == true);
+                          "slice = arr; long len = slice.len;") == true);
   }
 }
 

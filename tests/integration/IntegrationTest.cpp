@@ -211,7 +211,10 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "    a[0] = 20;\n"
       "    a[1] = 22;\n"
       "    int^ p = a.ptr;\n"
-      "    return a.len + p[0] + p[1];\n"
+      "    long l = a.len;\n"
+      "    int extra = 0;\n"
+      "    if (l > 0) { extra = 3; }\n"
+      "    return p[0] + p[1] + extra;\n"
       "}\n") == 45);
 
   REQUIRE(compileAndRun(
@@ -220,14 +223,28 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "    int[] s = a[1..3];\n"
       "    s[0] = 40;\n"
       "    int^ p = s.ptr;\n"
-      "    return a.len + s.len + p[0] + p[1];\n"
+      "    long l = a.len + s.len;\n"
+      "    int extra = 0;\n"
+      "    if (l > 0) { extra = 6; }\n"
+      "    return p[0] + p[1] + extra;\n"
       "}\n") == 58);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[3] a = [20, 22, 3];\n"
+      "    long l = a.len + 1;\n"
+      "    if (l == 4) { return a[0] + a[1] + 3; }\n"
+      "    return 0;\n"
+      "}\n") == 45);
 
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
       "    int[4] a = [10, 20, 12, 0];\n"
       "    int[] s = a[1..=3];\n"
-      "    return s.len + s[0] + s[2];\n"
+      "    long l = s.len;\n"
+      "    int extra = 0;\n"
+      "    if (l > 0) { extra = 3; }\n"
+      "    return s[0] + s[2] + extra;\n"
       "}\n") == 23);
 }
 
@@ -237,7 +254,10 @@ TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
       "    var a = new int[3];\n"
       "    a[0] = 20;\n"
       "    a[1] = 22;\n"
-      "    var r = a[0] + a[1] + a.len;\n"
+      "    long l = a.len;\n"
+      "    int extra = 0;\n"
+      "    if (l > 0) { extra = 3; }\n"
+      "    var r = a[0] + a[1] + extra;\n"
       "    delete[] a;\n"
       "    return r;\n"
       "}\n") == 45);
