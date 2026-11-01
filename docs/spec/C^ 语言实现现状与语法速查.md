@@ -8,7 +8,7 @@
 
 > **设计评审进行中**：核心设计决策已确认，正在按阶段落地。
 > 已确认决策：[设计决策-2026-10-31](../design/设计决策-2026-10-31.md)
-> ADR 草案：[008 类型与代码生成边界](../choose/008_类型与代码生成边界.md)、[009 内存与资源模型](../choose/009_内存与资源模型.md)、[010 OOP 派发模型](../choose/010_OOP派发模型.md)、[011 错误处理模型](../choose/011_错误处理模型.md)、[012 未初始化变量与 late 语义](../choose/012_未初始化变量与late语义.md)、[013 语法 canonical form](../choose/013_语法canonical form.md)、[014 模块 ABI 与标准库](../choose/014_模块ABI与标准库.md)、[015 编译器运行时与标准库边界](../choose/015_编译器运行时与标准库边界.md)、[016 数组/切片/元组值语义](../choose/016_数组切片与元组值语义.md)、[017 泛型与 concept 模型](../choose/017_泛型与concept模型.md)、[018 FFI 与 ABI 细节](../choose/018_FFI与ABI细节.md)、[019 反射/comptime/协程范围](../choose/019_反射comptime与协程范围.md)
+> ADR 草案：[008 类型与代码生成边界](../choose/008_类型与代码生成边界.md)、[009 内存与资源模型](../choose/009_内存与资源模型.md)、[010 OOP 派发模型](../choose/010_OOP派发模型.md)、[011 错误处理模型](../choose/011_错误处理模型.md)、[012 未初始化变量与 late 语义](../choose/012_未初始化变量与late语义.md)、[013 语法 canonical form](../choose/013_语法canonical form.md)、[014 模块 ABI 与标准库](../choose/014_模块ABI与标准库.md)、[015 编译器运行时与标准库边界](../choose/015_编译器运行时与标准库边界.md)、[016 数组/切片/元组值语义](../choose/016_数组切片与元组值语义.md)、[017 泛型与 concept 模型](../choose/017_泛型与concept模型.md)、[018 FFI 与 ABI 细节](../choose/018_FFI与ABI细节.md)、[019 反射/comptime/协程范围](../choose/019_反射comptime与协程范围.md)、[020 工具链/构建/包管理](../choose/020_工具链构建与包管理.md)
 > 设计冻结清单：[设计冻结清单](../design/设计冻结清单.md)
 > 评审草案：
 > - [设计评审：类型与代码生成边界](../design/设计评审-类型与代码生成边界.md)
