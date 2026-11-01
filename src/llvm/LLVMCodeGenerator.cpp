@@ -486,7 +486,7 @@ normal_var_path:
           llvm::UndefValue::get(sliceType), arrayPtr, 0);
       sliceValue = builder()->CreateInsertValue(
           sliceValue,
-          llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), arraySize),
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), arraySize),
           1);
       builder()->CreateStore(sliceValue, alloca);
     } else {
@@ -504,7 +504,7 @@ normal_var_path:
               llvm::UndefValue::get(sliceType), arrayPtr, 0);
           sliceValue = builder()->CreateInsertValue(
               sliceValue,
-              llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+              llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
                                      arrayType->getNumElements()),
               1);
           builder()->CreateStore(sliceValue, alloca);
@@ -529,7 +529,7 @@ normal_var_path:
             llvm::UndefValue::get(sliceType), arrayPtr, 0);
         sliceValue = builder()->CreateInsertValue(
             sliceValue,
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
                                    arrayType->getNumElements()),
             1);
         builder()->CreateStore(sliceValue, alloca);
@@ -1835,7 +1835,7 @@ LLVMCodeGenerator::getOrCreateSliceType(llvm::Type *elementType) {
   llvm::StructType *sliceType = llvm::StructType::create(
       context(),
       {llvm::PointerType::getUnqual(context()),
-       llvm::Type::getInt32Ty(context())},
+       llvm::Type::getInt64Ty(context())},
       name);
   sliceTypes_[name] = sliceType;
   sliceTypesByElement_[elementType] = sliceType;
@@ -2499,12 +2499,6 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
       count64 = builder()->CreateIntCast(
           count64, llvm::Type::getInt64Ty(context()), false, "new.count64");
     }
-    llvm::Value *count32 = count;
-    if (count32->getType() != llvm::Type::getInt32Ty(context())) {
-      count32 = builder()->CreateIntCast(
-          count32, llvm::Type::getInt32Ty(context()), false, "new.count32");
-    }
-
     uint64_t elementSize =
         module()->getDataLayout().getTypeAllocSize(elementType).getFixedValue();
     llvm::Value *bytes = builder()->CreateMul(
@@ -2523,7 +2517,7 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
     llvm::StructType *sliceType = getOrCreateSliceType(elementType);
     llvm::Value *sliceValue =
         builder()->CreateInsertValue(llvm::UndefValue::get(sliceType), ptr, 0);
-    sliceValue = builder()->CreateInsertValue(sliceValue, count32, 1);
+    sliceValue = builder()->CreateInsertValue(sliceValue, count64, 1);
     return sliceValue;
   }
 
@@ -3865,7 +3859,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
           result.arrayType = llvm::cast<llvm::ArrayType>(allocatedType);
           result.elementType = result.arrayType->getElementType();
           result.length = llvm::ConstantInt::get(
-              llvm::Type::getInt32Ty(context()),
+              llvm::Type::getInt64Ty(context()),
               result.arrayType->getNumElements());
           return result;
         }
@@ -3877,10 +3871,10 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
           result.length =
               builder()->CreateExtractValue(sliceValue, 1, "slice.len");
           if (result.length->getType() !=
-              llvm::Type::getInt32Ty(context())) {
+              llvm::Type::getInt64Ty(context())) {
             result.length = builder()->CreateIntCast(
-                result.length, llvm::Type::getInt32Ty(context()), false,
-                "slice.len32");
+                result.length, llvm::Type::getInt64Ty(context()), false,
+                "slice.len64");
           }
           result.elementType = getSliceElementType(structType);
           return result;
@@ -3904,10 +3898,10 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
           result.length =
               builder()->CreateExtractValue(value, 1, "slice.len");
           if (result.length->getType() !=
-              llvm::Type::getInt32Ty(context())) {
+              llvm::Type::getInt64Ty(context())) {
             result.length = builder()->CreateIntCast(
-                result.length, llvm::Type::getInt32Ty(context()), false,
-                "slice.len32");
+                result.length, llvm::Type::getInt64Ty(context()), false,
+                "slice.len64");
           }
           result.elementType = getSliceElementType(structType);
           return result;
@@ -3931,7 +3925,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
           result.arrayType = arrayType;
           result.elementType = arrayType->getElementType();
           result.length = llvm::ConstantInt::get(
-              llvm::Type::getInt32Ty(context()), arrayType->getNumElements());
+              llvm::Type::getInt64Ty(context()), arrayType->getNumElements());
           return result;
         }
         if (value->getType()->isPointerTy()) {
@@ -3973,7 +3967,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
         result.arrayType = llvm::cast<llvm::ArrayType>(inner.elementType);
         result.elementType = result.arrayType->getElementType();
         result.length = llvm::ConstantInt::get(
-            llvm::Type::getInt32Ty(context()),
+            llvm::Type::getInt64Ty(context()),
             result.arrayType->getNumElements());
       } else {
         result.elementType = inner.elementType;
@@ -3993,7 +3987,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
         result.arrayType = llvm::cast<llvm::ArrayType>(allocatedType);
         result.elementType = result.arrayType->getElementType();
         result.length = llvm::ConstantInt::get(
-            llvm::Type::getInt32Ty(context()),
+            llvm::Type::getInt64Ty(context()),
             result.arrayType->getNumElements());
         return result;
       }
@@ -4003,10 +3997,10 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
             builder()->CreateLoad(structType, alloca, "slice.value");
         result.ptr = builder()->CreateExtractValue(sliceValue, 0, "slice.ptr");
         result.length = builder()->CreateExtractValue(sliceValue, 1, "slice.len");
-        if (result.length->getType() != llvm::Type::getInt32Ty(context())) {
+        if (result.length->getType() != llvm::Type::getInt64Ty(context())) {
           result.length = builder()->CreateIntCast(
-              result.length, llvm::Type::getInt32Ty(context()), false,
-              "slice.len32");
+              result.length, llvm::Type::getInt64Ty(context()), false,
+              "slice.len64");
         }
         result.elementType = getSliceElementType(structType);
         return result;
@@ -4023,10 +4017,10 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
       auto *structType = llvm::cast<llvm::StructType>(object->getType());
       result.ptr = builder()->CreateExtractValue(object, 0, "slice.ptr");
       result.length = builder()->CreateExtractValue(object, 1, "slice.len");
-      if (result.length->getType() != llvm::Type::getInt32Ty(context())) {
+      if (result.length->getType() != llvm::Type::getInt64Ty(context())) {
         result.length = builder()->CreateIntCast(
-            result.length, llvm::Type::getInt32Ty(context()), false,
-            "slice.len32");
+            result.length, llvm::Type::getInt64Ty(context()), false,
+            "slice.len64");
       }
       result.elementType = getSliceElementType(structType);
       return result;
@@ -4049,7 +4043,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
       result.arrayType = arrayType;
       result.elementType = arrayType->getElementType();
       result.length = llvm::ConstantInt::get(
-          llvm::Type::getInt32Ty(context()), arrayType->getNumElements());
+          llvm::Type::getInt64Ty(context()), arrayType->getNumElements());
       return result;
     }
     if (object->getType()->isPointerTy()) {
@@ -4077,14 +4071,14 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     if (!start || !end) {
       return nullptr;
     }
-    if (start->getType() != llvm::Type::getInt32Ty(context())) {
+    if (start->getType() != llvm::Type::getInt64Ty(context())) {
       start = builder()->CreateIntCast(start,
-                                       llvm::Type::getInt32Ty(context()), true,
-                                       "slice.start32");
+                                       llvm::Type::getInt64Ty(context()), true,
+                                       "slice.start64");
     }
-    if (end->getType() != llvm::Type::getInt32Ty(context())) {
-      end = builder()->CreateIntCast(end, llvm::Type::getInt32Ty(context()),
-                                     true, "slice.end32");
+    if (end->getType() != llvm::Type::getInt64Ty(context())) {
+      end = builder()->CreateIntCast(end, llvm::Type::getInt64Ty(context()),
+                                     true, "slice.end64");
     }
     llvm::Value *ptr = getElementPtr(base, start);
     llvm::Value *len =
@@ -4234,7 +4228,7 @@ llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
       llvm::UndefValue::get(sliceStructType), arrayPtr, 0);
   sliceValue = builder()->CreateInsertValue(
       sliceValue,
-      llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), size), 1);
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), size), 1);
 
   // 存储切片值
   builder()->CreateStore(sliceValue, sliceAlloca);
