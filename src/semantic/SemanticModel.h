@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <memory>
 #include <ostream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -47,6 +48,22 @@ public:
     }
     auto it = declarationTypes_.find(declaration);
     return it == declarationTypes_.end() ? nullptr : it->second;
+  }
+
+  void setFunctionMangledName(const ast::FunctionDecl *function,
+                              const std::string &name) {
+    if (function && !name.empty()) {
+      functionMangledNames_[function] = name;
+    }
+  }
+
+  std::string
+  getFunctionMangledName(const ast::FunctionDecl *function) const {
+    if (!function) {
+      return {};
+    }
+    auto it = functionMangledNames_.find(function);
+    return it == functionMangledNames_.end() ? std::string() : it->second;
   }
 
   void setTypeNodeType(const ast::Type *typeNode,
@@ -94,6 +111,8 @@ public:
   }
 
 private:
+  std::unordered_map<const ast::FunctionDecl *, std::string>
+      functionMangledNames_;
   std::unordered_map<const ast::Type *, std::shared_ptr<types::Type>>
       typeNodeTypes_;
   std::unordered_map<const ast::Expression *, std::shared_ptr<types::Type>>

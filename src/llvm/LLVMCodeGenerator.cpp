@@ -1180,6 +1180,14 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
     }
   }
 
+  if (semanticModel_ && namespaceStack_.empty() &&
+      funcDecl->specifiers.find("extern") == std::string::npos) {
+    auto semanticName = semanticModel_->getFunctionMangledName(funcDecl);
+    if (!semanticName.empty()) {
+      uniqueFuncName = semanticName;
+    }
+  }
+
   llvm::Function *function = llvm::Function::Create(
       funcType, llvm::Function::ExternalLinkage, uniqueFuncName, module());
 
@@ -1260,6 +1268,14 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
         typeName = "unknown";
       }
       uniqueFuncName += typeName;
+    }
+  }
+
+  if (semanticModel_ && namespaceStack_.empty() &&
+      funcDecl->specifiers.find("extern") == std::string::npos) {
+    auto semanticName = semanticModel_->getFunctionMangledName(funcDecl.get());
+    if (!semanticName.empty()) {
+      uniqueFuncName = semanticName;
     }
   }
 
@@ -3598,24 +3614,6 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
       return builder()->CreateCall(it->second, args);
     }
     if (semanticModel_) {
-      // 泛型单态化后的 semantic mangling 可能带 `@类型` 后缀，而
-      // codegen 的函数表仍以具体函数名注册；先尝试去掉后缀。
-      auto at = callExpr->resolvedMangledName.find('@');
-      if (at != std::string::npos) {
-        std::string baseName =
-            callExpr->resolvedMangledName.substr(0, at);
-        auto baseIt = functions_.find(baseName);
-        if (baseIt != functions_.end()) {
-          return builder()->CreateCall(baseIt->second, args);
-        }
-        // semantic mangling 与 codegen mangling 尚未完全统一；
-        // 先按泛型/重载函数名前缀匹配。
-        for (auto &[name, function] : functions_) {
-          if (name.rfind(baseName + "@", 0) == 0) {
-            return builder()->CreateCall(function, args);
-          }
-        }
-      }
       error("Resolved function not found: " + callExpr->resolvedMangledName,
             callExpr.get());
       return nullptr;

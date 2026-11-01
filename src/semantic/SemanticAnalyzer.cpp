@@ -789,6 +789,8 @@ void SemanticAnalyzer::analyzeFunctionDecl(
 
   // 创建函数类型
   auto funcType = std::make_shared<types::FunctionType>(returnType, paramTypes);
+  model_.setFunctionMangledName(
+      funcDecl, getMangledFuncName(funcDecl->name, paramTypes));
 
   // 注册阶段才添加函数符号，避免顶层函数在第三遍分析函数体时重复注册
   if (!analyzeBody || currentClassType != nullptr) {
