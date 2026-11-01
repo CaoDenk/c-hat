@@ -220,7 +220,6 @@ private:
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
   const c_hat::semantic::SemanticModel *semanticModel_ = nullptr;
-  std::unordered_map<std::string, llvm::Type *> namedValuePointeeTypes_;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
   std::vector<llvm::AllocaInst *> deferFlags_;

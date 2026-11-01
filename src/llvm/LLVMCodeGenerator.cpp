@@ -534,14 +534,6 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     }
   }
 
-  if (varDecl->type) {
-    if (auto *pointerType =
-            dynamic_cast<ast::PointerType *>(varDecl->type.get())) {
-      namedValuePointeeTypes_[varDecl->name] =
-          generateType(pointerType->baseType.get());
-    }
-  }
-
   if (!varType) {
     // 添加调试信息
 
@@ -912,7 +904,6 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   namedValues_.clear();
 
-  namedValuePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
   lateVariables_.clear();
@@ -928,11 +919,6 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
           builder()->CreateAlloca(arg->getType(), nullptr, param->name);
       builder()->CreateStore(arg, alloca);
       namedValues_[param->name] = alloca;
-      if (auto *pointerType =
-              dynamic_cast<ast::PointerType *>(param->type.get())) {
-        namedValuePointeeTypes_[param->name] =
-            generateType(pointerType->baseType.get());
-      }
 
       ++argIt;
       ++paramIndex;
@@ -1302,8 +1288,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
 
     namedValues_.clear();
 
-    namedValuePointeeTypes_.clear();
-    deferExpressions_.clear();
+      deferExpressions_.clear();
     deferFlags_.clear();
     lateVariables_.clear();
 
@@ -1747,8 +1732,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     namedValues_.clear();
 
-    namedValuePointeeTypes_.clear();
-    deferExpressions_.clear();
+      deferExpressions_.clear();
     deferFlags_.clear();
     lateVariables_.clear();
 
@@ -1778,11 +1762,6 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
             builder()->CreateAlloca(arg->getType(), nullptr, param->name);
         builder()->CreateStore(arg, alloca);
         namedValues_[param->name] = alloca;
-        if (auto *pointerType =
-                dynamic_cast<ast::PointerType *>(param->type.get())) {
-          namedValuePointeeTypes_[param->name] =
-              generateType(pointerType->baseType.get());
-        }
       }
     }
 
@@ -4021,11 +4000,7 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
         if (allocatedType->isPointerTy()) {
           result.ptr =
               builder()->CreateLoad(allocatedType, alloca, "ptr.value");
-          auto pointeeIt = namedValuePointeeTypes_.find(ident->name);
-          result.elementType =
-              pointeeIt != namedValuePointeeTypes_.end() && pointeeIt->second
-                  ? pointeeIt->second
-                  : llvm::Type::getInt32Ty(context());
+          result.elementType = llvm::Type::getInt32Ty(context());
           return result;
         }
         if (allocatedType->isStructTy()) {
@@ -4485,7 +4460,6 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
 
   namedValues_.clear();
 
-  namedValuePointeeTypes_.clear();
   size_t paramIndex = 0;
   for (auto argIt = func->args().begin();
        argIt != func->args().end() && paramIndex < lambdaExpr->params.size();
@@ -4498,11 +4472,6 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
           builder()->CreateAlloca(argIt->getType(), nullptr, param->name);
       builder()->CreateStore(argIt, alloca);
       namedValues_[param->name] = alloca;
-      if (auto *pointerType =
-              dynamic_cast<ast::PointerType *>(param->type.get())) {
-        namedValuePointeeTypes_[param->name] =
-            generateType(pointerType->baseType.get());
-      }
     }
   }
 
@@ -5685,7 +5654,6 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
-  namedValuePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -5774,7 +5742,6 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
-  namedValuePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -5900,7 +5867,6 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
-  namedValuePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
 
@@ -5922,11 +5888,6 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
           builder()->CreateAlloca(arg->getType(), nullptr, param->name);
       builder()->CreateStore(arg, alloca);
       namedValues_[param->name] = alloca;
-      if (auto *pointerType =
-              dynamic_cast<ast::PointerType *>(param->type.get())) {
-        namedValuePointeeTypes_[param->name] =
-            generateType(pointerType->baseType.get());
-      }
     }
   }
 
