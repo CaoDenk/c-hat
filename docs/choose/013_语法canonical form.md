@@ -1,6 +1,6 @@
 # 013：语法 Canonical Form
 
-**状态**：草案  
+**状态**：核心决策已确认，实现待落地  
 **日期**：2026-11-01  
 **范围**：参数顺序、构造函数、`defer`、范围、`self`/`base`、`literalview`/`string`、关键字与符号职责  
 **相关文档**：
@@ -238,6 +238,50 @@ delete arr;
 - `self~`：语法保留，语义后续实现
 - 以上三项在 v1 先标记为 experimental，不进入稳定 canonical form
 
+### 2.16 已确认补充决策
+
+1. **`Type name` 是唯一 canonical 参数形式。**
+   - `name: Type` 在 v1 过渡期可解析，但标为 deprecated。
+   - 文档、测试、示例只使用 `Type name`。
+   - v1 后移除 `name: Type`。
+
+2. **`ClassName(...)` 是唯一 canonical 构造函数形式。**
+   - `func ClassName(...)` 在 v1 过渡期兼容。
+   - 文档只使用 `ClassName(...)`。
+
+3. **`defer { ... }` 进入 v1。**
+   - `defer expr;` 作为单语句糖。
+
+4. **范围直接统一为半开/闭区间。**
+   - `a..b` 半开 `[a,b)`。
+   - `a..=b` 闭区间 `[a,b]`。
+   - 不保留旧 inclusive `..` 模式。
+
+5. **`len` 类型为 `long`。**
+   - 切片内部长度字段使用 `long`。
+   - 索引接受整数类型，内部按 `long` 计算。
+   - `foreach` 范围端点使用 `long`；循环变量默认推导为 `long`，显式类型可写 `int` 但需转换。
+
+6. **`string` 属于 `std.string`。**
+   - `literalview` 是编译器内建视图。
+   - 字符串字面量是 `literalview`。
+   - `string` 的最小 API 在标准库 ADR 中定义，不在编译器内硬编码。
+
+7. **`as` 是 checked conversion，v1 experimental。**
+   - 失败时走 nullable/Result 错误处理。
+   - 位级转换使用单独的 `unsafe cast`/`bitcast`。
+
+8. **字符串插值 lowering 到标准库协议，v1 experimental。**
+   - 默认实现由 `std.text` 提供。
+   - 自定义标准库可实现自己的插值协议。
+
+9. **`self~` v1 experimental。**
+   - 语法保留，不进入稳定语义。
+
+10. **`::` 只用于命名空间/类型限定。**
+    - 基类访问用 `base`。
+    - 关联类型用 `T.Item`，不用 `T::Item`。
+
 ---
 
 ## 3. 对现有代码的影响
@@ -301,18 +345,18 @@ delete arr;
 
 ---
 
-## 5. 待评审确认的问题
+## 5. 开放问题确认结果
 
-1. `name: Type` 过渡兼容保留多久？
-2. `func ClassName(...)` 是否完全废弃？
-3. `defer { ... }` 是否进入 v1？
-4. `..` 是否直接改为 half-open，还是先加 `..=`？
-5. `len` 使用 `long` 后，索引是否也统一为 `long`？
-6. `string` 在 `std.string` 中的最小 API 是什么？
-7. `as` 的失败语义是抛异常还是返回 `Result`？
-8. 字符串插值 lowering 到哪个标准库 API？
-9. `self~` 是否进入 v1？
-10. `::` 是否只用于命名空间/类型限定，不用于基类访问？
+1. `name: Type` 在 v1 过渡期兼容，标 deprecated，v1 后移除。
+2. `func ClassName(...)` 过渡期兼容，文档只使用 `ClassName(...)`。
+3. `defer { ... }` 进入 v1。
+4. `..` 直接统一半开，新增 `..=` 闭区间。
+5. `len` 为 `long`；索引内部按 `long`；范围端点/循环变量默认 `long`。
+6. `string` 属于 `std.string`，最小 API 在标准库 ADR 定义。
+7. `as` 是 checked conversion，v1 experimental。
+8. 字符串插值 lowering 到标准库协议，默认 `std.text`。
+9. `self~` v1 experimental。
+10. `::` 只用于命名空间/类型限定；基类用 `base`。
 
 ---
 
