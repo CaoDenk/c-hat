@@ -45,7 +45,7 @@ func main() -> int {
 
 ```c^
 late int x;   // 只预留存储，不初始化
-late var y;   // 类型推导 + 未初始化
+late int y;   // 显式类型 + 未初始化
 ```
 
 `late` 的作用不是“少写初始化值”，而是明确告诉编译器：

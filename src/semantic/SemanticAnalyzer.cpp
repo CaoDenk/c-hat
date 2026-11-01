@@ -570,6 +570,13 @@ void SemanticAnalyzer::analyzeDeclaration(ast::Declaration *declaration) {
 }
 
 void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
+  // late 必须有显式类型；非 late 局部变量必须初始化的规则
+  // 仍在分阶段实现，暂不在这里强制。
+  if (varDecl->isLate && !varDecl->type) {
+    error("late variable requires an explicit type: " + varDecl->name,
+          *varDecl);
+  }
+
   // 分析变量类型
   std::shared_ptr<types::Type> varType;
   if (varDecl->type) {

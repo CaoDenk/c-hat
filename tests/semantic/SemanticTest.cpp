@@ -106,7 +106,7 @@ TEST_CASE("Semantic: Late variables", "[semantic][late]") {
   }
 
   SECTION("Late variable without type") {
-    REQUIRE(analyzeSource("late var x;") == true);
+    REQUIRE(analyzeSource("late var x;") == false);
   }
 }
 

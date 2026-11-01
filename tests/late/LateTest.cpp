@@ -25,8 +25,8 @@ TEST_CASE("Late: Basic late declaration", "[late][basic]") {
     REQUIRE(analyzeSource("late int x;") == true);
   }
 
-  SECTION("Late with var") {
-    REQUIRE(analyzeSource("late var x;") == true);
+  SECTION("Late with var is invalid") {
+    REQUIRE(analyzeSource("late var x;") == false);
   }
 
   SECTION("Late with class type") {
