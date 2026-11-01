@@ -158,7 +158,8 @@ var len = s.len;        // long
 设计目标：
 
 - `defer` 是块级作用域
-- 支持 `defer { ... }`
+- 单表达式可写 `defer expr;`，省略花括号
+- 多语句使用 `defer { ... }`
 - 栈上/`late` 对象自动析构
 - 堆对象显式 `new/delete`
 - 异常展开执行 defer + 析构

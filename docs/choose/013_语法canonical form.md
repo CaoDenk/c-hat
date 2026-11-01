@@ -72,14 +72,23 @@ class Person {
 canonical：
 
 ```c^
+// 单表达式：省略花括号
+defer close(file);
+
+// 多语句：必须使用块
 defer {
-    release(resource);
+    flush(file);
+    close(file);
 }
 ```
 
-- `defer { ... }` 是标准写法
-- `defer expr;` 是单语句糖
+- 单表达式 `defer expr;` 是推荐写法
+- 多语句必须写 `defer { ... }`
 - `defer` 是块级作用域
+- `defer expr;` 在作用域退出时执行表达式，不是注册时求值
+- 表达式结果丢弃；纯表达式可以给 warning
+- `defer` 体内不允许 `return` / `break` / `continue`
+- `defer` 内再写 `defer` 先禁止或标记 experimental
 - 同一作用域内按 LIFO 执行
 - 循环体内每次迭代注册、每次迭代结束执行
 - `defer` 不应抛异常；异常展开中再次抛异常时 `terminate`
@@ -249,8 +258,10 @@ delete arr;
    - `func ClassName(...)` 在 v1 过渡期兼容。
    - 文档只使用 `ClassName(...)`。
 
-3. **`defer { ... }` 进入 v1。**
-   - `defer expr;` 作为单语句糖。
+3. **`defer expr;` 与 `defer { ... }` 都进入 v1。**
+   - 单表达式省略花括号是推荐写法。
+   - 多语句必须使用块。
+   - `defer expr;` 在作用域退出时执行表达式，不是注册时求值。
 
 4. **范围直接统一为半开/闭区间。**
    - `a..b` 半开 `[a,b)`。
@@ -349,7 +360,7 @@ delete arr;
 
 1. `name: Type` 在 v1 过渡期兼容，标 deprecated，v1 后移除。
 2. `func ClassName(...)` 过渡期兼容，文档只使用 `ClassName(...)`。
-3. `defer { ... }` 进入 v1。
+3. `defer expr;` 与 `defer { ... }` 都进入 v1；单表达式省略花括号。
 4. `..` 直接统一半开，新增 `..=` 闭区间。
 5. `len` 为 `long`；索引内部按 `long`；范围端点/循环变量默认 `long`。
 6. `string` 属于 `std.string`，最小 API 在标准库 ADR 定义。
@@ -366,24 +377,9 @@ delete arr;
 - 文档中的示例全部使用 canonical form
 - 兼容写法明确标记为 deprecated
 - `..` / `..=` 语义有端到端测试
-- `defer { ... }` 有端到端测试
+- `defer expr;` 与 `defer { ... }` 都有端到端测试
 - `Type name` / `name: Type` 的 canonical form 有测试
 - `ClassName(...)` / `func ClassName(...)` 的 canonical form 有测试
 - `literalview` / `string` 转换规则有测试
 - 只读转换规则有测试
 - 文档与 parser/semantic/codegen 行为一致
-EOF
-python3 - <<'PY'
-from pathlib import Path
-p=Path('docs/spec/C^ 语言实现现状与语法速查.md')
-s=p.read_text()
-old='''> ADR 草案：[008 类型与代码生成边界](../choose/008_类型与代码生成边界.md)、[009 内存与资源模型](../choose/009_内存与资源模型.md)、[010 OOP 派发模型](../choose/010_OOP派发模型.md)、[011 错误处理模型](../choose/011_错误处理模型.md)、[012 未初始化变量与 late 语义](../choose/012_未初始化变量与late语义.md)
-> 评审草案：'''
-new='''> ADR 草案：[008 类型与代码生成边界](../choose/008_类型与代码生成边界.md)、[009 内存与资源模型](../choose/009_内存与资源模型.md)、[010 OOP 派发模型](../choose/010_OOP派发模型.md)、[011 错误处理模型](../choose/011_错误处理模型.md)、[012 未初始化变量与 late 语义](../choose/012_未初始化变量与late语义.md)、[013 语法 canonical form](../choose/013_语法canonical form.md)
-> 评审草案：'''
-assert old in s
-s=s.replace(old,new,1)
-p.write_text(s)
-print('status updated')
-PY
-git add -A && git commit -m "起草语法 canonical form ADR" -m "新增 ADR 013，统一参数、构造函数、defer、范围、self/base、只读转换、literalview/string 等推荐语法，并明确 v1 不进入的高级语法。" && git push git@github.com:CaoDenk/c-hat.git master 2>&1 | tail -10
