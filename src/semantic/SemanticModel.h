@@ -2,8 +2,11 @@
 
 #include "../ast/AstNodes.h"
 #include "../types/Type.h"
+#include <algorithm>
 #include <memory>
+#include <ostream>
 #include <unordered_map>
+#include <vector>
 
 namespace c_hat {
 namespace semantic {
@@ -44,6 +47,26 @@ public:
     }
     auto it = declarationTypes_.find(declaration);
     return it == declarationTypes_.end() ? nullptr : it->second;
+  }
+
+  void dump(std::ostream &out) const {
+    out << "=== Semantic Types ===\n";
+    out << "declarations: " << declarationTypes_.size() << "\n";
+    std::vector<std::pair<const ast::Declaration *, std::shared_ptr<types::Type>>>
+        declarations(declarationTypes_.begin(), declarationTypes_.end());
+    std::sort(declarations.begin(), declarations.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    for (const auto &[node, type] : declarations) {
+      out << "  decl " << node << " : " << type->toString() << "\n";
+    }
+    out << "expressions: " << expressionTypes_.size() << "\n";
+    std::vector<std::pair<const ast::Expression *, std::shared_ptr<types::Type>>>
+        expressions(expressionTypes_.begin(), expressionTypes_.end());
+    std::sort(expressions.begin(), expressions.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+    for (const auto &[node, type] : expressions) {
+      out << "  expr " << node << " : " << type->toString() << "\n";
+    }
   }
 
 private:

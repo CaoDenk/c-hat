@@ -102,6 +102,10 @@ int main(int argc, char *argv[]) {
       .help("Dump the lexer tokens")
       .default_value(false)
       .implicit_value(true);
+  argParser.add_argument("--dump-types")
+      .help("Dump semantic expression/declaration types")
+      .default_value(false)
+      .implicit_value(true);
   argParser.add_argument("--dump-ir")
       .help("Dump the LLVM IR")
       .default_value(false)
@@ -163,6 +167,7 @@ int main(int argc, char *argv[]) {
   std::string outputFile = argParser.get<std::string>("-o");
   bool dumpAst = argParser.get<bool>("--dump-ast");
   bool dumpTokens = argParser.get<bool>("--dump-tokens");
+  bool dumpTypes = argParser.get<bool>("--dump-types");
   bool dumpIR = argParser.get<bool>("--dump-ir");
   bool noVerify = argParser.get<bool>("--no-verify");
   bool emitLLVM = argParser.get<bool>("--emit-llvm");
@@ -247,6 +252,10 @@ int main(int argc, char *argv[]) {
     }
 
     std::println("✓ Parsing and semantic analysis successful!");
+
+    if (dumpTypes) {
+      semanticAnalyzer.getSemanticModel().dump(std::cout);
+    }
 
     if (verbose) {
       std::println("Generating LLVM IR...");
