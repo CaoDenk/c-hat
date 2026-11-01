@@ -246,6 +246,16 @@ TEST_CASE("Integration: semantic expression types", "[integration][types]") {
       "    if (x > 3.9) { return 42; }\n"
       "    return 0;\n"
       "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "struct P { double x; }\n"
+      "func main() -> int {\n"
+      "    P p;\n"
+      "    p.x = 42.0;\n"
+      "    var y = p.x;\n"
+      "    if (y > 41.0) { return 42; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: tuple access and destructuring", "[integration][tuple]") {

@@ -3704,6 +3704,10 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
 
   unsigned idx = memberExpr->memberIndex;
   const std::string &memberName = memberExpr->member;
+  std::shared_ptr<types::Type> memberSemanticType;
+  if (semanticModel_) {
+    memberSemanticType = semanticModel_->getExpressionType(memberExpr.get());
+  }
 
   // 属性 getter：ClassName_get_prop(this)。
   std::string propertyOwner = memberExpr->structName;
@@ -3831,7 +3835,11 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     llvm::Type *allocatedTy = alloca->getAllocatedType();
     llvm::Value *ptr = builder()->CreateStructGEP(allocatedTy, alloca, idx,
                                                    memberName + ".ptr");
-    llvm::Type *fieldTy = allocatedTy->getStructElementType(idx);
+    llvm::Type *fieldTy =
+        memberSemanticType ? lowerSemanticType(memberSemanticType) : nullptr;
+    if (!fieldTy) {
+      fieldTy = allocatedTy->getStructElementType(idx);
+    }
     return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
   }
 
@@ -3843,7 +3851,11 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     builder()->CreateStore(object, tmpAlloca);
     llvm::Value *ptr = builder()->CreateStructGEP(valTy, tmpAlloca, idx,
                                                    memberName + ".ptr");
-    llvm::Type *fieldTy = valTy->getStructElementType(idx);
+    llvm::Type *fieldTy =
+        memberSemanticType ? lowerSemanticType(memberSemanticType) : nullptr;
+    if (!fieldTy) {
+      fieldTy = valTy->getStructElementType(idx);
+    }
     return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
   }
 
@@ -3859,7 +3871,11 @@ llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     if (structTy) {
       llvm::Value *ptr = builder()->CreateStructGEP(structTy, object, idx,
                                                      memberName + ".ptr");
-      llvm::Type *fieldTy = structTy->getElementType(idx);
+      llvm::Type *fieldTy =
+          memberSemanticType ? lowerSemanticType(memberSemanticType) : nullptr;
+      if (!fieldTy) {
+        fieldTy = structTy->getElementType(idx);
+      }
       return builder()->CreateLoad(fieldTy, ptr, memberName + ".load");
     }
   }
