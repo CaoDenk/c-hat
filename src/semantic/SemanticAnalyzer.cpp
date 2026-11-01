@@ -3302,6 +3302,19 @@ SemanticAnalyzer::analyzeExpressionImpl(ast::Expression *expression) {
   }
 }
 
+namespace {
+std::shared_ptr<types::Type>
+unwrapReferenceType(const std::shared_ptr<types::Type> &type) {
+  if (type && type->isReference()) {
+    auto reference = std::dynamic_pointer_cast<types::ReferenceType>(type);
+    if (reference) {
+      return reference->getBaseType();
+    }
+  }
+  return type;
+}
+} // namespace
+
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
   // 处理赋值操作
@@ -3444,6 +3457,10 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
     return nullptr;
   }
 
+  // 数组/切片下标返回 ReferenceType；算术/比较应使用元素值类型。
+  auto leftValueType = unwrapReferenceType(leftType);
+  auto rightValueType = unwrapReferenceType(rightType);
+
   std::string operatorName;
   switch (binaryExpr->op) {
   case ast::BinaryExpr::Op::Add:
@@ -3534,8 +3551,8 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
     break;
   }
 
-  if (!operatorName.empty() && leftType->isClass()) {
-    auto classType = std::dynamic_pointer_cast<types::ClassType>(leftType);
+  if (!operatorName.empty() && leftValueType->isClass()) {
+    auto classType = std::dynamic_pointer_cast<types::ClassType>(leftValueType);
     if (classType && classType->hasMethod(operatorName)) {
       const auto *method = classType->getMethod(operatorName);
       if (method) {
@@ -3544,9 +3561,9 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
     }
   }
 
-  if (!operatorName.empty() && leftType->isPrimitive()) {
+  if (!operatorName.empty() && leftValueType->isPrimitive()) {
     auto *extensionMember =
-        extensionRegistry_.findInstanceMember(leftType, operatorName);
+        extensionRegistry_.findInstanceMember(leftValueType, operatorName);
     if (extensionMember) {
       if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(extensionMember)) {
         if (funcDecl->returnType) {
@@ -3566,12 +3583,12 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
   case ast::BinaryExpr::Op::Mul:
   case ast::BinaryExpr::Op::Div:
   case ast::BinaryExpr::Op::Mod:
-    if (leftType->isPrimitive() && rightType->isPrimitive()) {
-      return leftType;
+    if (leftValueType->isPrimitive() && rightValueType->isPrimitive()) {
+      return leftValueType;
     }
     // 指针减法：int^ - int^ → ptrdiff_t (int)
     if (binaryExpr->op == ast::BinaryExpr::Op::Sub &&
-        leftType->isPointer() && rightType->isPointer()) {
+        leftValueType->isPointer() && rightValueType->isPointer()) {
       return types::TypeFactory::getPrimitiveType(
           types::PrimitiveType::Kind::Int);
     }
@@ -3588,11 +3605,17 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
   case ast::BinaryExpr::Op::LogicOr:
     return types::TypeFactory::getPrimitiveType(
         types::PrimitiveType::Kind::Bool);
+  case ast::BinaryExpr::Op::And:
+  case ast::BinaryExpr::Op::Or:
+  case ast::BinaryExpr::Op::Xor:
+  case ast::BinaryExpr::Op::Shl:
+  case ast::BinaryExpr::Op::Shr:
+    return leftValueType;
   default:
     break;
   }
 
-  return leftType;
+  return leftValueType;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeUnaryExpr(ast::UnaryExpr *unaryExpr) {

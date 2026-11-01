@@ -1,481 +1,365 @@
-# C^ (C-Hat) 编译器开发项目
+# C^ (C-Hat) 编译器
 
-## 项目简介
+C^ 是一门面向系统编程的实验性语言，目标是结合：
 
-C^ (C-Hat) 本项目使用AI辅助开发C^语言的完整编译器实现。
+- C/C++ 的底层能力
+- Rust 的显式资源与安全方向
+- 现代语言的模块、泛型、错误处理和元编程
 
-> **实现状态提示**：本 README 同时描述目标设计与当前实现。两者不一致时，以
-> [`docs/spec/C^ 语言实现现状与语法速查.md`](<docs/spec/C^ 语言实现现状与语法速查.md>)
-> 和测试代码为准。当前 parser/semantic 覆盖度高于 LLVM codegen，端到端只验证了
-> 基础函数、变量、表达式、数组下标等子集。
+本仓库是 C^ 的编译器实现，使用 C++23 + LLVM 21。
 
-## 核心设计理念
+> **当前状态**
+>
+> 设计正在收敛，**不是稳定语言版本**。
+> 设计决策以 `docs/choose/` 下的 ADR 和
+> [`docs/spec/C^ 语言实现现状与语法速查.md`](<docs/spec/C^ 语言实现现状与语法速查.md>) 为准。
+> 本文只描述当前可用的构建方式和语言方向，不把设计稿当作已实现能力。
 
-- **性能优先**：不低于 C++ 的性能
-- **安全性**：空安全、边界检查、类型安全
-- **现代语法**：简洁、清晰、无歧义
-- **零成本抽象**：编译期展开、静态多态
-- **全栈能力**：从操作系统到高层业务
+---
 
-## 语言特性
+## 1. 当前阶段
 
-### 基础类型
+项目当前处于 **设计冻结 + 核心实现** 阶段：
 
-- **整数**：`byte`/`sbyte` (8位), `short`/`ushort` (16位), `int`/`uint` (32位), `long`/`ulong` (64位)
-- **字符**：`char` (32位 Unicode 码点), `char16` (UTF-16), `char32` (UTF-32)
-- **浮点**：`float`, `double`, `fp16` (半精度), `bf16` (Brain Float)
-- **布尔**：`bool`
-- **字符串**：`string` (标准库类型，UTF-8), `string_view` (字节切片视图，`byte![]` 别名), `wstring`/`u16string` (UTF-16)
+- ADR 008–020 已收敛核心方向；
+- SemanticModel 已引入，变量类型开始优先使用语义类型；
+- parser/semantic 覆盖度高于 codegen；
+- 基础函数、变量、控制流、类、结构体、数组/切片、元组、泛型、异常、defer 等已有端到端能力；
+- 高级特性（虚表、自动析构、模块独立编译、标准库、反射、comptime、协程）仍在实现或标记 experimental。
 
-### 变量声明
+设计入口：
 
-```cpp
-// 显式类型声明
-int counter = 0;
-byte mask = 0xFF;
-char ch = '中';
+- [设计冻结清单](docs/design/设计冻结清单.md)
+- [ADR 008：类型与代码生成边界](docs/choose/008_类型与代码生成边界.md)
+- [ADR 009：内存与资源模型](docs/choose/009_内存与资源模型.md)
+- [ADR 010：OOP 派发模型](docs/choose/010_OOP派发模型.md)
+- [ADR 011：错误处理模型](docs/choose/011_错误处理模型.md)
+- [ADR 012：未初始化变量与 late 语义](docs/choose/012_未初始化变量与late语义.md)
+- [ADR 013：语法 canonical form](<docs/choose/013_语法canonical form.md>)
+- [ADR 014：模块 ABI 与标准库](docs/choose/014_模块ABI与标准库.md)
+- [ADR 015：编译器运行时与标准库边界](docs/choose/015_编译器运行时与标准库边界.md)
+- [ADR 016：数组/切片/元组值语义](docs/choose/016_数组切片与元组值语义.md)
+- [ADR 017：泛型与 concept 模型](docs/choose/017_泛型与concept模型.md)
+- [ADR 018：FFI 与 ABI 细节](docs/choose/018_FFI与ABI细节.md)
+- [ADR 019：反射/comptime/协程范围](docs/choose/019_反射comptime与协程范围.md)
+- [ADR 020：工具链/构建/包管理](docs/choose/020_工具链构建与包管理.md)
 
-// 类型推导
-var total = 100;     // int, 可变
-let limit = 50;      // int, 不可变
+---
 
-// 延迟初始化
-late int x;           // 延迟初始化变量
-x = 42;
+## 2. 快速开始
 
-// 常量
-const int MAX_RETRIES = 3;
-```
+### 依赖
 
-### 函数定义
-
-```cpp
-// 标准函数定义
-func calculate_area(int width, int height) -> int {
-    return width * height;
-}
-
-// 单表达式函数
-func add(int a, int b) -> int => a + b;
-
-// 多返回值
-func get_status() -> (int, string) {
-    return (200, "OK");
-}
-```
-
-### 控制流
-
-```cpp
-// 条件语句 (必须带大括号)
-if (x > 0) {
-    print("Positive");
-} else {
-    print("Non-positive");
-}
-
-// Match 语句 (取代 switch；当前实现是语句，不是表达式)
-match (code) {
-    200 => { print("OK"); }
-    404 => { print("Not Found"); }
-    _   => { print("Unknown"); }
-}
-
-// 循环
-for (int i = 0; i < 10; i++) {
-    // ...
-}
-
-while (running) {
-    // ...
-}
-
-do {
-    // ...
-} while (condition);
-```
-
-### 数组与切片
-
-```cpp
-// 栈上固定数组（值类型）
-int[5] arr1 = [1, 2, 3, 4, 5];
-
-// 数组字面量默认推导为栈数组
-var arr2 = [1, 2, 3]; // 类型为 int[3]，在栈上
-
-// 只读切片（显式声明）
-int![] const_slice = [1, 2, 3]; // 指向 .rodata
-
-// 切片视图
-int[] slice = arr2; // 引用已有数组
-
-// 范围切片
-int[] sub = arr2[0..2];
-```
-
-### 字符串
-
-```cpp
-// 字符串字面量（原生类型为 LiteralView）
-var s = "hello"; // 类型为 LiteralView（编译器内置类型）
-
-// 显式声明为只读切片（隐式转换）
-byte![] view = "hello"; // 类型为 byte![]（string_view）
-
-// 标准库字符串对象
-// 标准库字符串对象（当前实现把 string 识别为内建类型名）
-string str = "hello";
-
-// 字符串插值（设计语法，当前尚未实现）
-// var name = "Alice";
-// var msg = $"Hello {name}, you are {30} years old.";
-
-// 原始字符串（设计语法，当前尚未实现）
-// var path = #"C:\Windows\System32"#;
-
-// 字符串切片
-var sub = view[0..3]; // "hel"（string_view）
-
-// 字符字面量
-char c1 = 'A';
-char c2 = '中';
-char c3 = '😊'; // 32位 Unicode 码点
-
-// 不同编码前缀（尚未实现）
-// byte b = u8'A';
-// char16 c16 = u16'中';
-// char32 c32 = u32'😊';
-```
-
-### 指针系统
-
-```cpp
-// 指针操作
-var x = 42;
-var ptr = ^x;       // 取地址，指针
-ptr^ = 100;         // 解引用
-
-// 成员访问
-obj->member;         // 指针成员访问
-```
-
-### 类与面向对象
-
-```cpp
-class Rectangle {
-    int width;
-    int height;
-
-    // 构造函数与类同名
-    Rectangle(int w, int h) {
-        width = w;
-        height = h;
-    }
-    
-    func area() -> int {
-        return width * height;
-    }
-}
-
-// 访问修饰符
-class Person {
-    public string name;      // 公共成员
-    private int age;      // 私有成员
-    protected int id;     // 受保护成员
-}
-```
-
-### 内存管理
-
-```cpp
-// 分配单个对象
-var p = new int;
-var p = new int(42);
-
-// 分配数组
-var arr = new int[10];
-
-// 释放单个对象
-delete p;
-
-// 释放数组
-delete[] arr;
-```
-
-### 异常处理
-
-```cpp
-func test() {
-    try {
-        // 可能抛出异常的代码
-        throw "Something went wrong";
-    } catch (string err) {
-        // 处理异常
-    } catch (...) {
-        // 兜底异常处理
-    }
-}
-```
-
-### defer 机制
-
-```cpp
-func test() {
-    var file = open_file("test.txt");
-    defer close_file(file);  // 在函数返回前执行
-    
-    // ... 使用 file ...
-    
-    // 函数结束时自动调用 close_file(file)
-}
-```
-
-### 元组
-
-```cpp
-// 元组字面量
-var t = (1, "hello", 3.14);
-
-// 多返回值
-func get_coords() -> (int, int) {
-    return (10, 20);
-}
-
-var (x, y) = get_coords();
-```
-
-## 编译器架构
-
-### 前端组件
-
-1. **词法分析器 (Lexer)**
-   - 识别C^的所有token
-   - 处理关键字、操作符、字面量
-   - 生成token流
-
-2. **语法分析器 (Parser)**
-   - 基于EBNF文法的递归下降解析器
-   - 构建抽象语法树(AST)
-   - 错误恢复机制
-   - ✅ 支持 new/delete 表达式解析
-
-3. **语义分析器 (Semantic Analyzer)**
-   - 类型检查
-   - 符号表管理
-   - 作用域分析
-   - ✅ 支持 new/delete 表达式语义分析
-
-### 后端组件
-
-4. **LLVM 代码生成器 (LLVM Code Generator)**
-   - 将AST转换为LLVM IR
-   - 支持 defer 机制
-   - 支持类系统代码生成
-
-5. **优化器 (Optimizer)** (待实现)
-   - 常量折叠
-   - 死代码消除
-   - 循环优化
-   - 内联展开
-
-## 开发环境
-
-- **操作系统**: Windows/Linux/macOS
-- **编程语言**: C++23
-- **构建工具**: CMake 3.20+
-- **测试框架**: Catch2
-- **版本控制**: Git
-
-## 项目结构
-
-```
-.
-├── src/
-│   ├── lexer/          # 词法分析器
-│   ├── parser/         # 语法分析器
-│   ├── semantic/       # 语义分析器
-│   ├── ast/            # 抽象语法树
-│   ├── codegen/        # 代码生成器
-│   ├── llvm/           # LLVM代码生成
-│   └── types/          # 类型系统
-├── docs/
-│   ├── design/         # 设计文档
-│   ├── spec/          # 规范文档
-│   └── dev/           # 开发文档
-├── tests/             # 测试用例
-│   ├── parser/         # 解析器测试
-│   ├── semantic/       # 语义分析测试
-│   ├── class_system/   # 类系统测试
-│   ├── exception/      # 异常处理测试
-│   ├── array/          # 数组/切片测试
-│   ├── defer/          # defer机制测试
-│   ├── tuple/          # 元组测试
-│   ├── types/          # 类型系统测试
-│   └── new_delete/     # new/delete测试
-└── examples/          # 示例代码
-```
-
-## 单元测试
-
-项目使用 Catch2 作为测试框架，所有测试均通过！
-
-### 测试覆盖
-
-| 测试模块            | 断言数  | 状态 |
-| ------------------- | ------- | ---- |
-| Access Control      | 3       | ✅    |
-| Array               | 27      | ✅    |
-| Attribute           | 40      | ✅    |
-| Builtin Vars        | 11      | ✅    |
-| Class               | 34      | ✅    |
-| Coroutine           | 13      | ✅    |
-| Defer               | 4       | ✅    |
-| Exception           | 3       | ✅    |
-| Extension           | 6       | ✅    |
-| FFI                 | 9       | ✅    |
-| Foreach             | 9       | ✅    |
-| Generics            | 13      | ✅    |
-| Goto                | 8       | ✅    |
-| Immutable Method    | 10      | ✅    |
-| Lambda              | 2       | ✅    |
-| Late                | 10      | ✅    |
-| Match               | 2       | ✅    |
-| Module              | 10      | ✅    |
-| New/Delete          | 13      | ✅    |
-| Nullable            | 12      | ✅    |
-| Overload            | 31      | ✅    |
-| Parser              | 64      | ✅    |
-| Pointer             | 37      | ✅    |
-| Property            | 5       | ✅    |
-| Reference           | 7       | ✅    |
-| Reflection          | 15      | ✅    |
-| Result Type         | 6       | ✅    |
-| Semantic            | 29      | ✅    |
-| Static              | 8       | ✅    |
-| String Literal      | 12      | ✅    |
-| Tuple               | 13      | ✅    |
-| Type System         | 34      | ✅    |
-| Variadic            | 4       | ✅    |
-| **总计**            | **504** | ✅    |
-
-> 以上“断言数”来自各测试二进制。当前源码中有 176 个 `TEST_CASE`；`ctest` 会注册 43 个测试项（包含 Catch2 自动发现）。
-> 单元测试主要覆盖 lexer/parser/semantic，端到端能力见《实现现状与语法速查》。
-
-### 构建和运行测试
-
-#### Linux / macOS
+Ubuntu/Debian：
 
 ```bash
-# 依赖（Ubuntu/Debian）
 sudo apt install cmake llvm-21-dev liblld-21-dev libpolly-21-dev \
                  libzstd-dev libcatch2-dev libargparse-dev
+```
 
+### 构建
+
+```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+```
 
-# 编译器
+内存较小的环境建议：
+
+```bash
+cmake --build build -j1
+```
+
+### 运行示例
+
+```bash
 ./build/src/c_hat_compiler examples/hello.ch --run
-./build/src/c_hat_compiler examples/hello.ch          # 生成 hello.o + hello
-
-# 测试（逐个运行；当前尚未注册到 CTest）
-for t in $(find build/tests -name '*_catch2_test' -type f -executable); do "$t"; done
+./build/src/c_hat_compiler examples/exception.ch --run
+./build/src/c_hat_compiler examples/generic_class.ch --run
 ```
 
-#### Windows
+### 测试
 
-```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --config Debug
-
-tests\parser\Debug\parser_catch2_test.exe
-tests\semantic\Debug\semantic_catch2_test.exe
-# ... 其他测试
+```bash
+cd build
+ctest --output-on-failure
 ```
 
-## 开发路线图
+当前结果：
 
-### 第一阶段：基础功能 ✅
-- [x] 词法分析器
-- [x] 基础语法分析器
-- [x] 变量声明解析（var/let/late/const）
-- [x] 函数声明解析
-- [x] 表达式解析
-- [x] 控制流语句解析（if/for/while/do-while/match）
-- [x] 类定义解析
-- [x] 结构体定义解析
-- [x] 枚举定义解析
-- [x] Lambda表达式解析
-- [x] 数组/切片解析
-- [x] 指针系统解析
-- [x] new/delete 表达式解析
-- [x] 元组解析
-- [x] 异常处理解析（try-catch/throw）
-- [x] defer 语句解析
+- `ctest`：43/43 通过
+- `tests/integration`：32 个端到端用例
+- `examples/*.ch`：10 个示例全部通过
 
-### 第二阶段：语义分析 ✅
-- [x] 完整类型系统
-- [x] 符号表管理
-- [x] 作用域分析
-- [x] 类型检查
-- [x] 类型推导
-- [x] new/delete 表达式语义分析
-- [x] 异常处理语义分析
-- [x] 类系统语义分析（访问修饰符、构造/析构函数识别）
-- [x] defer 机制语义分析
+> 单元测试主要覆盖 lexer/parser/semantic；不要把“单测通过”等同于“端到端可用”。
 
-### 第三阶段：代码生成 ✅
-- [x] LLVM IR 基础代码生成
-- [x] 变量声明和函数代码生成
-- [x] 类系统代码生成
-- [x] defer 机制完整实现（收集和执行）
-- [x] 切片功能实现（属性访问和下标访问）
-- [x] 表达式生成函数实现（Self、Expansion、StructInit、Tuple、Lambda、Reflection、Fold）
-- [x] 异常处理 LLVM 代码生成（landingpad + personality + throw）
-- [x] 构造函数、析构函数代码生成
-- [x] new/delete 代码生成
+---
 
-### 第四阶段：优化 🚧
-- [ ] 基础优化
-- [ ] 高级优化
-- [ ] 性能分析
-- [ ] 优化反馈
+## 3. 语言设计亮点
 
-## 最近更新
+### 3.1 `self` / `base`
 
-### 2026-10-24
-- ✅ 支持 Linux/macOS 构建与链接：`.o` + `$CXX`/`c++` 驱动，Windows 保持 `.obj` + `lld-link`/`link.exe`
-- ✅ 修复 LLVM 21 兼容性（opaque pointer、`setTargetTriple`）
-- ✅ 修复构造函数代码生成：`new T(args)` 现在会把构造参数传给构造函数
-- ✅ 修复复合赋值 `+=`/`-=`/... 与 `++`/`--` 的 LLVM codegen
-- ✅ 修复 `while`/`for` codegen（禁用会破坏 SSA dominance 的 `optimizeLoops`，补齐 for-init）
-- ✅ 打通类方法 `p.m()` / `p->m()`、裸字段名、`self.x` 和结构体字段读写
-- ✅ 修复 `match` codegen（整数/字符/布尔/字符串、守卫、默认分支、标识符绑定）
-- ✅ 修复 `foreach` codegen（数组/切片/范围、可选 index 变量、break/continue）
-- ✅ 修复 `try/catch/throw`（setjmp/longjmp v1：跨函数抛出、嵌套 try、catch(...)；类型匹配待补）
-- ✅ 泛型函数/类/结构体单态化（`id<int>`、`Box<int>`、`Point<int>`、递归泛型、简单类型推导）
-- ✅ 结构体值构造 `Point<T>(...)`
-- ✅ 类级 `where` 约束在实例化时检查
-- ✅ concept 解析与检查（内置概念 + 自定义 `requires` 的基础能力检查）
-- ✅ `ctest` 注册 43 个测试项；`tests/integration` 已有 19 个端到端用例（循环、类、结构体、match、foreach、异常、泛型）
-- ✅ 只读性收紧：禁止 `T![] -> T[]`、`T!^ -> T^` 和 `literalview -> byte^`
-- ✅ 编译器 debug 输出改为 `--verbose` 才显示
-- ✅ 修正文档中的构造函数/析构函数语法：`ClassName(...)`、`~ClassName()`、`: super(...)`
-- ✅ 新增 `docs/spec/C^ 语言实现现状与语法速查.md`，以代码和测试为准
+C^ 不使用 `this` / `super`：
 
-### 2026-06-02
-- ✅ 修复泛型约束（where 子句）：Parser 正确构造 WhereClause AST，Semantic 正确验证概念约束
-- ✅ 实现类型集合别名（`using X = A | B | C`）：新增 UnionType 类型，完整收集所有成员类型
-- ✅ LLVM CodeGen 析构函数调用：delete 表达式自动调用 ~ClassName
-- ✅ LLVM CodeGen 枚举类型检查：新增 enumTypes_ 跟踪
-- ✅ LLVM CodeGen 异常处理：landingpad + __gxx_personality_v0 + __cxa_throw
-- ✅ 所有 504 个单元测试全部通过（33 个测试套件，零失败）
+```c^
+class Dog : Animal {
+    Dog(int age) : base(age) { }
 
-### 2026-03-10
-- ✅ 实现切片功能（属性访问和下标访问）
-- ✅ 实现表达式生成函数（Self、Expansion、StructInit、Tuple、Lambda、Reflection、Fold）
-- ✅ 修复编译错误，确保代码能够正常构建
-- ✅ 实现异常处理 LLVM 代码生成（使用 invoke/landingpad 指令）
-- ✅ 实现构造函数和析构函数代码生成
-- ✅ 实现 new/delete 代码生成
+    func speak() -> int {
+        return base.speak() + 1;
+    }
+}
+```
 
+- `self`：当前实例
+- `self!`：只读接收者
+- `self~`：移动接收者（experimental）
+- `base`：基类子对象
+- `base(...)`：基类构造函数调用
+
+### 3.2 显式副作用与所有权
+
+- `&x`：可变借用
+- `x`：只读借用
+- `^x`：取地址 / 指针
+- `x~`：移动（experimental）
+- `T![]` / `T[]`：只读切片 / 可变切片
+- `literalview`：非拥有字节视图
+
+只读只能“加”，不能“去”：
+
+```c^
+int[3] a = [1, 2, 3];
+int[] s = a;       // OK
+int![] r = s;      // OK
+int[] bad = r;     // Error
+```
+
+### 3.3 数组 / 切片 / 元组
+
+设计目标：
+
+- 固定数组 `T[N]` 是值类型
+- 切片 `T[]` 是视图 `{T*, long len}`
+- `.len` 类型为 `long`
+- `a..b` 半开区间
+- `a..=b` 闭区间
+- 元组是值类型
+
+```c^
+int[3] a = [1, 2, 3];
+int[] s = a[0..2];      // 半开
+int[] t = a[0..=2];     // 闭区间
+var len = s.len;        // long
+```
+
+### 3.4 `defer` 与 RAII
+
+设计目标：
+
+- `defer` 是块级作用域
+- 支持 `defer { ... }`
+- 栈上/`late` 对象自动析构
+- 堆对象显式 `new/delete`
+- 异常展开执行 defer + 析构
+
+```c^
+func copy() {
+    var src = open_read("a");
+    defer { src.close(); }
+
+    var dst = open_write("b");
+    defer { dst.close(); }
+}
+```
+
+### 3.5 未初始化变量与 `late`
+
+非 `late` 局部变量必须初始化：
+
+```c^
+int x = 0;      // OK
+int y;          // Error
+late int z;     // OK：预留存储，暂不构造
+z = 42;         // 第一次赋值 = 构造
+```
+
+### 3.6 错误处理
+
+三层模型：
+
+- `T?`：可能没有值
+- `Result<T, E>`：可恢复错误
+- `try/catch/throw`：真正异常
+
+异常是语言机制，不依赖标准库类型。没有标准库时仍可抛/捕获用户自定义类型。
+
+### 3.7 泛型与 concept
+
+```c^
+func max<T>(T a, T b) -> T where Comparable<T> {
+    return a > b ? a : b;
+}
+```
+
+- 单态化
+- `Box<int>` / `Point<int>`
+- concept + `requires`
+- 简单关联类型
+- v1 不承诺类型擦除、运行时泛型反射
+
+---
+
+## 4. 当前可用能力
+
+### 端到端可用
+
+- 函数、变量、控制流
+- 基础表达式
+- 固定数组 / 切片基础操作
+- 元组下标、解构、参数/返回
+- 类、字段、方法、属性、static
+- 单继承字段布局、`base(...)`、`base.member`、`override`
+- 显式 `delete` 调用析构
+- `try/catch/throw`、`catch (...)`、类型匹配
+- `defer`（当前实现仍为函数级，设计目标为块级）
+- 泛型函数/类/结构体基础
+- concept 基础
+- `extern "C"` 基础调用
+
+### experimental / 未稳定
+
+- 虚表 / 虚方法动态派发
+- 接口动态派发
+- 自动析构 / 完整 RAII 展开
+- 多实现继承
+- `self~` / 移动语义
+- 反射 / `Fold` / `Expansion`
+- comptime 执行
+- 协程 `await/yield`
+- 字符串插值
+- `as` 安全转换
+- 默认参数 / 命名参数
+- 零开销异常
+- 变参 FFI / C 回调
+- 标准库分层
+- 模块独立对象文件
+
+### 当前限制
+
+- `string` 仍在从编译器内建类型迁移到 `std.string`
+- 异常仍是 `setjmp/longjmp`，不是零开销表驱动
+- 结构体按值异常不完整
+- 自动析构、块级 defer 尚未落地
+- 数组字面量内部表示仍在向“固定数组默认”收敛
+- 模块 import 尚未完整合并公开符号
+- 标准库只有最小 `stdlib/std`
+
+---
+
+## 5. 编译器架构
+
+```text
+Lexer
+  -> Parser
+  -> AST
+  -> SemanticAnalyzer + SemanticModel
+  -> TypeLowering
+  -> LLVMCodeGenerator
+  -> LLVM IR / Object / Executable
+```
+
+### 前端
+
+- `src/lexer/`
+- `src/parser/`
+- `src/ast/`
+- `src/types/`
+- `src/semantic/`
+
+### 后端
+
+- `src/llvm/`
+- `src/codegen/`（旧代码生成框架）
+
+### 运行时 / 标准库
+
+- `libc_hat_rt`：设计中的编译器运行时
+- `stdlib/`：默认标准库（后置完善）
+
+---
+
+## 6. 项目结构
+
+```text
+.
+├── src/
+│   ├── lexer/
+│   ├── parser/
+│   ├── ast/
+│   ├── types/
+│   ├── semantic/
+│   ├── codegen/
+│   └── llvm/
+├── stdlib/
+├── tests/
+│   ├── integration/
+│   ├── parser/
+│   ├── semantic/
+│   ├── class_system/
+│   ├── exception/
+│   ├── array/
+│   ├── tuple/
+│   └── ...
+├── examples/
+├── docs/
+│   ├── choose/          # ADR
+│   ├── design/
+│   ├── spec/
+│   └── dev/
+└── CMakeLists.txt
+```
+
+---
+
+## 7. 实现路线
+
+按设计冻结清单：
+
+1. SemanticModel + TypeLowering
+2. 数组 / 切片 / 元组值语义
+3. 块级 defer + cleanup 栈
+4. 非 late 必须初始化 + late definite assignment
+5. 栈上/late RAII + 异常展开
+6. OOP vtable / 接口派发
+7. 模块 / ABI / FFI
+8. 编译器运行时与标准库边界
+9. 泛型 / concept 完整化
+10. 标准库最小分层
+11. 高级特性（反射 / comptime / 协程）
+
+标准库放在最后，避免在核心语义和 ABI 未稳定时反复返工。
+
+---
+
+## 8. 贡献与设计原则
+
+- 先改设计，再改实现
+- 每个特性必须有规范、语义、codegen、正向/负向测试
+- 文档状态必须标注：parser only / semantic only / codegen usable / stable
+- 不把 parser/semantic 覆盖当成端到端可用
+- 标准库可替换，语言核心不依赖标准库
+- 异常、defer、RAII、数组/切片是语言核心能力
+
+---
+
+## 9. 相关文档
+
+- [实现现状与语法速查](<docs/spec/C^ 语言实现现状与语法速查.md>)
+- [设计冻结清单](docs/design/设计冻结清单.md)
+- [类型与代码生成边界评审](docs/design/设计评审-类型与代码生成边界.md)
+- [内存与资源模型评审](docs/design/设计评审-内存与资源模型.md)
+- [语言关键字规范](<docs/spec/C^ 语言关键字规范.md>)
+- [语言错误处理规范](<docs/spec/C^ 语言错误处理规范.md>)
+- [语言内存管理规范](<docs/spec/C^ 语言内存管理规范.md>)
+- [语言类与面向对象规范](<docs/spec/C^ 语言类与面向对象规范.md>)

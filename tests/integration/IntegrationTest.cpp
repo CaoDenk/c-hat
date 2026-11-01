@@ -229,6 +229,16 @@ TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
       "}\n") == 45);
 }
 
+TEST_CASE("Integration: semantic expression types", "[integration][types]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    double[2] a = [1.5, 2.5];\n"
+      "    var x = a[0] + a[1];\n"
+      "    if (x > 3.9) { return 42; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: tuple access and destructuring", "[integration][tuple]") {
   REQUIRE(compileAndRun(
       "func pair() -> (int, int) { return (20, 22); }\n"

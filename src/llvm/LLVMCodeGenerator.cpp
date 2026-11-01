@@ -353,7 +353,7 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   // 这样 `var x = a[0] + a[1]` 不会因为无法静态推断而退化成 int。
   auto *initializerMember =
       dynamic_cast<ast::MemberExpr *>(varDecl->initializer.get());
-  if (!varDecl->type && varDecl->initializer &&
+  if (!semanticModel_ && !varDecl->type && varDecl->initializer &&
       (dynamic_cast<ast::BinaryExpr *>(varDecl->initializer.get()) ||
        dynamic_cast<ast::UnaryExpr *>(varDecl->initializer.get()) ||
        dynamic_cast<ast::SubscriptExpr *>(varDecl->initializer.get()) ||
@@ -382,7 +382,7 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
         sliceElementType = generateType(sliceTypeNode->baseType.get());
       }
     }
-  } else if (varDecl->initializer) {
+  } else if (!varType && varDecl->initializer) {
     if (auto *literal =
             dynamic_cast<ast::Literal *>(varDecl->initializer.get())) {
       switch (literal->type) {
