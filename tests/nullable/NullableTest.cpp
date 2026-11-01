@@ -24,15 +24,15 @@ static bool analyzeSource(const std::string& src) {
 // ─────────────────────────────────────────────
 TEST_CASE("Nullable: type declaration", "[nullable][parser]") {
     SECTION("Nullable int") {
-        CHECK(analyzeSource("func main() { int? x; }") == true);
+        CHECK(analyzeSource("func main() { int? x = null; }") == true);
     }
     SECTION("Nullable class") {
         CHECK(analyzeSource(
             "class Foo { }\n"
-            "func main() { Foo? f; }") == true);
+            "func main() { Foo? f = null; }") == true);
     }
     SECTION("Nullable pointer") {
-        CHECK(analyzeSource("func main() { int?^ p; }") == true);
+        CHECK(analyzeSource("func main() { int?^ p = null; }") == true);
     }
 }
 

@@ -570,10 +570,24 @@ void SemanticAnalyzer::analyzeDeclaration(ast::Declaration *declaration) {
 }
 
 void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
-  // late 必须有显式类型；非 late 局部变量必须初始化的规则
-  // 仍在分阶段实现，暂不在这里强制。
-  if (varDecl->isLate && !varDecl->type) {
-    error("late variable requires an explicit type: " + varDecl->name,
+  const bool isLocal = currentFunctionReturnType_ != nullptr;
+
+  if (varDecl->isLate) {
+    // late 是唯一允许未初始化的局部存储；只允许局部、显式类型、无初始化器。
+    if (!isLocal) {
+      error("late is only allowed for local variables: " + varDecl->name,
+            *varDecl);
+    }
+    if (!varDecl->type) {
+      error("late variable requires an explicit type: " + varDecl->name,
+            *varDecl);
+    }
+    if (varDecl->initializer) {
+      error("late variable must not have an initializer: " + varDecl->name,
+            *varDecl);
+    }
+  } else if (isLocal && !varDecl->initializer) {
+    error("Non-late local variable must be initialized: " + varDecl->name,
           *varDecl);
   }
 

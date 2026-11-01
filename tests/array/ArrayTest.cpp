@@ -48,10 +48,10 @@ bool analyzeSourceWithMain(const std::string &source) {
 
 TEST_CASE("Array: Array type declaration", "[array][type]") {
   SECTION("Fixed size array") {
-    REQUIRE(analyzeSource("int[10] arr;") == true);
+    REQUIRE(analyzeSource("late int[10] arr;") == true);
   }
 
-  SECTION("Slice type") { REQUIRE(analyzeSource("int[] slice;") == true); }
+  SECTION("Slice type") { REQUIRE(analyzeSource("int[] slice = [0];") == true); }
 }
 
 TEST_CASE("Array: Array literal", "[array][literal]") {

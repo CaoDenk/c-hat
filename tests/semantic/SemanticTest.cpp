@@ -56,7 +56,7 @@ TEST_CASE("Semantic: Variable declarations", "[semantic][variables]") {
     REQUIRE(analyzeSource("let pi = 3.14;") == true);
   }
 
-  SECTION("Late variable") { REQUIRE(analyzeSource("late int x;") == true); }
+  SECTION("Late variable") { REQUIRE(analyzeSource("func test() { late int x; }") == true); }
 
   SECTION("Const variable") {
     REQUIRE(analyzeSource("const int x = 10;") == true);
@@ -102,11 +102,11 @@ TEST_CASE("Semantic: Array literals", "[semantic][arrays]") {
 
 TEST_CASE("Semantic: Late variables", "[semantic][late]") {
   SECTION("Late variable with type") {
-    REQUIRE(analyzeSource("late int x;") == true);
+    REQUIRE(analyzeSource("func test() { late int x; }") == true);
   }
 
   SECTION("Late variable without type") {
-    REQUIRE(analyzeSource("late var x;") == false);
+    REQUIRE(analyzeSource("func test() { late var x; }") == false);
   }
 }
 

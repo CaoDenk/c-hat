@@ -147,9 +147,9 @@ TEST_CASE("Integration: struct field assignment", "[integration][struct]") {
   REQUIRE(compileAndRun(
       "struct P { int x; }\n"
       "func main() -> int {\n"
-      "    P p;\n"
-      "    p.x = 7;\n"
-      "    return p.x;\n"
+      "    P^ p = new P();\n"
+      "    p->x = 7;\n"
+      "    return p->x;\n"
       "}\n") == 7);
 }
 
@@ -207,7 +207,7 @@ TEST_CASE("Integration: foreach", "[integration][foreach]") {
 TEST_CASE("Integration: array and slice properties", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
-      "    int[3] a;\n"
+      "    int[3] a = [0, 0, 0];\n"
       "    a[0] = 20;\n"
       "    a[1] = 22;\n"
       "    int^ p = a.ptr;\n"
@@ -284,9 +284,9 @@ TEST_CASE("Integration: semantic expression types", "[integration][types]") {
   REQUIRE(compileAndRun(
       "struct P { double x; }\n"
       "func main() -> int {\n"
-      "    P p;\n"
-      "    p.x = 42.0;\n"
-      "    var y = p.x;\n"
+      "    P^ p = new P();\n"
+      "    p->x = 42.0;\n"
+      "    var y = p->x;\n"
       "    if (y > 41.0) { return 42; }\n"
       "    return 0;\n"
       "}\n") == 42);
@@ -578,13 +578,13 @@ TEST_CASE("Integration: generic struct monomorphization", "[integration][generic
       "    func sum() -> T { return x + y; }\n"
       "}\n"
       "func main() -> int {\n"
-      "    Point<int> a;\n"
-      "    Point<double> b;\n"
-      "    a.x = 40;\n"
-      "    a.y = 2;\n"
-      "    b.x = 1.5;\n"
-      "    b.y = 1.0;\n"
-      "    if (b.sum() > 2.0) { return a.sum(); }\n"
+      "    Point<int>^ a = new Point<int>();\n"
+      "    Point<double>^ b = new Point<double>();\n"
+      "    a->x = 40;\n"
+      "    a->y = 2;\n"
+      "    b->x = 1.5;\n"
+      "    b->y = 1.0;\n"
+      "    if (b->sum() > 2.0) { return a->sum(); }\n"
       "    return 0;\n"
       "}\n") == 42);
 }

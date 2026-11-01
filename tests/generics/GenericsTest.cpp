@@ -53,12 +53,12 @@ TEST_CASE("Generics: generic class", "[generics][parser]") {
     SECTION("Generic class instantiation") {
         CHECK(analyzeSource(
             "class Box<T> { public T value; }\n"
-            "func main() { Box<int> b; }") == true);
+            "func main() { late Box<int> b; }") == true);
     }
     SECTION("Nested generic") {
         CHECK(analyzeSource(
             "class Pair<A, B> { public A first; public B second; }\n"
-            "func main() { Pair<int, float> p; }") == true);
+            "func main() { late Pair<int, float> p; }") == true);
     }
 }
 
@@ -111,6 +111,6 @@ TEST_CASE("Generics: instantiation", "[generics][semantic]") {
     SECTION("Generic stack-like class usage") {
         CHECK(analyzeSource(
             "class Stack<T> { public func push(T item) { } }\n"
-            "func main() { Stack<int> s; s.push(1); }") == true);
+            "func main() { Stack<int>^ s = new Stack<int>(); s->push(1); }") == true);
     }
 }

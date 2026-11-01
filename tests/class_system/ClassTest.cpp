@@ -167,7 +167,7 @@ TEST_CASE("Class: Multiple inheritance", "[class][inheritance][multiple]") {
 TEST_CASE("Class: Polymorphism", "[class][polymorphism]") {
   SECTION("Base class pointer can point to derived class") {
     REQUIRE(analyzeSource("class Animal { } class Dog : Animal { } func test() "
-                          "{ Dog dog; Animal^ animal = ^dog; }") == true);
+                          "{ Animal^ animal = new Dog(); }") == true);
   }
 
   SECTION("Virtual method dispatch") {
@@ -233,7 +233,7 @@ TEST_CASE("Class: Complex inheritance scenarios",
 
   SECTION("Deep inheritance chain") {
     REQUIRE(analyzeSource("class A { } class B : A { } class C : B { } class D "
-                          ": C { } func test() { D d; }") == true);
+                          ": C { } func test() { late D d; }") == true);
   }
 
   SECTION("Inheritance with property override") {

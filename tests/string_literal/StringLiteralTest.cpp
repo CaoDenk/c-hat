@@ -89,6 +89,6 @@ TEST_CASE("String: byte type", "[string][types]") {
         CHECK(analyzeSource("func main() { byte b = 65; }") == true);
     }
     SECTION("byte pointer (C-style string)") {
-        CHECK(analyzeSource("func main() { byte^ p; }") == true);
+        CHECK(analyzeSource("func main() { byte^ p = null; }") == true);
     }
 }

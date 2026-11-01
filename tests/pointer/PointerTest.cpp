@@ -22,33 +22,33 @@ bool analyzeSource(const std::string &source) {
 
 TEST_CASE("Pointer: Basic pointer declaration", "[pointer][basic]") {
   SECTION("Int pointer") {
-    REQUIRE(analyzeSource("func test() { int^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { int^ ptr = null; }") == true);
   }
 
   SECTION("Float pointer") {
-    REQUIRE(analyzeSource("func test() { float^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { float^ ptr = null; }") == true);
   }
 
   SECTION("Double pointer") {
-    REQUIRE(analyzeSource("func test() { double^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { double^ ptr = null; }") == true);
   }
 
   SECTION("Char pointer") {
-    REQUIRE(analyzeSource("func test() { char^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { char^ ptr = null; }") == true);
   }
 
   SECTION("Bool pointer") {
-    REQUIRE(analyzeSource("func test() { bool^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { bool^ ptr = null; }") == true);
   }
 }
 
 TEST_CASE("Pointer: Pointer to pointer", "[pointer][double]") {
   SECTION("Double pointer") {
-    REQUIRE(analyzeSource("func test() { int^^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { int^^ ptr = null; }") == true);
   }
 
   SECTION("Triple pointer") {
-    REQUIRE(analyzeSource("func test() { int^^^ ptr; }") == true);
+    REQUIRE(analyzeSource("func test() { int^^^ ptr = null; }") == true);
   }
 }
 
@@ -128,7 +128,7 @@ TEST_CASE("Pointer: Null pointer", "[pointer][null]") {
 
 TEST_CASE("Pointer: Pointer to class", "[pointer][class]") {
   SECTION("Class pointer declaration") {
-    REQUIRE(analyzeSource("class Person { } func test() { Person^ ptr; }") == true);
+    REQUIRE(analyzeSource("class Person { } func test() { Person^ ptr = null; }") == true);
   }
 
   SECTION("Class pointer from new") {

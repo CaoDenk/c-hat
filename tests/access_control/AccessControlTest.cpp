@@ -56,9 +56,9 @@ TEST_CASE("Access Control - Public members", "[access_control]") {
     };
     
     void testFunction() {
-      Test t;
-      t.publicVar = 10; // 应该可以访问
-      t.publicMethod(); // 应该可以访问
+      Test^ t = new Test();
+      t->publicVar = 10; // 应该可以访问
+      t->publicMethod(); // 应该可以访问
     }
   )";
 
@@ -82,7 +82,7 @@ TEST_CASE("Access Control - Private members", "[access_control]") {
     };
     
     void testFunction() {
-      Test t;
+      late Test t;
       t.privateVar = 10; // 应该报错：无法访问私有成员
       t.privateMethod(); // 应该报错：无法访问私有成员
     }
@@ -116,7 +116,7 @@ TEST_CASE("Access Control - Protected members", "[access_control]") {
     };
     
     void testFunction() {
-      Base b;
+      late Base b;
       b.protectedVar = 10; // 应该报错：无法访问保护成员
       b.protectedMethod(); // 应该报错：无法访问保护成员
     }

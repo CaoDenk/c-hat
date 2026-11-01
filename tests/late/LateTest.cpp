@@ -22,15 +22,31 @@ bool analyzeSource(const std::string &source) {
 
 TEST_CASE("Late: Basic late declaration", "[late][basic]") {
   SECTION("Late with explicit type") {
-    REQUIRE(analyzeSource("late int x;") == true);
+    REQUIRE(analyzeSource("func test() { late int x; }") == true);
   }
 
   SECTION("Late with var is invalid") {
-    REQUIRE(analyzeSource("late var x;") == false);
+    REQUIRE(analyzeSource("func test() { late var x; }") == false);
   }
 
   SECTION("Late with class type") {
-    REQUIRE(analyzeSource("class Person { } late Person p;") == true);
+    REQUIRE(analyzeSource("class Person { } func test() { late Person p; }") == true);
+  }
+
+  SECTION("Late at global scope is invalid") {
+    REQUIRE(analyzeSource("late int x;") == false);
+  }
+
+  SECTION("Late with initializer is invalid") {
+    REQUIRE(analyzeSource("func test() { late int x = 1; }") == false);
+  }
+
+  SECTION("Non-late local without initializer is invalid") {
+    REQUIRE(analyzeSource("func test() { int x; }") == false);
+  }
+
+  SECTION("Non-late var without initializer is invalid") {
+    REQUIRE(analyzeSource("func test() { var x; }") == false);
   }
 }
 
