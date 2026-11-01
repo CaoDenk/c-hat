@@ -49,6 +49,14 @@ TEST_CASE("Foreach: basic iteration", "[foreach][parser]") {
             "  foreach (let x : arr) { } "
             "}") == true);
     }
+    SECTION("Foreach over half-open range") {
+        CHECK(analyzeInMain(
+            "foreach (var i : 0..4) { }") == true);
+    }
+    SECTION("Foreach over inclusive range") {
+        CHECK(analyzeInMain(
+            "foreach (var i : 0..=4) { }") == true);
+    }
 }
 
 // ─────────────────────────────────────────────

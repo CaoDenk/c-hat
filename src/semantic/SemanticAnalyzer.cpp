@@ -2822,7 +2822,8 @@ SemanticAnalyzer::analyzeForStmt(ast::ForStmt *forStmt) {
     std::shared_ptr<types::Type> elementType;
     auto *rangeExpr =
         dynamic_cast<ast::BinaryExpr *>(forStmt->condition.get());
-    if (rangeExpr && rangeExpr->op == ast::BinaryExpr::Op::Range) {
+    if (rangeExpr && (rangeExpr->op == ast::BinaryExpr::Op::Range ||
+                      rangeExpr->op == ast::BinaryExpr::Op::RangeInclusive)) {
       auto startType = analyzeExpression(rangeExpr->left.get());
       auto endType = analyzeExpression(rangeExpr->right.get());
       if (startType && endType && isTypeCompatible(startType, endType)) {
@@ -4580,7 +4581,8 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
   // 切片区间 a[start..end] 返回同元素类型的切片。
   if (auto *range =
           dynamic_cast<ast::BinaryExpr *>(subscriptExpr->index.get());
-      range && range->op == ast::BinaryExpr::Op::Range) {
+      range && (range->op == ast::BinaryExpr::Op::Range ||
+                range->op == ast::BinaryExpr::Op::RangeInclusive)) {
     std::shared_ptr<types::Type> elementType;
     if (arrayType->isArray()) {
       elementType =

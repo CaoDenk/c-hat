@@ -4028,9 +4028,12 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     return result;
   };
 
-  // 切片区间：a[start..end]，半开区间。
+  // 切片区间：a[start..end] 半开，a[start..=end] 闭区间。
+  bool rangeInclusive = false;
   if (auto *range = dynamic_cast<ast::BinaryExpr *>(subscriptExpr->index.get());
-      range && range->op == ast::BinaryExpr::Op::Range) {
+      range && (range->op == ast::BinaryExpr::Op::Range ||
+                range->op == ast::BinaryExpr::Op::RangeInclusive)) {
+    rangeInclusive = range->op == ast::BinaryExpr::Op::RangeInclusive;
     ArrayBase base = getBase(subscriptExpr->object.get());
     applySemanticElementType(base);
     if (!base.ptr || !base.elementType) {
@@ -4054,6 +4057,11 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     llvm::Value *ptr = getElementPtr(base, start);
     llvm::Value *len =
         builder()->CreateSub(end, start, "slice.len");
+    if (rangeInclusive) {
+      len = builder()->CreateAdd(
+          len, llvm::ConstantInt::get(len->getType(), 1),
+          "slice.len.inclusive");
+    }
     llvm::StructType *sliceType = getOrCreateSliceType(base.elementType);
     llvm::Value *sliceValue =
         builder()->CreateInsertValue(llvm::UndefValue::get(sliceType), ptr, 0);
@@ -4729,10 +4737,14 @@ llvm::Value *LLVMCodeGenerator::generateForeachStmt(
   llvm::Value *rangeStart = nullptr;
   llvm::Value *rangeEnd = nullptr;
   bool isRange = false;
+  bool rangeInclusive = false;
 
-  // 情况 1：范围  start..end（当前实现按闭区间处理）
+  // 情况 1：范围 start..end（半开）或 start..=end（闭区间）
   if (auto *range = dynamic_cast<ast::BinaryExpr *>(forStmt->condition.get());
-      range != nullptr && range->op == ast::BinaryExpr::Op::Range) {
+      range != nullptr &&
+      (range->op == ast::BinaryExpr::Op::Range ||
+       range->op == ast::BinaryExpr::Op::RangeInclusive)) {
+    rangeInclusive = range->op == ast::BinaryExpr::Op::RangeInclusive;
     rangeStart = generateExpression(std::move(range->left));
     rangeEnd = generateExpression(std::move(range->right));
     if (!rangeStart || !rangeEnd) {
@@ -4839,7 +4851,9 @@ llvm::Value *LLVMCodeGenerator::generateForeachStmt(
       llvm::Type::getInt32Ty(context()), indexAlloca, "foreach.idx");
   llvm::Value *cond = nullptr;
   if (isRange) {
-    cond = builder()->CreateICmpSLE(idx, rangeEnd, "foreach.rangecond");
+    cond = rangeInclusive
+               ? builder()->CreateICmpSLE(idx, rangeEnd, "foreach.rangecond")
+               : builder()->CreateICmpSLT(idx, rangeEnd, "foreach.rangecond");
   } else {
     cond = builder()->CreateICmpSLT(idx, count, "foreach.cond");
   }

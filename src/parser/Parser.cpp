@@ -2958,7 +2958,10 @@ Parser::parsePostfixExpr(std::unique_ptr<ast::Expression> expr) {
       expr = std::make_unique<ast::UnaryExpr>(ast::UnaryExpr::Op::ForceUnwrap,
                                               std::move(expr));
     } else if (match(lexer::TokenType::Range)) {
-      expr = parseRangeExpr(std::move(expr));
+      expr = parseRangeExpr(std::move(expr), ast::BinaryExpr::Op::Range);
+    } else if (match(lexer::TokenType::RangeInclusive)) {
+      expr = parseRangeExpr(std::move(expr),
+                            ast::BinaryExpr::Op::RangeInclusive);
     } else if (match(lexer::TokenType::DoubleColon)) {
       expr = parseNamespaceAccessExpr(std::move(expr));
     } else if (match(lexer::TokenType::Ellipsis)) {
@@ -3032,10 +3035,11 @@ Parser::parseNamespaceAccessExpr(std::unique_ptr<ast::Expression> object) {
 
 // 解析范围表达式
 std::unique_ptr<ast::Expression>
-Parser::parseRangeExpr(std::unique_ptr<ast::Expression> start) {
+Parser::parseRangeExpr(std::unique_ptr<ast::Expression> start,
+                       ast::BinaryExpr::Op op) {
   auto end = parsePrimaryExpr();
-  return std::make_unique<ast::BinaryExpr>(
-      std::move(start), ast::BinaryExpr::Op::Range, std::move(end));
+  return std::make_unique<ast::BinaryExpr>(std::move(start), op,
+                                           std::move(end));
 }
 
 // 解析数组初始化

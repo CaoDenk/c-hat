@@ -251,7 +251,8 @@ private:
 
   // 解析范围表达式
   std::unique_ptr<ast::Expression>
-  parseRangeExpr(std::unique_ptr<ast::Expression> start);
+  parseRangeExpr(std::unique_ptr<ast::Expression> start,
+                 ast::BinaryExpr::Op op);
 
   // 解析数组初始化
   std::unique_ptr<ast::Expression> parseArrayInit();

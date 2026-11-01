@@ -510,6 +510,9 @@ std::string Token::toString() const {
   case TokenType::Range:
     typeStr = "Range";
     break;
+  case TokenType::RangeInclusive:
+    typeStr = "RangeInclusive";
+    break;
   case TokenType::Dollar:
     typeStr = "Dollar";
     break;
@@ -1078,6 +1081,11 @@ std::optional<Token> Lexer::processOperator() {
         advance();
         column++;
         return Token(TokenType::Ellipsis, "...", startLine, startColumn);
+      }
+      if (!isEOF() && currentChar() == '=') {
+        advance();
+        column++;
+        return Token(TokenType::RangeInclusive, "..=", startLine, startColumn);
       }
       return Token(TokenType::Range, "..", startLine, startColumn);
     }

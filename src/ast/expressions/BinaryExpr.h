@@ -40,7 +40,8 @@ public:
     XorAssign,
     ShlAssign,
     ShrAssign,
-    Range
+    Range,
+    RangeInclusive
   };
 
   BinaryExpr(std::unique_ptr<Expression> left, Op op,

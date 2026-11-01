@@ -1021,17 +1021,17 @@ if (obj is Person) {
 #### 2.4.9 范围表达式
 
 ```cpp
-start .. end
-start ..< end
+start .. end    // 半开区间，不包含 end
+start ..= end   // 闭区间，包含 end
 ```
 
 示例：
 
 ```cpp
-var range1 = 1 .. 10;  // 包含 10
-var range2 = 1 ..< 10; // 不包含 10
+var range1 = 1 .. 10;  // 1..9，不包含 10
+var range2 = 1 ..= 10; // 1..10，包含 10
 
-foreach (i in range1) {
+foreach (var i : range1) {
   print(i);
 }
 ```
@@ -1179,7 +1179,7 @@ int total = sum_array(numbers[0..3]); // 传递前3个元素
 // 切片操作
 int[] slice1 = numbers[1..];    // 从索引1到末尾
 int[] slice2 = numbers[..3];    // 从开头到索引2
-int[] slice3 = numbers[1..3];   // 从索引1到索引2
+int[] slice3 = numbers[1..3];   // 从索引1到索引2（半开）
 
 // 不可变切片
 int![] immutable_slice = numbers[0..3]; // 不可变切片

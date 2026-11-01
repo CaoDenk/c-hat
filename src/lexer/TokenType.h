@@ -160,6 +160,7 @@ enum class TokenType {
   DoubleColon, // , ; : ::
   Ellipsis,    // ...
   Range,       // ..
+  RangeInclusive, // ..=
   Dollar,      // $
   Bar,         // |
   FatArrow,    // =>

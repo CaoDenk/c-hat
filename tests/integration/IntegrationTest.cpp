@@ -194,6 +194,13 @@ TEST_CASE("Integration: foreach", "[integration][foreach]") {
       "    var s = 0;\n"
       "    foreach (var i : 0..4) { s += i; }\n"
       "    return s;\n"
+      "}\n") == 6);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var s = 0;\n"
+      "    foreach (var i : 0..=4) { s += i; }\n"
+      "    return s;\n"
       "}\n") == 10);
 }
 
@@ -215,6 +222,13 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "    int^ p = s.ptr;\n"
       "    return a.len + s.len + p[0] + p[1];\n"
       "}\n") == 58);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[4] a = [10, 20, 12, 0];\n"
+      "    int[] s = a[1..=3];\n"
+      "    return s.len + s[0] + s[2];\n"
+      "}\n") == 23);
 }
 
 TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
