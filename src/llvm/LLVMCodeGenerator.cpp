@@ -372,7 +372,7 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     return inferredAlloca;
   }
 
-  if (varDecl->type) {
+  if (varDecl->type && !varType) {
     if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
       varType = generateType(typeNode);
       // 检查是否是切片类型
@@ -382,6 +382,9 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
         sliceElementType = generateType(sliceTypeNode->baseType.get());
       }
     }
+  } else if (!varType && semanticModel_) {
+    error("Missing semantic type for variable: " + varDecl->name, varDecl.get());
+    return nullptr;
   } else if (!varType && varDecl->initializer) {
     if (auto *literal =
             dynamic_cast<ast::Literal *>(varDecl->initializer.get())) {
