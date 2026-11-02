@@ -21,6 +21,11 @@ struct ModuleFunctionAlias {
   std::string linkName;
 };
 
+struct ModuleTypeAlias {
+  std::string name;
+  std::string linkName;
+};
+
 class ModuleLoader {
 public:
   ModuleLoader(const std::string &stdlibPath) : stdlibPath_(stdlibPath) {
@@ -58,12 +63,19 @@ public:
     return functionAliases_;
   }
 
+  void addTypeAlias(const std::string &name, const std::string &linkName);
+
+  const std::vector<ModuleTypeAlias> &getTypeAliases() const {
+    return typeAliases_;
+  }
+
 private:
   std::string stdlibPath_;
   std::vector<std::string> modulePaths_;
   std::unordered_set<std::string> loadedModules_;
   std::unordered_set<std::string> loadingModules_;
   std::vector<ModuleFunctionAlias> functionAliases_;
+  std::vector<ModuleTypeAlias> typeAliases_;
 
   fs::path modulePathToFilePath(const std::vector<std::string> &modulePath);
 

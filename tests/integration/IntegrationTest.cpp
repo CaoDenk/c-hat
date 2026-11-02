@@ -49,6 +49,7 @@ static int compileAndRunWithModules(const std::string &source,
 
   semantic::SemanticAnalyzer analyzer(std::vector<std::string>{moduleDir}, false);
   analyzer.setModuleFunctionAliases(moduleLoader.getFunctionAliases());
+  analyzer.setModuleTypeAliases(moduleLoader.getTypeAliases());
   analyzer.analyze(*program);
   if (analyzer.hasError()) return -2;
 
@@ -1408,6 +1409,11 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
     std::ofstream c(dir / "C.ch");
     c << "module C;\npublic func foo() -> int { return 10; }\n";
   }
+  {
+    std::ofstream d(dir / "D.ch");
+    d << "module D;\npublic struct P { int x; int y; }\n"
+         "public func make() -> P { return P(40, 2); }\n";
+  }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
   REQUIRE(result == 42);
@@ -1425,6 +1431,12 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   result = compileAndRunWithModules(
       "import A;\nimport C;\n"
       "func main() -> int { return A.foo() + C.foo() - 10; }\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import D;\n"
+      "func main() -> int { P p = D.make(); return p.x + p.y; }\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);

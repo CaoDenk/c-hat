@@ -4255,6 +4255,18 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     if (structTypeNames_.count(identifier->name)) {
       auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
           symbolTable.lookupSymbol(identifier->name));
+      if (!classSymbol) {
+        for (const auto &alias : moduleTypeAliases_) {
+          if (alias.name == identifier->name) {
+            classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+                symbolTable.lookupSymbol(alias.linkName));
+            if (classSymbol) {
+              identifier->name = alias.linkName;
+            }
+            break;
+          }
+        }
+      }
       if (classSymbol) {
         callExpr->resolvedMangledName =
             identifier->name + "_" + identifier->name;
@@ -4348,6 +4360,18 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       // 检查是否是构造函数调用（类名作为函数名）
       auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
           symbolTable.lookupSymbol(identifier->name));
+      if (!classSymbol) {
+        for (const auto &alias : moduleTypeAliases_) {
+          if (alias.name == identifier->name) {
+            classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
+                symbolTable.lookupSymbol(alias.linkName));
+            if (classSymbol) {
+              identifier->name = alias.linkName;
+            }
+            break;
+          }
+        }
+      }
       if (classSymbol) {
         auto classType =
             std::dynamic_pointer_cast<types::ClassType>(classSymbol->getType());
@@ -5585,7 +5609,19 @@ SemanticAnalyzer::analyzeFunctionType(const ast::FunctionType *functionType) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNamedType(const ast::NamedType *namedType) {
-  return analyzeTypeByName(namedType->name);
+  auto type = analyzeTypeByName(namedType->name);
+  if (type) {
+    // 模块类型别名：把 AST 类型节点解析为实际的模块前缀名，
+    // 让 codegen 能直接找到对应 LLVM 类型。
+    for (const auto &alias : moduleTypeAliases_) {
+      if (alias.name == namedType->name) {
+        auto *mutableNamed = const_cast<ast::NamedType *>(namedType);
+        mutableNamed->name = alias.linkName;
+        break;
+      }
+    }
+  }
+  return type;
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeTupleType(const ast::TupleType *tupleType) {
@@ -5685,6 +5721,20 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
   }
   if (auto structSymbol = std::dynamic_pointer_cast<StructSymbol>(symbol)) {
     return structSymbol->getType();
+  }
+
+  for (const auto &alias : moduleTypeAliases_) {
+    if (alias.name == typeName) {
+      auto target = symbolTable.lookupSymbol(alias.linkName);
+      if (auto classSymbol =
+              std::dynamic_pointer_cast<ClassSymbol>(target)) {
+        return classSymbol->getType();
+      }
+      if (auto structSymbol =
+              std::dynamic_pointer_cast<StructSymbol>(target)) {
+        return structSymbol->getType();
+      }
+    }
   }
 
   return nullptr;
