@@ -315,7 +315,7 @@ extern "C" {
 - POD struct 值构造 `P(40, 2)` / 泛型结构体值构造 `Point<int>(40, 2)`
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
 - `foreach`：数组、切片、`a..b` / `a..=b` 范围、可选的 index 变量
-- `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`、按类型顺序匹配 catch、未匹配继续向外抛（本版为 setjmp/longjmp 实现）
+- `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`、按类型顺序匹配 catch、未匹配继续向外抛；catch 外 defer/析构不会被提前执行（本版为 setjmp/longjmp 实现）
 - `defer`：块级作用域；支持表达式和多语句块；正常块退出、return、throw 时按 LIFO 执行；含 defer 的中间函数也会在异常穿过时执行清理
 - 泛型函数单态化：`id<int>` / `max_of(40, 42)` / `first(a)` / 递归泛型
 - 泛型类单态化：`Box<int>` / `Box<double>`（字段、构造、方法、类级 `where`）
@@ -362,7 +362,7 @@ extern "C" {
 - `catch (T e)` 已按类型标签精确匹配：按书写顺序尝试 catch，未匹配的异常继续向外传播；`catch (...)` 接受所有异常。当前不做基类/隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
 - 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
 - `defer` 已按块级作用域执行：正常块退出、return、throw 会执行本层 defer；循环体内 defer 每轮执行。
-- 仍有边界：同函数 try 捕获异常时，catch 之外的 defer 可能在 throw 点提前执行。
+- `throw` 只清理到最近 try 的清理起点；catch 之外的 defer/析构会等到真正离开作用域时执行。
 - 栈上 class 值与整体赋值的 `late` 对象会自动析构；数组元素和堆对象的完整 RAII 仍待实现。
 - 异常值按 64 位字传递，适合 int/char/bool/指针/类指针；结构体按值异常尚未完整支持。
 - 嵌套 try / `catch (...)` / catch 内再次 throw 已可用。

@@ -935,6 +935,40 @@ TEST_CASE("Integration: catch fallthrough and rethrow", "[integration][exception
       "}\n") == 8);
 }
 
+TEST_CASE("Integration: try catch defer timing", "[integration][exception][defer]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    defer r = r + 100;\n"
+      "    try {\n"
+      "        defer r = r + 1;\n"
+      "        throw 3;\n"
+      "    } catch (int e) {\n"
+      "        r = r + 10;\n"
+      "    }\n"
+      "    return r;\n"
+      "}\n") == 11);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    {\n"
+      "        C c = C(b);\n"
+      "        try { throw 3; } catch (int e) {\n"
+      "            if (b->value != 0) { return 1; }\n"
+      "        }\n"
+      "    }\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: defer on throw and return", "[integration][exception][defer]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

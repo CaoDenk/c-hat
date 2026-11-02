@@ -849,6 +849,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
   lateVariables_.clear();
 
@@ -999,6 +1000,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
 
       if (hasDefer) {
@@ -1025,6 +1027,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
 
   return function;
@@ -1292,6 +1295,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
 
@@ -1498,6 +1502,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
 
           if (hasDefer) {
@@ -1534,6 +1539,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
   }
 
@@ -1769,6 +1775,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
 
@@ -1952,6 +1959,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
 
         if (hasDefer) {
@@ -1977,6 +1985,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
   }
 
@@ -6082,7 +6091,10 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   // try 体
   exceptionHandlerStack_.push_back(oldHandler);
   builder()->SetInsertPoint(tryBB);
+  tryCleanupMarkers_.push_back(
+      {deferExpressions_.size(), destructorEntries_.size()});
   generateStatement(std::move(tryStmt->tryBlock));
+  tryCleanupMarkers_.pop_back();
   exceptionHandlerStack_.pop_back();
   if (!builder()->GetInsertBlock()->getTerminator()) {
     builder()->CreateBr(finallyBB);
@@ -6239,9 +6251,14 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
         excType);
   }
 
-  // 当前函数的 defer 必须在本帧被 longjmp 丢弃前执行。用运行时 flag
-  // 判断 defer 是否真的被执行过，避免执行未进入分支里的 defer。
-  emitCombinedCleanup(0, 0, false);
+  // throw 只清理到最近 try 的清理起点；catch 之外的 defer/析构
+  // 应继续留在活动状态，等真正离开对应作用域时再执行。
+  if (!tryCleanupMarkers_.empty()) {
+    auto marker = tryCleanupMarkers_.back();
+    emitCombinedCleanup(marker.deferStart, marker.destructorStart, false);
+  } else {
+    emitCombinedCleanup(0, 0, false);
+  }
 
   llvm::Value *handler =
       builder()->CreateLoad(ptrTy, excHandler, "handler");
@@ -6856,6 +6873,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();
@@ -6907,6 +6925,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
         if (returnType->isVoidTy()) {
           builder()->CreateRetVoid();
@@ -6926,6 +6945,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
+  tryCleanupMarkers_.clear();
   deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();

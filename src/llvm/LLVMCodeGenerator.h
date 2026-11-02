@@ -271,6 +271,11 @@ private:
   std::vector<size_t> deferSequence_;
   size_t nextCleanupSequence_ = 0;
   std::vector<size_t> loopDestructorMarkers_;
+  struct TryCleanupMarker {
+    size_t deferStart = 0;
+    size_t destructorStart = 0;
+  };
+  std::vector<TryCleanupMarker> tryCleanupMarkers_;
   std::unordered_map<std::string, std::vector<bool>> functionOutParams_;
   std::unordered_map<std::string, int> labelScopeDepths_;
   // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
