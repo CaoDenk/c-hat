@@ -248,6 +248,39 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "}\n") == 23);
 }
 
+TEST_CASE("Integration: references", "[integration][reference]") {
+  REQUIRE(compileAndRun(
+      "func increment(int& x) { x = x + 1; }\n"
+      "func main() -> int {\n"
+      "    int a = 41;\n"
+      "    increment(&a);\n"
+      "    return a;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int a = 42;\n"
+      "    int& r = &a;\n"
+      "    r = r + 1;\n"
+      "    return a - 1;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func read(int!& x) -> int { return x; }\n"
+      "func main() -> int {\n"
+      "    int a = 42;\n"
+      "    return read(a);\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func set_element(int[3]& a) { a[1] = 42; }\n"
+      "func main() -> int {\n"
+      "    int[3] a = [0, 0, 0];\n"
+      "    set_element(&a);\n"
+      "    return a[1];\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: fixed array value semantics", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

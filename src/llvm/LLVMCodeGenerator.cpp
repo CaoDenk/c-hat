@@ -424,6 +424,29 @@ llvm::Value *LLVMCodeGenerator::generateVariableDecl(
   }
 
 normal_var_path:
+  // 引用变量：namedValues_ 直接保存指向被引用对象的指针，不做值拷贝。
+  if (varDecl->type &&
+      dynamic_cast<ast::ReferenceType *>(varDecl->type.get())) {
+    llvm::Value *refPtr = nullptr;
+    if (varDecl->initializer) {
+      if (auto *unary =
+              dynamic_cast<ast::UnaryExpr *>(varDecl->initializer.get());
+          unary && unary->op == ast::UnaryExpr::Op::Ref) {
+        refPtr = generateExpression(std::move(varDecl->initializer));
+      } else {
+        refPtr = getExpressionLValue(std::move(varDecl->initializer));
+      }
+    }
+    if (!refPtr) {
+      error("Reference variable requires an addressable initializer",
+            varDecl.get());
+      return nullptr;
+    }
+    namedValues_[varDecl->name] = refPtr;
+    referenceValues_.insert(varDecl->name);
+    return refPtr;
+  }
+
   // 元组字面量：生成结构体值并存入局部 alloca。
   if (varDecl->initializer) {
     if (dynamic_cast<ast::TupleExpr *>(varDecl->initializer.get())) {
@@ -746,6 +769,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   currentFunction_ = function;
 
   namedValues_.clear();
+  referenceValues_.clear();
 
   deferExpressions_.clear();
   deferFlags_.clear();
@@ -757,11 +781,15 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
     if (auto *param = dynamic_cast<ast::Parameter *>(paramNode.get())) {
       llvm::Value *arg = &(*argIt);
       arg->setName(param->name);
-
-      llvm::AllocaInst *alloca =
-          builder()->CreateAlloca(arg->getType(), nullptr, param->name);
-      builder()->CreateStore(arg, alloca);
-      namedValues_[param->name] = alloca;
+      if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+        namedValues_[param->name] = arg;
+        referenceValues_.insert(param->name);
+      } else {
+        llvm::AllocaInst *alloca =
+            builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+        builder()->CreateStore(arg, alloca);
+        namedValues_[param->name] = alloca;
+      }
 
       ++argIt;
       ++paramIndex;
@@ -896,6 +924,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   }
 
   currentFunction_ = prevFunction;
+  referenceValues_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
 
@@ -1146,6 +1175,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     currentFunction_ = function;
 
     namedValues_.clear();
+    referenceValues_.clear();
 
       deferExpressions_.clear();
     deferFlags_.clear();
@@ -1158,11 +1188,15 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
               funcDecl->params[paramIndex].get())) {
         llvm::Value *arg = &(*argIt);
         arg->setName(param->name);
-
-        llvm::AllocaInst *alloca =
-            builder()->CreateAlloca(arg->getType(), nullptr, param->name);
-        builder()->CreateStore(arg, alloca);
-        namedValues_[param->name] = alloca;
+        if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+          namedValues_[param->name] = arg;
+          referenceValues_.insert(param->name);
+        } else {
+          llvm::AllocaInst *alloca =
+              builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+          builder()->CreateStore(arg, alloca);
+          namedValues_[param->name] = alloca;
+        }
 
         ++argIt;
         ++paramIndex;
@@ -1590,6 +1624,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     currentFunction_ = function;
 
     namedValues_.clear();
+    referenceValues_.clear();
 
       deferExpressions_.clear();
     deferFlags_.clear();
@@ -1616,11 +1651,15 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
               funcDecl->params[paramIndex].get())) {
         llvm::Value *arg = &(*argIt);
         arg->setName(param->name);
-
-        llvm::AllocaInst *alloca =
-            builder()->CreateAlloca(arg->getType(), nullptr, param->name);
-        builder()->CreateStore(arg, alloca);
-        namedValues_[param->name] = alloca;
+        if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+          namedValues_[param->name] = arg;
+          referenceValues_.insert(param->name);
+        } else {
+          llvm::AllocaInst *alloca =
+              builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+          builder()->CreateStore(arg, alloca);
+          namedValues_[param->name] = alloca;
+        }
       }
     }
 
@@ -2854,6 +2893,27 @@ llvm::Value *
 LLVMCodeGenerator::generateIdentifier(std::unique_ptr<ast::Identifier> ident) {
   auto it = namedValues_.find(ident->name);
   if (it != namedValues_.end()) {
+    if (referenceValues_.count(ident->name)) {
+      llvm::Value *ptr = getReferencePointer(ident->name);
+      if (!ptr) {
+        error("Invalid reference value: " + ident->name, ident.get());
+        return nullptr;
+      }
+      llvm::Type *pointeeType = nullptr;
+      if (semanticModel_) {
+        auto semanticType = semanticModel_->getExpressionType(ident.get());
+        if (semanticType && semanticType->isReference()) {
+          auto reference =
+              std::dynamic_pointer_cast<types::ReferenceType>(semanticType);
+          semanticType = reference ? reference->getBaseType() : nullptr;
+        }
+        pointeeType = lowerSemanticType(semanticType);
+      }
+      if (!pointeeType) {
+        pointeeType = llvm::Type::getInt32Ty(context());
+      }
+      return builder()->CreateLoad(pointeeType, ptr, ident->name + ".ref.load");
+    }
     llvm::Value *value = it->second;
     if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(value)) {
       return builder()->CreateLoad(alloca->getAllocatedType(), alloca,
@@ -3263,6 +3323,14 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
 llvm::Value *
 LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                      bool isLValue) {
+  if (unaryExpr->op == ast::UnaryExpr::Op::Ref) {
+    llvm::Value *lvalue = getExpressionLValue(std::move(unaryExpr->expr));
+    if (!lvalue) {
+      error("Operand of & is not addressable", unaryExpr.get());
+    }
+    return lvalue;
+  }
+
   switch (unaryExpr->op) {
   case ast::UnaryExpr::Op::Await:
     return generateAwaitExpr(std::move(unaryExpr));
@@ -3434,6 +3502,17 @@ llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
   // 切片地址 -> 切片值。
   if (alloca && isSliceStructType(valueType) && paramType == valueType) {
     return builder()->CreateLoad(valueType, alloca, "call.slice.load");
+  }
+
+  // 引用参数：需要地址。显式 &x 已是指针；隐式只读引用则物化临时值。
+  if (paramType->isPointerTy()) {
+    if (arg->getType()->isPointerTy()) {
+      return alloca ? static_cast<llvm::Value *>(alloca) : arg;
+    }
+    llvm::AllocaInst *tmp =
+        createEntryAlloca(arg->getType(), "call.ref.tmp");
+    builder()->CreateStore(arg, tmp);
+    return tmp;
   }
 
   // 数值转换。
@@ -4656,6 +4735,7 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
   currentFunction_ = func;
 
   namedValues_.clear();
+  referenceValues_.clear();
 
   size_t paramIndex = 0;
   for (auto argIt = func->args().begin();
@@ -5890,6 +5970,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  referenceValues_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -5978,6 +6059,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  referenceValues_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -6103,6 +6185,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   auto prevFunction = currentFunction_;
   currentFunction_ = function;
   namedValues_.clear();
+  referenceValues_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
   deferScopeMarkers_.clear();
@@ -6122,10 +6205,15 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
             funcDecl->params[paramIndex].get())) {
       llvm::Value *arg = &(*argIt);
       arg->setName(param->name);
-      llvm::AllocaInst *alloca =
-          builder()->CreateAlloca(arg->getType(), nullptr, param->name);
-      builder()->CreateStore(arg, alloca);
-      namedValues_[param->name] = alloca;
+      if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+        namedValues_[param->name] = arg;
+        referenceValues_.insert(param->name);
+      } else {
+        llvm::AllocaInst *alloca =
+            builder()->CreateAlloca(arg->getType(), nullptr, param->name);
+        builder()->CreateStore(arg, alloca);
+        namedValues_[param->name] = alloca;
+      }
     }
   }
 
@@ -6157,11 +6245,29 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
 }
 
 // 获取表达式左值
+llvm::Value *LLVMCodeGenerator::getReferencePointer(const std::string &name) {
+  auto it = namedValues_.find(name);
+  if (it == namedValues_.end()) {
+    return nullptr;
+  }
+  llvm::Value *value = it->second;
+  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(value)) {
+    if (alloca->getAllocatedType()->isPointerTy()) {
+      return builder()->CreateLoad(alloca->getAllocatedType(), alloca,
+                                   name + ".ref");
+    }
+  }
+  return value;
+}
+
 llvm::Value *
 LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   if (auto *ident = dynamic_cast<ast::Identifier *>(expr.get())) {
     auto it = namedValues_.find(ident->name);
     if (it != namedValues_.end()) {
+      if (referenceValues_.count(ident->name)) {
+        return getReferencePointer(ident->name);
+      }
       return it->second;
     }
 

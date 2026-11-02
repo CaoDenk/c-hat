@@ -145,6 +145,7 @@ private:
   llvm::Value *generateLabelStmt(std::unique_ptr<ast::LabelStmt> labelStmt);
   llvm::Value *generateExpression(std::unique_ptr<ast::Expression> expr);
   llvm::Value *getExpressionLValue(std::unique_ptr<ast::Expression> expr);
+  llvm::Value *getReferencePointer(const std::string &name);
   llvm::Value *generateBinaryExpr(std::unique_ptr<ast::BinaryExpr> binaryExpr);
   llvm::Value *generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                  bool isLValue = false);
@@ -230,6 +231,7 @@ private:
   std::string currentClassName_;
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
+  std::unordered_set<std::string> referenceValues_;
   const c_hat::semantic::SemanticModel *semanticModel_ = nullptr;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
