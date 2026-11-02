@@ -3599,15 +3599,28 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
   bool isVariadic = false;
   bool isSelf = false;
   bool isSelfImmutable = false;
+  bool isOut = false;
+
+  if (match(lexer::TokenType::Out)) {
+    isOut = true;
+  }
 
   // 检查是否是变参（... 在参数开头）
   if (match(lexer::TokenType::Ellipsis)) {
     isVariadic = true;
+    if (isOut) {
+      error("out cannot be applied to a variadic parameter");
+      return nullptr;
+    }
     return std::make_unique<ast::Parameter>("", nullptr, nullptr, true);
   }
 
   // 检查是否是 self 或 self! 参数
   if (check(lexer::TokenType::Self)) {
+    if (isOut) {
+      error("out cannot be applied to self");
+      return nullptr;
+    }
     advance();
     isSelf = true;
     if (match(lexer::TokenType::Not)) {
@@ -3653,6 +3666,17 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
   }
 
   auto type = parseType();
+  if (isOut) {
+    auto *refType = dynamic_cast<ast::ReferenceType *>(type.get());
+    if (!refType) {
+      error("out requires a reference parameter type: out T&");
+      return nullptr;
+    }
+    if (dynamic_cast<ast::ReadonlyType *>(refType->baseType.get())) {
+      error("out cannot be applied to a readonly reference: out T!&");
+      return nullptr;
+    }
+  }
 
   // 检查是否是变参（... 在类型之后）
   if (match(lexer::TokenType::Ellipsis)) {
@@ -3671,7 +3695,8 @@ std::unique_ptr<ast::Node> Parser::parseParameter() {
   }
 
   return std::make_unique<ast::Parameter>(name, std::move(type),
-                                          std::move(defaultValue), isVariadic);
+                                          std::move(defaultValue), isVariadic,
+                                          false, false, isOut);
 }
 
 // 解析参数包

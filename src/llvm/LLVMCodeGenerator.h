@@ -167,11 +167,11 @@ private:
   llvm::Value *
   generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
   void emitRepeatArrayInitialization(llvm::ArrayType *arrayType,
-                                     llvm::AllocaInst *arrayAlloca,
+                                     llvm::Value *arrayAlloca,
                                      ast::ArrayInitExpr *arrayInitExpr,
                                      size_t count);
   void emitArrayLiteralInitialization(llvm::ArrayType *arrayType,
-                                      llvm::AllocaInst *arrayAlloca,
+                                      llvm::Value *arrayAlloca,
                                       ast::ArrayInitExpr *arrayInitExpr);
   llvm::Value *
   generateStructInitExpr(std::unique_ptr<ast::StructInitExpr> structInitExpr);
@@ -232,6 +232,7 @@ private:
   llvm::StructType *literalViewType_ = nullptr;
   std::unordered_map<std::string, llvm::Value *> namedValues_;
   std::unordered_set<std::string> referenceValues_;
+  std::unordered_map<std::string, llvm::Type *> referencePointeeTypes_;
   const c_hat::semantic::SemanticModel *semanticModel_ = nullptr;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。

@@ -459,6 +459,10 @@ private:
     const ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableStatus> lateVariables_;
+  std::vector<std::string> currentOutParams_;
+  void applyOutArguments(const std::shared_ptr<FunctionSymbol> &func,
+                         ast::CallExpr *callExpr,
+                         const std::vector<bool> &uninitializedRefArgs);
   using LateVariablesSnapshot =
       std::unordered_map<std::string, LateVariableStatus>;
 

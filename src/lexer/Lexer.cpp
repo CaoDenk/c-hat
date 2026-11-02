@@ -39,6 +39,7 @@ static std::unordered_map<std::string, TokenType> keywordMap = {
     {"yield", TokenType::Yield},
     {"comptime", TokenType::Comptime},
     {"late", TokenType::Late},
+    {"out", TokenType::Out},
     {"var", TokenType::Var},
     {"let", TokenType::Let},
     {"void", TokenType::Void},
@@ -191,6 +192,9 @@ std::string Token::toString() const {
     break;
   case TokenType::Late:
     typeStr = "Late";
+    break;
+  case TokenType::Out:
+    typeStr = "Out";
     break;
   case TokenType::Var:
     typeStr = "Var";

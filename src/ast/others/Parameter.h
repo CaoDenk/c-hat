@@ -16,10 +16,10 @@ public:
   Parameter(const std::string &name, std::unique_ptr<Type> type,
             std::unique_ptr<Expression> defaultValue = nullptr,
             bool isVariadic = false, bool isSelf = false,
-            bool isSelfImmutable = false)
+            bool isSelfImmutable = false, bool isOut = false)
       : name(name), type(std::move(type)),
         defaultValue(std::move(defaultValue)), isVariadic(isVariadic),
-        isSelf(isSelf), isSelfImmutable(isSelfImmutable) {}
+        isSelf(isSelf), isSelfImmutable(isSelfImmutable), isOut(isOut) {}
 
   NodeType getType() const override { return NodeType::Parameter; }
   std::string toString() const override;
@@ -30,6 +30,7 @@ public:
   bool isVariadic;
   bool isSelf;
   bool isSelfImmutable;
+  bool isOut;
 };
 
 } // namespace ast

@@ -248,6 +248,35 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "}\n") == 23);
 }
 
+TEST_CASE("Integration: out parameters", "[integration][out]") {
+  REQUIRE(compileAndRun(
+      "func assign_out(out int& x) { x = 42; }\n"
+      "func main() -> int {\n"
+      "    late int a;\n"
+      "    assign_out(&a);\n"
+      "    return a;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func fill(out int[5]& dst) {\n"
+      "    dst = [0; 5];\n"
+      "    dst[0] = 7;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    late int[5] a;\n"
+      "    fill(&a);\n"
+      "    return a[0] + a[1] + 35;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func bad(out int& x) { }\n"
+      "func main() -> int {\n"
+      "    late int a;\n"
+      "    bad(&a);\n"
+      "    return 0;\n"
+      "}\n") == -2);
+}
+
 TEST_CASE("Integration: references", "[integration][reference]") {
   REQUIRE(compileAndRun(
       "func increment(int& x) { x = x + 1; }\n"
@@ -458,9 +487,9 @@ TEST_CASE("Integration: explicit delete calls destructor", "[integration][class]
   REQUIRE(compileAndRun(
       "class Box { int value; Box(int v) { value = v; } }\n"
       "class R {\n"
-      "    Box^ out;\n"
-      "    R(Box^ b) { out = b; }\n"
-      "    ~R() { out->value = 42; }\n"
+      "    Box^ box;\n"
+      "    R(Box^ b) { box = b; }\n"
+      "    ~R() { box->value = 42; }\n"
       "}\n"
       "func main() -> int {\n"
       "    Box^ b = new Box(0);\n"

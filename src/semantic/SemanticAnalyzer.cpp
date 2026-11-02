@@ -765,6 +765,7 @@ void SemanticAnalyzer::analyzeFunctionDecl(
 
   // 分析参数
   std::vector<std::shared_ptr<types::Type>> paramTypes;
+  std::vector<bool> outParams;
   bool foundVariadic = false;
   for (size_t i = 0; i < funcDecl->params.size(); ++i) {
     auto &param = funcDecl->params[i];
@@ -772,6 +773,15 @@ void SemanticAnalyzer::analyzeFunctionDecl(
       // 处理 self 参数：不计入重载签名，但仍会在函数作用域中注入符号
       if (paramNode->isSelf) {
         continue;
+      }
+      if (paramNode->isOut) {
+        auto *refType = dynamic_cast<ast::ReferenceType *>(
+            paramNode->type.get());
+        if (!refType) {
+          error("out parameter requires a reference type: out T&",
+                *paramNode);
+          continue;
+        }
       }
       // 检查变参位置
       if (paramNode->isVariadic) {
@@ -791,6 +801,7 @@ void SemanticAnalyzer::analyzeFunctionDecl(
         auto paramType = analyzeType(typeNode);
         if (paramType) {
           paramTypes.push_back(paramType);
+          outParams.push_back(paramNode->isOut);
         }
       }
     }
@@ -858,6 +869,7 @@ void SemanticAnalyzer::analyzeFunctionDecl(
 
       auto funcSymbol = std::make_shared<FunctionSymbol>(
           funcDecl->name, funcType, vis, funcDecl->isImmutable);
+      funcSymbol->setOutParams(outParams);
       // 标记是否为泛型函数
       if (!funcDecl->templateParams.empty()) {
         funcSymbol->setTemplate(true);
@@ -911,10 +923,16 @@ void SemanticAnalyzer::analyzeFunctionDecl(
           auto paramSymbol =
               std::make_shared<VariableSymbol>(paramNode->name, paramType);
           symbolTable.addSymbol(paramSymbol);
+          if (paramNode->isOut) {
+            lateVariables_[paramNode->name] = {false, nullptr};
+            currentOutParams_.push_back(paramNode->name);
+          }
         }
       }
     }
   }
+
+  auto previousOutParams = currentOutParams_;
 
   // 处理 where 子句
   if (funcDecl->whereClause) {
@@ -972,6 +990,21 @@ void SemanticAnalyzer::analyzeFunctionDecl(
       error("Label '" + *it + "' used but not defined", *funcDecl);
     }
   }
+
+  // 检查 out 参数是否在函数正常结束时完成整体初始化。
+  if (analyzeBody) {
+    for (const auto &outName : currentOutParams_) {
+      auto lateIt = lateVariables_.find(outName);
+      if (lateIt != lateVariables_.end() && !lateIt->second.isInitialized) {
+        error("out parameter must be initialized before return: " + outName,
+              *funcDecl);
+      }
+    }
+  }
+  for (const auto &outName : currentOutParams_) {
+    lateVariables_.erase(outName);
+  }
+  currentOutParams_ = previousOutParams;
 
   // 清理当前函数的标签信息
   currentFunctionLabels_.clear();
@@ -3364,6 +3397,9 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
                      std::dynamic_pointer_cast<FunctionSymbol>(symbol)) {
         leftType = functionSymbol->getType();
       }
+      if (leftType) {
+        model_.setExpressionType(binaryExpr->left.get(), leftType);
+      }
     } else {
       // 分析左操作数（赋值目标）
       leftType = analyzeExpression(binaryExpr->left.get());
@@ -3943,17 +3979,68 @@ SemanticAnalyzer::analyzeLiteralExpr(ast::Literal *literal) {
     return nullptr;
   }
 }
+void SemanticAnalyzer::applyOutArguments(
+    const std::shared_ptr<FunctionSymbol> &func, ast::CallExpr *callExpr,
+    const std::vector<bool> &uninitializedRefArgs) {
+  if (!func || !callExpr) {
+    return;
+  }
+  const auto &outParams = func->getOutParams();
+  for (size_t i = 0; i < callExpr->args.size(); ++i) {
+    const bool isOut = i < outParams.size() && outParams[i];
+    const bool uninitialized = i < uninitializedRefArgs.size() &&
+                               uninitializedRefArgs[i];
+    if (isOut) {
+      auto *unary = dynamic_cast<ast::UnaryExpr *>(callExpr->args[i].get());
+      auto *ident = unary && unary->op == ast::UnaryExpr::Op::Ref
+                        ? dynamic_cast<ast::Identifier *>(unary->expr.get())
+                        : nullptr;
+      if (!ident) {
+        error("out argument must be &variable", *callExpr->args[i]);
+        continue;
+      }
+      auto lateIt = lateVariables_.find(ident->name);
+      if (lateIt != lateVariables_.end()) {
+        lateIt->second.isInitialized = true;
+      }
+    } else if (uninitialized) {
+      error("Uninitialized variable passed by reference",
+            *callExpr->args[i]);
+    }
+  }
+}
+
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
-  // 分析参数类型
+  // 分析参数类型。等待 out 解析的 &late 参数先不触发读取检查。
   std::vector<std::shared_ptr<types::Type>> argTypes;
+  std::vector<bool> uninitializedRefArgs;
   for (auto &arg : callExpr->args) {
+    if (auto *unary = dynamic_cast<ast::UnaryExpr *>(arg.get());
+        unary && unary->op == ast::UnaryExpr::Op::Ref) {
+      if (auto *ident =
+              dynamic_cast<ast::Identifier *>(unary->expr.get())) {
+        auto lateIt = lateVariables_.find(ident->name);
+        if (lateIt != lateVariables_.end() &&
+            !lateIt->second.isInitialized) {
+          auto symbol = symbolTable.lookupSymbol(ident->name);
+          auto var = std::dynamic_pointer_cast<VariableSymbol>(symbol);
+          if (var && var->getType()) {
+            argTypes.push_back(
+                std::make_shared<types::ReferenceType>(var->getType()));
+            uninitializedRefArgs.push_back(true);
+            continue;
+          }
+        }
+      }
+    }
     auto argType = analyzeExpression(arg.get());
     if (!argType) {
       error("Invalid argument type", *arg);
       return nullptr;
     }
     argTypes.push_back(argType);
+    uninitializedRefArgs.push_back(false);
   }
 
   // 处理标识符调用的情况
@@ -4251,6 +4338,7 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     if (exactCandidates.size() == 1) {
       // 规则 1：精确匹配优先
       auto selectedFunc = exactCandidates[0];
+      applyOutArguments(selectedFunc, callExpr, uninitializedRefArgs);
       // 设置 mangled name
       callExpr->resolvedMangledName = getMangledFuncName(
           identifier->name, selectedFunc->getType()->getParameterTypes());
@@ -4278,6 +4366,7 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     } else if (viableCandidates.size() == 1) {
       // 规则 2：单一隐式转换路径
       auto selectedFunc = viableCandidates[0];
+      applyOutArguments(selectedFunc, callExpr, uninitializedRefArgs);
       // 设置 mangled name
       callExpr->resolvedMangledName = getMangledFuncName(
           identifier->name, selectedFunc->getType()->getParameterTypes());

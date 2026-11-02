@@ -444,6 +444,11 @@ normal_var_path:
     }
     namedValues_[varDecl->name] = refPtr;
     referenceValues_.insert(varDecl->name);
+    if (auto *refType =
+            dynamic_cast<ast::ReferenceType *>(varDecl->type.get())) {
+      referencePointeeTypes_[varDecl->name] =
+          generateType(refType->baseType.get());
+    }
     return refPtr;
   }
 
@@ -770,6 +775,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   namedValues_.clear();
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
   deferExpressions_.clear();
   deferFlags_.clear();
@@ -784,6 +790,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
         namedValues_[param->name] = arg;
         referenceValues_.insert(param->name);
+        if (auto *refType =
+                dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+          referencePointeeTypes_[param->name] =
+              generateType(refType->baseType.get());
+        }
       } else {
         llvm::AllocaInst *alloca =
             builder()->CreateAlloca(arg->getType(), nullptr, param->name);
@@ -925,6 +936,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   currentFunction_ = prevFunction;
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
 
@@ -1176,6 +1188,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
 
     namedValues_.clear();
     referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
       deferExpressions_.clear();
     deferFlags_.clear();
@@ -1191,6 +1204,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
         if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
           namedValues_[param->name] = arg;
           referenceValues_.insert(param->name);
+          if (auto *refType =
+                  dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+            referencePointeeTypes_[param->name] =
+                generateType(refType->baseType.get());
+          }
         } else {
           llvm::AllocaInst *alloca =
               builder()->CreateAlloca(arg->getType(), nullptr, param->name);
@@ -1625,6 +1643,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     namedValues_.clear();
     referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
       deferExpressions_.clear();
     deferFlags_.clear();
@@ -1654,6 +1673,11 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
           namedValues_[param->name] = arg;
           referenceValues_.insert(param->name);
+          if (auto *refType =
+                  dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+            referencePointeeTypes_[param->name] =
+                generateType(refType->baseType.get());
+          }
         } else {
           llvm::AllocaInst *alloca =
               builder()->CreateAlloca(arg->getType(), nullptr, param->name);
@@ -2910,6 +2934,12 @@ LLVMCodeGenerator::generateIdentifier(std::unique_ptr<ast::Identifier> ident) {
         pointeeType = lowerSemanticType(semanticType);
       }
       if (!pointeeType) {
+        auto pointeeIt = referencePointeeTypes_.find(ident->name);
+        if (pointeeIt != referencePointeeTypes_.end()) {
+          pointeeType = pointeeIt->second;
+        }
+      }
+      if (!pointeeType) {
         pointeeType = llvm::Type::getInt32Ty(context());
       }
       return builder()->CreateLoad(pointeeType, ptr, ident->name + ".ref.load");
@@ -3094,6 +3124,28 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
       }
     }
 
+    ast::Expression *leftExpr = binaryExpr->left.get();
+    llvm::Type *leftRefTarget = nullptr;
+    if (auto *leftIdent = dynamic_cast<ast::Identifier *>(leftExpr)) {
+      auto refTypeIt = referencePointeeTypes_.find(leftIdent->name);
+      if (refTypeIt != referencePointeeTypes_.end()) {
+        leftRefTarget = refTypeIt->second;
+      }
+    }
+    llvm::Type *leftSemanticTarget = nullptr;
+    if (semanticModel_) {
+      auto leftSemanticType =
+          semanticModel_->getExpressionType(leftExpr);
+      if (leftSemanticType && leftSemanticType->isReference()) {
+        auto reference =
+            std::dynamic_pointer_cast<types::ReferenceType>(leftSemanticType);
+        leftSemanticType = reference ? reference->getBaseType() : nullptr;
+      }
+      if (leftSemanticType) {
+        leftSemanticTarget = lowerSemanticType(leftSemanticType);
+      }
+    }
+
     llvm::Value *lhsPtr = getExpressionLValue(std::move(binaryExpr->left));
     if (!lhsPtr) {
       return nullptr;
@@ -3104,6 +3156,10 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
         llvm::dyn_cast<llvm::AllocaInst>(lhsPtr);
     if (targetAlloca) {
       targetType = targetAlloca->getAllocatedType();
+    } else if (leftRefTarget) {
+      targetType = leftRefTarget;
+    } else if (leftSemanticTarget) {
+      targetType = leftSemanticTarget;
     }
 
     // 固定数组整体赋值：数组字面量直接写入目标存储。
@@ -3111,7 +3167,11 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
       if (auto *arrayInit =
               dynamic_cast<ast::ArrayInitExpr *>(binaryExpr->right.get())) {
         emitArrayLiteralInitialization(llvm::cast<llvm::ArrayType>(targetType),
-                                       targetAlloca, arrayInit);
+                                       targetAlloca
+                                           ? static_cast<llvm::Value *>(
+                                                 targetAlloca)
+                                           : lhsPtr,
+                                       arrayInit);
         return lhsPtr;
       }
     }
@@ -4376,7 +4436,7 @@ llvm::Value *LLVMCodeGenerator::generateExpansionExpr(
 
 // 生成重复数组初始化 [value; N]。
 void LLVMCodeGenerator::emitRepeatArrayInitialization(
-    llvm::ArrayType *arrayType, llvm::AllocaInst *arrayAlloca,
+    llvm::ArrayType *arrayType, llvm::Value *arrayAlloca,
     ast::ArrayInitExpr *arrayInitExpr, size_t count) {
   if (!arrayType || !arrayAlloca || !arrayInitExpr || count == 0) {
     return;
@@ -4469,7 +4529,7 @@ void LLVMCodeGenerator::emitRepeatArrayInitialization(
 
 // 把数组字面量写入已分配的固定数组存储。
 void LLVMCodeGenerator::emitArrayLiteralInitialization(
-    llvm::ArrayType *arrayType, llvm::AllocaInst *arrayAlloca,
+    llvm::ArrayType *arrayType, llvm::Value *arrayAlloca,
     ast::ArrayInitExpr *arrayInitExpr) {
   if (!arrayType || !arrayAlloca || !arrayInitExpr) {
     return;
@@ -4736,6 +4796,7 @@ llvm::Value *LLVMCodeGenerator::generateLambdaExpr(
 
   namedValues_.clear();
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
   size_t paramIndex = 0;
   for (auto argIt = func->args().begin();
@@ -5971,6 +6032,7 @@ llvm::Value *LLVMCodeGenerator::generateGetterDecl(
   currentFunction_ = function;
   namedValues_.clear();
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -6060,6 +6122,7 @@ llvm::Value *LLVMCodeGenerator::generateSetterDecl(
   currentFunction_ = function;
   namedValues_.clear();
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *thisArg = &(*argIt++);
@@ -6186,6 +6249,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   currentFunction_ = function;
   namedValues_.clear();
   referenceValues_.clear();
+  referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
   deferScopeMarkers_.clear();
@@ -6208,6 +6272,11 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
       if (dynamic_cast<ast::ReferenceType *>(param->type.get())) {
         namedValues_[param->name] = arg;
         referenceValues_.insert(param->name);
+        if (auto *refType =
+                dynamic_cast<ast::ReferenceType *>(param->type.get())) {
+          referencePointeeTypes_[param->name] =
+              generateType(refType->baseType.get());
+        }
       } else {
         llvm::AllocaInst *alloca =
             builder()->CreateAlloca(arg->getType(), nullptr, param->name);

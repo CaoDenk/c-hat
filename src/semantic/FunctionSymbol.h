@@ -51,6 +51,12 @@ public:
     this->templateParamNames_ = names;
   }
 
+  void setOutParams(const std::vector<bool> &outParams) {
+    outParams_ = outParams;
+  }
+
+  const std::vector<bool> &getOutParams() const { return outParams_; }
+
 private:
   std::shared_ptr<types::FunctionType> type;
   bool isImmutable_;
@@ -59,6 +65,7 @@ private:
   bool isInherited_;
   bool isTemplate_;
   std::vector<std::string> templateParamNames_;
+  std::vector<bool> outParams_;
   std::string abi_;
 };
 

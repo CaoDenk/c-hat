@@ -38,6 +38,7 @@ enum class TokenType {
   Yield,
   Comptime,
   Late,
+  Out,
   Var,
   Let,
   Void,
