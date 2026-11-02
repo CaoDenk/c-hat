@@ -4847,6 +4847,35 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
     return builder()->CreateLoad(base.tupleType->getElementType(tupleIndex),
                                  elementPtr, "tuple.elem");
   }
+  // 运行时越界检查：数组/切片有已知长度时检查 0 <= index < len。
+  if (base.length) {
+    llvm::Function *func = currentFunction_;
+    llvm::Value *index64 = index;
+    if (!index64->getType()->isIntegerTy(64)) {
+      index64 = builder()->CreateIntCast(
+          index64, llvm::Type::getInt64Ty(context()), true, "bounds.index64");
+    }
+    llvm::Value *negative = builder()->CreateICmpSLT(
+        index64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0),
+        "bounds.negative");
+    llvm::Value *tooLarge = builder()->CreateICmpSGE(
+        index64, base.length, "bounds.too.large");
+    llvm::Value *outOfBounds =
+        builder()->CreateOr(negative, tooLarge, "bounds.fail.cond");
+    llvm::BasicBlock *failBB =
+        llvm::BasicBlock::Create(context(), "bounds.fail", func);
+    llvm::BasicBlock *continueBB =
+        llvm::BasicBlock::Create(context(), "bounds.ok", func);
+    builder()->CreateCondBr(outOfBounds, failBB, continueBB);
+    builder()->SetInsertPoint(failBB);
+    llvm::FunctionCallee abortFn = module()->getOrInsertFunction(
+        "abort", llvm::FunctionType::get(llvm::Type::getVoidTy(context()),
+                                         false));
+    builder()->CreateCall(abortFn);
+    builder()->CreateUnreachable();
+    builder()->SetInsertPoint(continueBB);
+  }
+
   llvm::Value *elementPtr = getElementPtr(base, index);
   if (!elementPtr) {
     return nullptr;
