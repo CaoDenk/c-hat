@@ -2861,13 +2861,24 @@ std::unique_ptr<ast::Expression> Parser::parsePrimaryExpr() {
       restoreState(state); // 回退
     }
 
-    if (!shouldParseLambda && (check(lexer::TokenType::LBracket) ||
-                               check(lexer::TokenType::IntegerLiteral) ||
-                               check(lexer::TokenType::FloatingLiteral) ||
-                               check(lexer::TokenType::StringLiteral) ||
-                               check(lexer::TokenType::BooleanLiteral) ||
-                               check(lexer::TokenType::CharacterLiteral) ||
-                               check(lexer::TokenType::Null))) {
+    bool identifierCallArray = false;
+    if (check(lexer::TokenType::Identifier)) {
+      ParserState state = saveState();
+      advance();
+      identifierCallArray = check(lexer::TokenType::LParen) ||
+                            check(lexer::TokenType::Dot) ||
+                            check(lexer::TokenType::Arrow);
+      restoreState(state);
+    }
+
+    if (!shouldParseLambda &&
+        (identifierCallArray || check(lexer::TokenType::LBracket) ||
+         check(lexer::TokenType::IntegerLiteral) ||
+         check(lexer::TokenType::FloatingLiteral) ||
+         check(lexer::TokenType::StringLiteral) ||
+         check(lexer::TokenType::BooleanLiteral) ||
+         check(lexer::TokenType::CharacterLiteral) ||
+         check(lexer::TokenType::Null))) {
       expr = parseArrayInit();
     } else {
       expr = parseLambdaOrArrayInit();

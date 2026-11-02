@@ -131,6 +131,10 @@ private:
                                  const std::shared_ptr<types::Type> &type);
   void registerDestructorForClassName(llvm::Value *storage,
                                       const std::string &className);
+  void registerDestructorForArray(llvm::Value *storage,
+                                  const std::string &className,
+                                  llvm::ArrayType *arrayType,
+                                  size_t elementCount);
   void registerOutDestructors(llvm::Function *func,
                               const std::vector<std::string> &argNames);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
@@ -259,6 +263,8 @@ private:
     std::string functionName;
     llvm::AllocaInst *flag = nullptr;
     size_t sequence = 0;
+    llvm::ArrayType *arrayType = nullptr;
+    size_t elementCount = 0;
   };
   std::vector<DestructorEntry> destructorEntries_;
   std::vector<size_t> destructorScopeMarkers_;

@@ -538,6 +538,7 @@ normal_var_path:
           createEntryAlloca(arrayType, varDecl->name);
       emitArrayLiteralInitialization(arrayType, arrayAlloca, arrayInitExpr);
       namedValues_[varDecl->name] = arrayAlloca;
+      maybeRegisterDestructor(varDecl.get(), arrayAlloca);
       return arrayAlloca;
     }
   }
@@ -6283,12 +6284,63 @@ void LLVMCodeGenerator::registerDestructorForClassName(
   entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
   builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
   destructorEntries_.push_back(
-      {storage, dtorName, flag, nextCleanupSequence_++});
+      {storage, dtorName, flag, nextCleanupSequence_++, nullptr, 0});
+}
+
+void LLVMCodeGenerator::registerDestructorForArray(
+    llvm::Value *storage, const std::string &className,
+    llvm::ArrayType *arrayType, size_t elementCount) {
+  if (!storage || className.empty() || !arrayType || elementCount == 0) {
+    return;
+  }
+  for (const auto &entry : destructorEntries_) {
+    if (entry.storage == storage) {
+      return;
+    }
+  }
+  std::string dtorName = className + "_~" + className;
+  if (functions_.find(dtorName) == functions_.end()) {
+    return;
+  }
+  llvm::Function *func = builder()->GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                 func->getEntryBlock().begin());
+  llvm::AllocaInst *flag = entryBuilder.CreateAlloca(
+      llvm::Type::getInt1Ty(context()), nullptr, "dtor.flag");
+  entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
+  builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
+  destructorEntries_.push_back({storage, dtorName, flag,
+                                nextCleanupSequence_++, arrayType,
+                                elementCount});
 }
 
 void LLVMCodeGenerator::registerDestructorForType(
     llvm::Value *storage, const std::shared_ptr<types::Type> &type) {
-  if (!storage || !type || !type->isClass()) {
+  if (!storage || !type) {
+    return;
+  }
+  if (type->isArray()) {
+    auto arrayTypeSem = std::dynamic_pointer_cast<types::ArrayType>(type);
+    if (!arrayTypeSem || !arrayTypeSem->getElementType() ||
+        !arrayTypeSem->getElementType()->isClass()) {
+      return;
+    }
+    auto elementClass = std::dynamic_pointer_cast<types::ClassType>(
+        arrayTypeSem->getElementType());
+    if (!elementClass || !elementClass->hasDestructor()) {
+      return;
+    }
+    auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(storage);
+    if (!alloca || !alloca->getAllocatedType()->isArrayTy()) {
+      return;
+    }
+    registerDestructorForArray(
+        storage, elementClass->getName(),
+        llvm::cast<llvm::ArrayType>(alloca->getAllocatedType()),
+        arrayTypeSem->getSize());
+    return;
+  }
+  if (!type->isClass()) {
     return;
   }
   auto classType = std::dynamic_pointer_cast<types::ClassType>(type);
@@ -6350,7 +6402,18 @@ void LLVMCodeGenerator::emitSingleDestructor(size_t i) {
     builder()->CreateBr(thenBB);
   }
   builder()->SetInsertPoint(thenBB);
-  builder()->CreateCall(dtorIt->second, {entry.storage});
+  if (entry.arrayType && entry.elementCount > 0) {
+    for (size_t e = 0; e < entry.elementCount; ++e) {
+      llvm::Value *elementPtr = builder()->CreateGEP(
+          entry.arrayType, entry.storage,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), e)},
+          "dtor.elem");
+      builder()->CreateCall(dtorIt->second, {elementPtr});
+    }
+  } else {
+    builder()->CreateCall(dtorIt->second, {entry.storage});
+  }
   if (entry.flag && builder()->GetInsertBlock() &&
       !builder()->GetInsertBlock()->getTerminator()) {
     builder()->CreateStore(llvm::ConstantInt::getFalse(context()),
