@@ -4,6 +4,7 @@
 #include <fstream>
 #include <print>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 
@@ -134,23 +135,55 @@ std::string topLevelName(ast::Declaration *decl) {
   return {};
 }
 
-void appendLoadedProgram(ast::Program &target,
-                         std::unique_ptr<ast::Program> loaded,
-                         ModuleLoader &loader,
-                         std::unordered_set<std::string> &seen) {
+std::string moduleFunctionPrefix(
+    const std::vector<std::string> &modulePath) {
+  std::string prefix;
+  for (size_t i = 0; i < modulePath.size(); ++i) {
+    if (i > 0) {
+      prefix += "__";
+    }
+    prefix += modulePath[i];
+  }
+  if (!prefix.empty()) {
+    prefix += "__";
+  }
+  return prefix;
+}
+
+void appendLoadedProgram(
+    ast::Program &target, std::unique_ptr<ast::Program> loaded,
+    ModuleLoader &loader, const std::vector<std::string> &modulePath,
+    std::unordered_set<std::string> &seen,
+    std::unordered_map<std::string, std::vector<std::string>> &candidates) {
   if (!loaded) {
     return;
   }
 
   // 先递归加载被导入模块自身的 import。
-  std::vector<std::unique_ptr<ast::Program>> nested;
+  std::vector<std::pair<std::vector<std::string>,
+                        std::unique_ptr<ast::Program>>>
+      nested;
   for (auto &decl : loaded->declarations) {
     if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
-      nested.push_back(loader.loadModule(importDecl->modulePath));
+      nested.emplace_back(importDecl->modulePath,
+                          loader.loadModule(importDecl->modulePath));
     }
   }
-  for (auto &child : nested) {
-    appendLoadedProgram(target, std::move(child), loader, seen);
+  for (auto &[childPath, child] : nested) {
+    appendLoadedProgram(target, std::move(child), loader, childPath, seen,
+                        candidates);
+  }
+
+  const std::string prefix = moduleFunctionPrefix(modulePath);
+  // 模块自由函数加模块前缀；类/结构体成员函数不改名。
+  for (auto &decl : loaded->declarations) {
+    if (auto *func = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
+      if (func->name != "main" && !prefix.empty()) {
+        std::string originalName = func->name;
+        func->name = prefix + originalName;
+        candidates[originalName].push_back(func->name);
+      }
+    }
   }
 
   // import/module 声明不进入 codegen；其余声明追加到主程序。
@@ -159,10 +192,13 @@ void appendLoadedProgram(ast::Program &target,
         dynamic_cast<ast::ModuleDecl *>(decl.get())) {
       continue;
     }
-    std::string name = topLevelName(decl.get());
-    if (!name.empty() && !seen.insert(name).second) {
-      throw std::runtime_error(
-          "Duplicate top-level symbol across modules: " + name);
+    // 函数已按模块前缀隔离，允许跨模块同名；类型/变量仍检查冲突。
+    if (!dynamic_cast<ast::FunctionDecl *>(decl.get())) {
+      std::string name = topLevelName(decl.get());
+      if (!name.empty() && !seen.insert(name).second) {
+        throw std::runtime_error(
+            "Duplicate top-level symbol across modules: " + name);
+      }
     }
     target.declarations.push_back(std::move(decl));
   }
@@ -170,22 +206,46 @@ void appendLoadedProgram(ast::Program &target,
 
 } // namespace
 
+void ModuleLoader::addFunctionAlias(const std::string &name,
+                                    const std::string &linkName) {
+  if (name.empty() || linkName.empty() || name == linkName) {
+    return;
+  }
+  functionAliases_.push_back({name, linkName});
+}
+
 void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
   std::unordered_set<std::string> seen;
+  std::unordered_set<std::string> mainNames;
   for (auto &decl : program.declarations) {
     std::string name = topLevelName(decl.get());
     if (!name.empty()) {
       seen.insert(name);
+      mainNames.insert(name);
     }
   }
-  std::vector<std::unique_ptr<ast::Program>> imported;
+
+  std::vector<std::pair<std::vector<std::string>,
+                        std::unique_ptr<ast::Program>>>
+      imported;
   for (auto &decl : program.declarations) {
     if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
-      imported.push_back(loader.loadModule(importDecl->modulePath));
+      imported.emplace_back(importDecl->modulePath,
+                            loader.loadModule(importDecl->modulePath));
     }
   }
-  for (auto &moduleProgram : imported) {
-    appendLoadedProgram(program, std::move(moduleProgram), loader, seen);
+
+  std::unordered_map<std::string, std::vector<std::string>> candidates;
+  for (auto &[path, moduleProgram] : imported) {
+    appendLoadedProgram(program, std::move(moduleProgram), loader, path, seen,
+                        candidates);
+  }
+
+  // 唯一且不与主程序冲突的短名生成别名，支持 import 后非限定调用。
+  for (const auto &[name, links] : candidates) {
+    if (links.size() == 1 && !mainNames.count(name)) {
+      loader.addFunctionAlias(name, links.front());
+    }
   }
 }
 

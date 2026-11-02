@@ -109,6 +109,26 @@ void SemanticAnalyzer::analyze(ast::Program &program) {
     }
   }
 
+  // 注册模块函数短名别名；别名只在链接名上指向模块前缀函数。
+  for (const auto &alias : moduleFunctionAliases_) {
+    if (!symbolTable.lookupFunctionSymbols(alias.name).empty()) {
+      continue;
+    }
+    auto targets = symbolTable.lookupFunctionSymbols(alias.linkName);
+    for (const auto &target : targets) {
+      auto clone = std::make_shared<FunctionSymbol>(
+          alias.name, target->getType(), target->getVisibility(),
+          target->isImmutableMethod(), target->isVariadicFunction());
+      clone->setLinkName(alias.linkName);
+      clone->setOutParams(target->getOutParams());
+      if (target->isExternFunction()) {
+        clone->setExtern(true);
+        clone->setAbi(target->getAbi());
+      }
+      symbolTable.addSymbol(clone);
+    }
+  }
+
   // 第二遍：分析类成员（使用 analyzeClassDecl 方法）
   for (auto &decl : program.declarations) {
     if (auto *classDecl = dynamic_cast<ast::ClassDecl *>(decl.get())) {
@@ -4057,9 +4077,23 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
     if (auto *objectIdent =
             dynamic_cast<ast::Identifier *>(member->object.get())) {
       auto objectSymbol = symbolTable.lookupSymbol(objectIdent->name);
-      if (std::dynamic_pointer_cast<ModuleSymbol>(objectSymbol)) {
-        auto callee = std::make_unique<ast::Identifier>(member->member);
-        callExpr->callee = std::move(callee);
+      if (auto moduleSymbol =
+              std::dynamic_pointer_cast<ModuleSymbol>(objectSymbol)) {
+        std::string prefix;
+        for (size_t i = 0; i < moduleSymbol->modulePath.size(); ++i) {
+          if (i > 0) {
+            prefix += "__";
+          }
+          prefix += moduleSymbol->modulePath[i];
+        }
+        if (!prefix.empty()) {
+          prefix += "__";
+        }
+        std::string targetName = prefix + member->member;
+        if (symbolTable.lookupFunctionSymbols(targetName).empty()) {
+          targetName = member->member;
+        }
+        callExpr->callee = std::make_unique<ast::Identifier>(targetName);
         return analyzeCallExpr(callExpr);
       }
     }
@@ -4396,8 +4430,11 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       if (selectedFunc->isExternFunction()) {
         callExpr->resolvedMangledName = identifier->name;
       } else {
+        const std::string &baseName = selectedFunc->getLinkName().empty()
+                                          ? identifier->name
+                                          : selectedFunc->getLinkName();
         callExpr->resolvedMangledName = getMangledFuncName(
-            identifier->name, selectedFunc->getType()->getParameterTypes());
+            baseName, selectedFunc->getType()->getParameterTypes());
       }
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&
           selectedFunc->isTemplate()) {
@@ -4428,8 +4465,11 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       if (selectedFunc->isExternFunction()) {
         callExpr->resolvedMangledName = identifier->name;
       } else {
+        const std::string &baseName = selectedFunc->getLinkName().empty()
+                                          ? identifier->name
+                                          : selectedFunc->getLinkName();
         callExpr->resolvedMangledName = getMangledFuncName(
-            identifier->name, selectedFunc->getType()->getParameterTypes());
+            baseName, selectedFunc->getType()->getParameterTypes());
       }
       // 如果有显式模板参数，返回替换后的返回类型
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&

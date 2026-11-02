@@ -42,6 +42,7 @@ static int compileAndRunWithModules(const std::string &source,
   semantic::loadImportsInto(*program, moduleLoader);
 
   semantic::SemanticAnalyzer analyzer(std::vector<std::string>{moduleDir}, false);
+  analyzer.setModuleFunctionAliases(moduleLoader.getFunctionAliases());
   analyzer.analyze(*program);
   if (analyzer.hasError()) return -2;
 
@@ -1287,6 +1288,10 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
     b << "module B;\nimport A;\n"
          "public func bar() -> int { return foo(); }\n";
   }
+  {
+    std::ofstream c(dir / "C.ch");
+    c << "module C;\npublic func foo() -> int { return 10; }\n";
+  }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
   REQUIRE(result == 42);
@@ -1298,6 +1303,12 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
 
   result = compileAndRunWithModules(
       "import A as X;\nfunc main() -> int { return X.foo(); }\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import A;\nimport C;\n"
+      "func main() -> int { return A.foo() + C.foo() - 10; }\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);

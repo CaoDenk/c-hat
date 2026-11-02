@@ -354,8 +354,10 @@ extern "C" {
 ### 模块当前边界
 
 - 当前是 whole-program 合并：import 的声明会加入主程序一起分析/codegen。
-- 还没有独立编译对象、模块级稳定 mangling、跨模块 ABI 或增量编译。
-- `A.foo()` 与 `import A as X; X.foo()` 已在 whole-program 模式下支持。
+- 模块自由函数使用 `Module__function` mangling；不同模块同名函数可共存。
+- `A.foo()` 与 `import A as X; X.foo()` 已支持；唯一短名也支持非限定调用。
+- 类/结构体/顶层变量的跨模块同名仍会报错。
+- 还没有独立编译对象、完整稳定 ABI 或增量编译。
 
 ### OOP 当前边界
 

@@ -16,6 +16,11 @@ namespace semantic {
 
 namespace fs = std::filesystem;
 
+struct ModuleFunctionAlias {
+  std::string name;
+  std::string linkName;
+};
+
 class ModuleLoader {
 public:
   ModuleLoader(const std::string &stdlibPath) : stdlibPath_(stdlibPath) {
@@ -47,11 +52,18 @@ public:
   std::string
   modulePathToString(const std::vector<std::string> &modulePath) const;
 
+  void addFunctionAlias(const std::string &name, const std::string &linkName);
+
+  const std::vector<ModuleFunctionAlias> &getFunctionAliases() const {
+    return functionAliases_;
+  }
+
 private:
   std::string stdlibPath_;
   std::vector<std::string> modulePaths_;
   std::unordered_set<std::string> loadedModules_;
   std::unordered_set<std::string> loadingModules_;
+  std::vector<ModuleFunctionAlias> functionAliases_;
 
   fs::path modulePathToFilePath(const std::vector<std::string> &modulePath);
 

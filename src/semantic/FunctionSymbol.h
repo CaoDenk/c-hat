@@ -57,6 +57,9 @@ public:
 
   const std::vector<bool> &getOutParams() const { return outParams_; }
 
+  void setLinkName(const std::string &name) { linkName_ = name; }
+  const std::string &getLinkName() const { return linkName_; }
+
 private:
   std::shared_ptr<types::FunctionType> type;
   bool isImmutable_;
@@ -66,6 +69,7 @@ private:
   bool isTemplate_;
   std::vector<std::string> templateParamNames_;
   std::vector<bool> outParams_;
+  std::string linkName_;
   std::string abi_;
 };
 

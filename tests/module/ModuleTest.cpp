@@ -98,11 +98,18 @@ TEST_CASE("Module: duplicate top-level symbols are rejected", "[module][errors]"
     b << "module B;\npublic func foo() -> int { return 2; }\n";
   }
 
-  parser::Parser parser("import A; import B; func main() { }");
+  parser::Parser parser(
+      "import A; import B; func main() { A.foo(); B.foo(); }");
   auto program = parser.parseProgram();
   REQUIRE(program != nullptr);
   semantic::ModuleLoader loader(std::vector<std::string>{dir.string()});
-  REQUIRE_THROWS_AS(semantic::loadImportsInto(*program, loader),
-                    std::runtime_error);
+  REQUIRE_NOTHROW(semantic::loadImportsInto(*program, loader));
+  REQUIRE(loader.getFunctionAliases().empty());
+
+  semantic::SemanticAnalyzer analyzer(std::vector<std::string>{dir.string()},
+                                      false);
+  analyzer.setModuleFunctionAliases(loader.getFunctionAliases());
+  analyzer.analyze(*program);
+  REQUIRE(!analyzer.hasError());
   fs::remove_all(dir);
 }

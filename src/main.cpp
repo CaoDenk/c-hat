@@ -241,12 +241,15 @@ int main(int argc, char *argv[]) {
       allModulePaths.push_back(path);
     }
 
+    std::vector<c_hat::semantic::ModuleFunctionAlias> moduleAliases;
     if (!allModulePaths.empty()) {
       c_hat::semantic::ModuleLoader moduleLoader(allModulePaths);
       c_hat::semantic::loadImportsInto(*program, moduleLoader);
+      moduleAliases = moduleLoader.getFunctionAliases();
     }
 
     c_hat::semantic::SemanticAnalyzer semanticAnalyzer(allModulePaths);
+    semanticAnalyzer.setModuleFunctionAliases(moduleAliases);
     if (verbose) {
       std::println("Running semantic analysis...");
     }

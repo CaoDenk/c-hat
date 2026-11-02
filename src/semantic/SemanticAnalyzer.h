@@ -6,6 +6,7 @@
 #include "ExtensionRegistry.h"
 #include "ModuleLoader.h"
 #include "SemanticModel.h"
+#include "ModuleLoader.h"
 #include "SymbolTable.h"
 #include <memory>
 #include <set>
@@ -37,6 +38,11 @@ public:
 
   // 分析单个声明（用于单元测试）
   void analyzeDeclarationOnly(ast::Declaration *declaration);
+
+  void setModuleFunctionAliases(
+      const std::vector<ModuleFunctionAlias> &aliases) {
+    moduleFunctionAliases_ = aliases;
+  }
 
   // 获取符号表
   SymbolTable &getSymbolTable() { return symbolTable; }
@@ -461,6 +467,7 @@ private:
   };
   std::unordered_map<std::string, LateVariableStatus> lateVariables_;
   std::vector<std::string> currentOutParams_;
+  std::vector<ModuleFunctionAlias> moduleFunctionAliases_;
   void applyOutArguments(const std::shared_ptr<FunctionSymbol> &func,
                          ast::CallExpr *callExpr,
                          const std::vector<bool> &uninitializedRefArgs);
