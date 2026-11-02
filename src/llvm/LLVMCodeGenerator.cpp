@@ -3438,6 +3438,39 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
       }
     }
 
+    // 数组变量赋予切片时保留别名：直接使用数组 alloca 的首地址，
+    // 而不是先把数组加载成临时副本。
+    if (targetType && targetType->isStructTy() &&
+        isSliceStructType(targetType)) {
+      if (auto *rightIdent =
+              dynamic_cast<ast::Identifier *>(binaryExpr->right.get())) {
+        auto valueIt = namedValues_.find(rightIdent->name);
+        if (valueIt != namedValues_.end()) {
+          auto *arrayAlloca =
+              llvm::dyn_cast<llvm::AllocaInst>(valueIt->second);
+          if (arrayAlloca &&
+              arrayAlloca->getAllocatedType()->isArrayTy()) {
+            auto *arrayType =
+                llvm::cast<llvm::ArrayType>(arrayAlloca->getAllocatedType());
+            llvm::Value *arrayPtr = builder()->CreateGEP(
+                arrayType, arrayAlloca,
+                {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+                "slice.assign.alias");
+            llvm::Value *sliceValue = builder()->CreateInsertValue(
+                llvm::UndefValue::get(targetType), arrayPtr, 0);
+            sliceValue = builder()->CreateInsertValue(
+                sliceValue,
+                llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
+                                       arrayType->getNumElements()),
+                1);
+            builder()->CreateStore(sliceValue, lhsPtr);
+            return lhsPtr;
+          }
+        }
+      }
+    }
+
     llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
     if (!rhs) {
       return nullptr;
@@ -3463,6 +3496,46 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
           rhs = builder()->CreateLoad(targetType, rhsAlloca,
                                       "array.assign.load");
         }
+      }
+    }
+
+    // 数组/切片 to 切片赋值：构造 {ptr, len} 视图。
+    if (targetType->isStructTy() && isSliceStructType(targetType)) {
+      auto *rhsAlloca = llvm::dyn_cast<llvm::AllocaInst>(rhs);
+      llvm::Type *rhsType =
+          rhsAlloca ? rhsAlloca->getAllocatedType() : rhs->getType();
+      if (rhsType == targetType) {
+        if (rhsAlloca) {
+          rhs = builder()->CreateLoad(targetType, rhsAlloca,
+                                      "slice.assign.load");
+        }
+      } else if (rhsType->isArrayTy()) {
+        auto *arrayType = llvm::cast<llvm::ArrayType>(rhsType);
+        llvm::Value *arrayPtr = rhs;
+        if (rhsAlloca) {
+          arrayPtr = builder()->CreateGEP(
+              arrayType, rhsAlloca,
+              {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+               llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+              "slice.assign.ptr");
+        } else {
+          llvm::AllocaInst *tmp =
+              createEntryAlloca(arrayType, "slice.assign.tmp");
+          builder()->CreateStore(rhs, tmp);
+          arrayPtr = builder()->CreateGEP(
+              arrayType, tmp,
+              {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+               llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+              "slice.assign.ptr");
+        }
+        llvm::Value *sliceValue = builder()->CreateInsertValue(
+            llvm::UndefValue::get(targetType), arrayPtr, 0);
+        sliceValue = builder()->CreateInsertValue(
+            sliceValue,
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
+                                   arrayType->getNumElements()),
+            1);
+        rhs = sliceValue;
       }
     }
 

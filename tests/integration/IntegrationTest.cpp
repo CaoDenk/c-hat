@@ -677,6 +677,27 @@ TEST_CASE("Integration: references", "[integration][reference]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: array to slice assignment", "[integration][array]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[3] a = [10, 20, 12];\n"
+      "    late int[] s;\n"
+      "    s = a;\n"
+      "    s[0] = 40;\n"
+      "    if (s.len == 3) { return a[0] + 2; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func bind(out int[]& s, int[] src) { s = src; }\n"
+      "func main() -> int {\n"
+      "    int[3] a = [10, 20, 12];\n"
+      "    late int[] s;\n"
+      "    bind(&s, a);\n"
+      "    return s[0] + s[2] + 20;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: fixed array value semantics", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
