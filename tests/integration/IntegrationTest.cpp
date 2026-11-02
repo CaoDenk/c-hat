@@ -2,9 +2,12 @@
 // 测试 parser → semantic → LLVM codegen → JIT 执行 完整链路
 #include "../src/parser/Parser.h"
 #include "../src/semantic/SemanticAnalyzer.h"
+#include "../src/semantic/ModuleLoader.h"
 #include "../src/llvm/LLVMCodeGenerator.h"
 #include <catch2/catch_test_macros.hpp>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace c_hat;
@@ -25,6 +28,28 @@ static int compileAndRun(const std::string &source) {
   if (!codeGen.hasJIT()) return -4;
 
   codeGen.addExternalSymbol("printf", (void *)&std::printf);
+  return codeGen.runJIT("main");
+}
+
+
+static int compileAndRunWithModules(const std::string &source,
+                                    const std::string &moduleDir) {
+  parser::Parser parser(source);
+  auto program = parser.parseProgram();
+  if (!program) return -1;
+
+  semantic::ModuleLoader moduleLoader(std::vector<std::string>{moduleDir});
+  semantic::loadImportsInto(*program, moduleLoader);
+
+  semantic::SemanticAnalyzer analyzer(std::vector<std::string>{moduleDir}, false);
+  analyzer.analyze(*program);
+  if (analyzer.hasError()) return -2;
+
+  llvm_codegen::LLVMCodeGenerator codeGen("test_module_imports");
+  codeGen.setSemanticModel(&analyzer.getSemanticModel());
+  codeGen.generate(std::move(program));
+  if (!codeGen.verifyIR()) return -3;
+  if (!codeGen.hasJIT()) return -4;
   return codeGen.runJIT("main");
 }
 
@@ -1225,4 +1250,24 @@ TEST_CASE("Integration: struct value constructor", "[integration][generics]") {
       "    Point<int> p = Point<int>(40, 2);\n"
       "    return p.sum();\n"
       "}\n") == 42);
+}
+
+TEST_CASE("Integration: module imports", "[integration][module]") {
+  namespace fs = std::filesystem;
+  fs::path dir = fs::temp_directory_path() / "c_hat_module_test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  {
+    std::ofstream a(dir / "A.ch");
+    a << "module A;\npublic func foo() -> int { return 42; }\n";
+  }
+  {
+    std::ofstream b(dir / "B.ch");
+    b << "module B;\nimport A;\n"
+         "public func bar() -> int { return foo(); }\n";
+  }
+  int result = compileAndRunWithModules(
+      "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
+  fs::remove_all(dir);
+  REQUIRE(result == 42);
 }

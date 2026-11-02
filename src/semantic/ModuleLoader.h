@@ -58,5 +58,8 @@ private:
   std::unique_ptr<ast::Program> parseFile(const fs::path &filePath);
 };
 
+// 递归加载 import 的模块，并把模块声明追加到主程序。
+void loadImportsInto(ast::Program &program, ModuleLoader &loader);
+
 } // namespace semantic
 } // namespace c_hat

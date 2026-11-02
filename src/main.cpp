@@ -1,6 +1,7 @@
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 #include "semantic/SemanticAnalyzer.h"
+#include "semantic/ModuleLoader.h"
 #include "llvm/LLVMCodeGenerator.h"
 #include "Diagnostics.h"
 #include <argparse/argparse.hpp>
@@ -238,6 +239,11 @@ int main(int argc, char *argv[]) {
     }
     for (const auto &path : modulePaths) {
       allModulePaths.push_back(path);
+    }
+
+    if (!allModulePaths.empty()) {
+      c_hat::semantic::ModuleLoader moduleLoader(allModulePaths);
+      c_hat::semantic::loadImportsInto(*program, moduleLoader);
     }
 
     c_hat::semantic::SemanticAnalyzer semanticAnalyzer(allModulePaths);

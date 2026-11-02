@@ -114,5 +114,50 @@ bool ModuleLoader::isModuleLoaded(
   return loadedModules_.find(moduleName) != loadedModules_.end();
 }
 
+
+namespace {
+
+void appendLoadedProgram(ast::Program &target,
+                         std::unique_ptr<ast::Program> loaded,
+                         ModuleLoader &loader) {
+  if (!loaded) {
+    return;
+  }
+
+  // 先递归加载被导入模块自身的 import。
+  std::vector<std::unique_ptr<ast::Program>> nested;
+  for (auto &decl : loaded->declarations) {
+    if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
+      nested.push_back(loader.loadModule(importDecl->modulePath));
+    }
+  }
+  for (auto &child : nested) {
+    appendLoadedProgram(target, std::move(child), loader);
+  }
+
+  // import/module 声明不进入 codegen；其余声明追加到主程序。
+  for (auto &decl : loaded->declarations) {
+    if (dynamic_cast<ast::ImportDecl *>(decl.get()) ||
+        dynamic_cast<ast::ModuleDecl *>(decl.get())) {
+      continue;
+    }
+    target.declarations.push_back(std::move(decl));
+  }
+}
+
+} // namespace
+
+void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
+  std::vector<std::unique_ptr<ast::Program>> imported;
+  for (auto &decl : program.declarations) {
+    if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
+      imported.push_back(loader.loadModule(importDecl->modulePath));
+    }
+  }
+  for (auto &moduleProgram : imported) {
+    appendLoadedProgram(program, std::move(moduleProgram), loader);
+  }
+}
+
 } // namespace semantic
 } // namespace c_hat
