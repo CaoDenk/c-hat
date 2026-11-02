@@ -248,6 +248,27 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "}\n") == 23);
 }
 
+TEST_CASE("Integration: fixed array value semantics", "[integration][array]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[3] a = [1, 2, 3];\n"
+      "    int[3] b = a;\n"
+      "    b[0] = 9;\n"
+      "    return a[0] + b[0] + 32;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func change(int[3] x) -> int { x[0] = 9; return x[0]; }\n"
+      "func main() -> int {\n"
+      "    int[3] a = [1, 2, 3];\n"
+      "    int[3] b = [0, 0, 0];\n"
+      "    b = a;\n"
+      "    b[1] = 8;\n"
+      "    var y = change(a);\n"
+      "    return a[0] + a[1] + b[1] + y + 22;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
