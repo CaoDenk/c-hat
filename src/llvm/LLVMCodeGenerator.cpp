@@ -780,8 +780,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
   lateVariables_.clear();
 
@@ -875,8 +878,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
       auto *excHandler = getExceptionHandlerGlobal(module());
       builder()->SetInsertPoint(functionCleanupBB);
-      emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+      emitCombinedCleanup(0, 0, false);
       builder()->CreateStore(functionPrevHandler, excHandler);
 
       llvm::Value *outerHandler =
@@ -922,12 +924,14 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       }
 
       // 执行 defer 语句（按相反顺序）
-      emitDeferCleanup(true);
-  emitDestructorCleanup(true);
+      emitCombinedCleanup(0, 0, true);
       deferExpressions_.clear();
       deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
 
       if (hasDefer) {
@@ -948,8 +952,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
 
   return function;
@@ -1204,8 +1211,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
 
       deferExpressions_.clear();
     deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
 
@@ -1299,8 +1309,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
           llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
           auto *excHandler = getExceptionHandlerGlobal(module());
           builder()->SetInsertPoint(functionCleanupBB);
-          emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+          emitCombinedCleanup(0, 0, false);
           builder()->CreateStore(functionPrevHandler, excHandler);
 
           llvm::Value *outerHandler =
@@ -1404,12 +1413,14 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
           }
 
           // 执行 defer 语句（按相反顺序）
-          emitDeferCleanup(true);
-  emitDestructorCleanup(true);
+          emitCombinedCleanup(0, 0, true);
           deferExpressions_.clear();
           deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
 
           if (hasDefer) {
@@ -1440,8 +1451,11 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     c_hat::debugStream() << "Debug: Before clearing deferExpressions_" << std::endl;
     deferExpressions_.clear();
     deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
   }
 
@@ -1671,8 +1685,11 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
       deferExpressions_.clear();
     deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
 
@@ -1799,8 +1816,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
         auto *excHandler = getExceptionHandlerGlobal(module());
         builder()->SetInsertPoint(functionCleanupBB);
-        emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+        emitCombinedCleanup(0, 0, false);
         builder()->CreateStore(functionPrevHandler, excHandler);
 
         llvm::Value *outerHandler =
@@ -1848,12 +1864,14 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         }
 
         // 执行 defer 语句（按相反顺序）
-        emitDeferCleanup(true);
-  emitDestructorCleanup(true);
+        emitCombinedCleanup(0, 0, true);
         deferExpressions_.clear();
         deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
 
         if (hasDefer) {
@@ -1873,8 +1891,11 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     currentClassName_ = prevClassName;
     deferExpressions_.clear();
     deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
   }
 
@@ -5100,8 +5121,7 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
   // defer；执行后 flag 会被清除，外层/函数级清理不会重复执行。
   if (builder()->GetInsertBlock() &&
       !builder()->GetInsertBlock()->getTerminator()) {
-    emitDeferCleanupFrom(deferMarker, false);
-    emitDestructorCleanupFrom(destructorMarker, false);
+    emitCombinedCleanup(deferMarker, destructorMarker, false);
   }
   if (!deferScopeMarkers_.empty()) {
     deferScopeMarkers_.pop_back();
@@ -5150,8 +5170,7 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     }
 
     if (returnType->isVoidTy()) {
-      emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+      emitCombinedCleanup(0, 0, false);
       restoreExceptionHandlers();
       builder()->CreateRetVoid();
       return nullptr;
@@ -5169,24 +5188,20 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
       }
     }
 
-    emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+    emitCombinedCleanup(0, 0, false);
     restoreExceptionHandlers();
     builder()->CreateRet(retVal);
   } else {
     if (returnType->isVoidTy()) {
-      emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+      emitCombinedCleanup(0, 0, false);
       restoreExceptionHandlers();
       builder()->CreateRetVoid();
     } else if (returnType->isIntegerTy()) {
-      emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+      emitCombinedCleanup(0, 0, false);
       restoreExceptionHandlers();
       builder()->CreateRet(llvm::ConstantInt::get(returnType, 0));
     } else {
-      emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+      emitCombinedCleanup(0, 0, false);
       restoreExceptionHandlers();
       builder()->CreateRet(llvm::Constant::getNullValue(returnType));
     }
@@ -5258,8 +5273,10 @@ llvm::Value *LLVMCodeGenerator::generateWhileStmt(
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
   loopDeferMarkers_.push_back(deferExpressions_.size());
+  loopDestructorMarkers_.push_back(destructorEntries_.size());
   generateStatement(std::move(whileStmt->body));
   loopDeferMarkers_.pop_back();
+  loopDestructorMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   builder()->CreateBr(condBB);
@@ -5291,8 +5308,10 @@ llvm::Value *LLVMCodeGenerator::generateDoWhileStmt(
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
   loopDeferMarkers_.push_back(deferExpressions_.size());
+  loopDestructorMarkers_.push_back(destructorEntries_.size());
   generateStatement(std::move(doWhileStmt->body));
   loopDeferMarkers_.pop_back();
+  loopDestructorMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (builder()->GetInsertBlock() &&
@@ -5478,8 +5497,10 @@ llvm::Value *LLVMCodeGenerator::generateForeachStmt(
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(stepBB);
   loopDeferMarkers_.push_back(deferExpressions_.size());
+  loopDestructorMarkers_.push_back(destructorEntries_.size());
   generateStatement(std::move(forStmt->body));
   loopDeferMarkers_.pop_back();
+  loopDestructorMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (!builder()->GetInsertBlock()->getTerminator()) {
@@ -5553,8 +5574,10 @@ LLVMCodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
   loopDeferMarkers_.push_back(deferExpressions_.size());
+  loopDestructorMarkers_.push_back(destructorEntries_.size());
   generateStatement(std::move(forStmt->body));
   loopDeferMarkers_.pop_back();
+  loopDestructorMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (forStmt->update) {
@@ -5578,7 +5601,8 @@ llvm::Value *LLVMCodeGenerator::generateBreakStmt(
     return nullptr;
   }
   if (!loopDeferMarkers_.empty()) {
-    emitDeferCleanupFrom(loopDeferMarkers_.back(), false);
+    emitCombinedCleanup(loopDeferMarkers_.back(),
+                        loopDestructorMarkers_.back(), false);
   }
   builder()->CreateBr(breakTargets_.back());
   llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
@@ -5595,7 +5619,8 @@ llvm::Value *LLVMCodeGenerator::generateContinueStmt(
     return nullptr;
   }
   if (!loopDeferMarkers_.empty()) {
-    emitDeferCleanupFrom(loopDeferMarkers_.back(), false);
+    emitCombinedCleanup(loopDeferMarkers_.back(),
+                        loopDestructorMarkers_.back(), false);
   }
   builder()->CreateBr(continueTargets_.back());
   llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
@@ -5972,8 +5997,7 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
 
   // 当前函数的 defer 必须在本帧被 longjmp 丢弃前执行。用运行时 flag
   // 判断 defer 是否真的被执行过，避免执行未进入分支里的 defer。
-  emitDeferCleanup(false);
-  emitDestructorCleanup(false);
+  emitCombinedCleanup(0, 0, false);
 
   llvm::Value *handler =
       builder()->CreateLoad(ptrTy, excHandler, "handler");
@@ -6026,6 +6050,7 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
     deferStatements_.push_back(nullptr);
   }
   deferFlags_.push_back(flag);
+  deferSequence_.push_back(nextCleanupSequence_++);
   return nullptr;
 }
 
@@ -6041,66 +6066,69 @@ void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
   if (deferExpressions_.empty() || startIndex >= deferExpressions_.size()) {
     return;
   }
+  for (size_t i = deferExpressions_.size(); i-- > startIndex;) {
+    emitSingleDefer(i, consumeExpressions);
+  }
+}
+
+void LLVMCodeGenerator::emitSingleDefer(size_t i, bool consumeExpressions) {
+  if (i >= deferExpressions_.size()) {
+    return;
+  }
+  auto &deferExpr = deferExpressions_[i];
+  auto *deferBody =
+      i < deferStatements_.size() ? deferStatements_[i].get() : nullptr;
+  if (!deferExpr && !deferBody) {
+    return;
+  }
   llvm::Function *func = currentFunction_;
   if (!func) {
     return;
   }
-  llvm::Type *i1Ty = llvm::Type::getInt1Ty(context());
+  llvm::AllocaInst *flag =
+      i < deferFlags_.size() ? deferFlags_[i] : nullptr;
+  llvm::BasicBlock *thenBB =
+      llvm::BasicBlock::Create(context(), "defer.then", func);
+  llvm::BasicBlock *mergeBB =
+      llvm::BasicBlock::Create(context(), "defer.cont", func);
 
-  for (size_t i = deferExpressions_.size(); i-- > startIndex;) {
-    auto &deferExpr = deferExpressions_[i];
-    auto &deferBody = i < deferStatements_.size() ? deferStatements_[i]
-                                                   : deferStatements_.front();
-    if (!deferExpr && !deferBody) {
-      continue;
-    }
-    llvm::AllocaInst *flag =
-        i < deferFlags_.size() ? deferFlags_[i] : nullptr;
-    llvm::BasicBlock *thenBB =
-        llvm::BasicBlock::Create(context(), "defer.then", func);
-    llvm::BasicBlock *mergeBB =
-        llvm::BasicBlock::Create(context(), "defer.cont", func);
-
-    if (flag) {
-      llvm::Value *enabled =
-          builder()->CreateLoad(i1Ty, flag, "defer.enabled");
-      builder()->CreateCondBr(enabled, thenBB, mergeBB);
-    } else {
-      builder()->CreateBr(thenBB);
-    }
-
-    builder()->SetInsertPoint(thenBB);
-    if (consumeExpressions) {
-      if (deferExpr) {
-        generateExpression(std::move(deferExpr));
-      } else if (deferBody) {
-        generateStatement(std::move(deferBody));
-      }
-    } else {
-      if (deferExpr) {
-        auto cloned = ast::cloneExprWithSubst(deferExpr.get(), {});
-        if (cloned) {
-          generateExpression(std::move(cloned));
-        }
-      } else if (deferBody) {
-        auto cloned = ast::cloneStmtWithSubst(deferBody.get(), {});
-        if (cloned) {
-          generateStatement(std::move(cloned));
-        }
-      }
-      // 清理路径已经执行过该 defer；清除 flag，避免同一函数随后
-      // 正常结束（例如 throw 被同函数 catch 捕获）时重复执行。
-      if (flag && builder()->GetInsertBlock() &&
-          !builder()->GetInsertBlock()->getTerminator()) {
-        builder()->CreateStore(llvm::ConstantInt::getFalse(context()), flag);
-      }
-    }
-    if (builder()->GetInsertBlock() &&
-        !builder()->GetInsertBlock()->getTerminator()) {
-      builder()->CreateBr(mergeBB);
-    }
-    builder()->SetInsertPoint(mergeBB);
+  if (flag) {
+    llvm::Value *enabled = builder()->CreateLoad(
+        llvm::Type::getInt1Ty(context()), flag, "defer.enabled");
+    builder()->CreateCondBr(enabled, thenBB, mergeBB);
+  } else {
+    builder()->CreateBr(thenBB);
   }
+
+  builder()->SetInsertPoint(thenBB);
+  if (consumeExpressions) {
+    if (deferExpr) {
+      generateExpression(std::move(deferExpr));
+    } else if (deferBody && i < deferStatements_.size()) {
+      generateStatement(std::move(deferStatements_[i]));
+    }
+  } else {
+    if (deferExpr) {
+      auto cloned = ast::cloneExprWithSubst(deferExpr.get(), {});
+      if (cloned) {
+        generateExpression(std::move(cloned));
+      }
+    } else if (deferBody) {
+      auto cloned = ast::cloneStmtWithSubst(deferBody, {});
+      if (cloned) {
+        generateStatement(std::move(cloned));
+      }
+    }
+    if (flag && builder()->GetInsertBlock() &&
+        !builder()->GetInsertBlock()->getTerminator()) {
+      builder()->CreateStore(llvm::ConstantInt::getFalse(context()), flag);
+    }
+  }
+  if (builder()->GetInsertBlock() &&
+      !builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateBr(mergeBB);
+  }
+  builder()->SetInsertPoint(mergeBB);
 }
 
 // 登记局部对象的析构清理。只对带析构函数的 class/struct 值生效。
@@ -6130,7 +6158,8 @@ void LLVMCodeGenerator::registerDestructorForType(
       llvm::Type::getInt1Ty(context()), nullptr, "dtor.flag");
   entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
   builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
-  destructorEntries_.push_back({storage, dtorName, flag});
+  destructorEntries_.push_back(
+      {storage, dtorName, flag, nextCleanupSequence_++});
 }
 
 void LLVMCodeGenerator::maybeRegisterDestructor(
@@ -6152,43 +6181,73 @@ void LLVMCodeGenerator::emitDestructorCleanupFrom(size_t startIndex,
   if (destructorEntries_.empty() || startIndex >= destructorEntries_.size()) {
     return;
   }
+  for (size_t i = destructorEntries_.size(); i-- > startIndex;) {
+    emitSingleDestructor(i);
+  }
+}
+
+void LLVMCodeGenerator::emitSingleDestructor(size_t i) {
+  if (i >= destructorEntries_.size()) {
+    return;
+  }
+  auto &entry = destructorEntries_[i];
+  if (!entry.storage || entry.functionName.empty()) {
+    return;
+  }
+  auto dtorIt = functions_.find(entry.functionName);
+  if (dtorIt == functions_.end()) {
+    return;
+  }
   llvm::Function *func = currentFunction_;
   if (!func) {
     return;
   }
-  llvm::Type *i1Ty = llvm::Type::getInt1Ty(context());
-  for (size_t i = destructorEntries_.size(); i-- > startIndex;) {
-    auto &entry = destructorEntries_[i];
-    if (!entry.storage || entry.functionName.empty()) {
-      continue;
-    }
-    auto dtorIt = functions_.find(entry.functionName);
-    if (dtorIt == functions_.end()) {
-      continue;
-    }
-    llvm::BasicBlock *thenBB =
-        llvm::BasicBlock::Create(context(), "dtor.then", func);
-    llvm::BasicBlock *mergeBB =
-        llvm::BasicBlock::Create(context(), "dtor.cont", func);
-    if (entry.flag) {
-      llvm::Value *enabled =
-          builder()->CreateLoad(i1Ty, entry.flag, "dtor.enabled");
-      builder()->CreateCondBr(enabled, thenBB, mergeBB);
+  llvm::BasicBlock *thenBB =
+      llvm::BasicBlock::Create(context(), "dtor.then", func);
+  llvm::BasicBlock *mergeBB =
+      llvm::BasicBlock::Create(context(), "dtor.cont", func);
+  if (entry.flag) {
+    llvm::Value *enabled = builder()->CreateLoad(
+        llvm::Type::getInt1Ty(context()), entry.flag, "dtor.enabled");
+    builder()->CreateCondBr(enabled, thenBB, mergeBB);
+  } else {
+    builder()->CreateBr(thenBB);
+  }
+  builder()->SetInsertPoint(thenBB);
+  builder()->CreateCall(dtorIt->second, {entry.storage});
+  if (entry.flag && builder()->GetInsertBlock() &&
+      !builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateStore(llvm::ConstantInt::getFalse(context()),
+                           entry.flag);
+  }
+  if (builder()->GetInsertBlock() &&
+      !builder()->GetInsertBlock()->getTerminator()) {
+    builder()->CreateBr(mergeBB);
+  }
+  builder()->SetInsertPoint(mergeBB);
+}
+
+void LLVMCodeGenerator::emitCombinedCleanup(size_t deferStart,
+                                            size_t destructorStart,
+                                            bool consumeExpressions) {
+  size_t i = deferExpressions_.size();
+  size_t j = destructorEntries_.size();
+  while (i > deferStart || j > destructorStart) {
+    bool takeDefer = false;
+    if (i <= deferStart) {
+      takeDefer = false;
+    } else if (j <= destructorStart) {
+      takeDefer = true;
     } else {
-      builder()->CreateBr(thenBB);
+      size_t deferSeq =
+          (i - 1) < deferSequence_.size() ? deferSequence_[i - 1] : 0;
+      takeDefer = deferSeq > destructorEntries_[j - 1].sequence;
     }
-    builder()->SetInsertPoint(thenBB);
-    builder()->CreateCall(dtorIt->second, {entry.storage});
-    if (entry.flag && builder()->GetInsertBlock() &&
-        !builder()->GetInsertBlock()->getTerminator()) {
-      builder()->CreateStore(llvm::ConstantInt::getFalse(context()),
-                             entry.flag);
+    if (takeDefer) {
+      emitSingleDefer(--i, consumeExpressions);
+    } else {
+      emitSingleDestructor(--j);
     }
-    if (builder()->GetInsertBlock() &&
-        !builder()->GetInsertBlock()->getTerminator()) {
-      builder()->CreateBr(mergeBB);
-    }
-    builder()->SetInsertPoint(mergeBB);
   }
 }
 
@@ -6470,8 +6529,11 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();
@@ -6514,12 +6576,14 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
       llvm::BasicBlock *lastBlock = &function->back();
       if (!lastBlock->getTerminator()) {
         builder()->SetInsertPoint(lastBlock);
-        emitDeferCleanup(true);
-  emitDestructorCleanup(true);
+        emitCombinedCleanup(0, 0, true);
         deferExpressions_.clear();
         deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
         if (returnType->isVoidTy()) {
           builder()->CreateRetVoid();
@@ -6533,8 +6597,11 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   currentFunction_ = prevFunction;
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferSequence_.clear();
+  nextCleanupSequence_ = 0;
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
+  loopDestructorMarkers_.clear();
   deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();

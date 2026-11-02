@@ -332,6 +332,42 @@ TEST_CASE("Integration: stack object destructors", "[integration][raii]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: unified cleanup order", "[integration][raii][defer]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = p->value * 10 + 1; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    {\n"
+      "        C c = C(b);\n"
+      "        defer b->value = b->value * 10 + 2;\n"
+      "    }\n"
+      "    return b->value + 20;\n"
+      "}\n") == 41);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = p->value * 10 + 1; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    {\n"
+      "        defer b->value = b->value * 10 + 2;\n"
+      "        C c = C(b);\n"
+      "    }\n"
+      "    return b->value + 20;\n"
+      "}\n") == 32);
+}
+
 TEST_CASE("Integration: out parameters", "[integration][out]") {
   REQUIRE(compileAndRun(
       "func assign_out(out int& x) { x = 42; }\n"

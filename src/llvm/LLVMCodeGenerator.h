@@ -121,6 +121,10 @@ private:
   void emitDeferCleanupFrom(size_t startIndex, bool consumeExpressions);
   void emitDestructorCleanup(bool consumeEntries);
   void emitDestructorCleanupFrom(size_t startIndex, bool consumeEntries);
+  void emitSingleDefer(size_t index, bool consumeExpressions);
+  void emitSingleDestructor(size_t index);
+  void emitCombinedCleanup(size_t deferStart, size_t destructorStart,
+                           bool consumeExpressions);
   void maybeRegisterDestructor(ast::VariableDecl *varDecl,
                                llvm::Value *storage);
   void registerDestructorForType(llvm::Value *storage,
@@ -250,9 +254,13 @@ private:
     llvm::Value *storage = nullptr;
     std::string functionName;
     llvm::AllocaInst *flag = nullptr;
+    size_t sequence = 0;
   };
   std::vector<DestructorEntry> destructorEntries_;
   std::vector<size_t> destructorScopeMarkers_;
+  std::vector<size_t> deferSequence_;
+  size_t nextCleanupSequence_ = 0;
+  std::vector<size_t> loopDestructorMarkers_;
   // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
   std::vector<size_t> loopDeferMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
