@@ -5,10 +5,16 @@
 #include "../src/semantic/ModuleLoader.h"
 #include "../src/llvm/LLVMCodeGenerator.h"
 #include <catch2/catch_test_macros.hpp>
+#include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 using namespace c_hat;
 
@@ -1350,3 +1356,36 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   fs::remove_all(dir);
   REQUIRE(result == 42);
 }
+
+#ifndef _WIN32
+static void expectAbort(const std::string &source) {
+  pid_t pid = fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    std::signal(SIGABRT, SIG_DFL);
+    int result = compileAndRun(source);
+    _exit(result);
+  }
+  int status = 0;
+  REQUIRE(waitpid(pid, &status, 0) == pid);
+  REQUIRE(WIFSIGNALED(status));
+  REQUIRE(WTERMSIG(status) == SIGABRT);
+}
+
+TEST_CASE("Integration: runtime bounds abort", "[integration][bounds]") {
+  expectAbort(
+      "func main() -> int {\n"
+      "    int[3] a = [1, 2, 3];\n"
+      "    var i = 3;\n"
+      "    return a[i];\n"
+      "}\n");
+
+  expectAbort(
+      "func main() -> int {\n"
+      "    int[4] a = [1, 2, 3, 4];\n"
+      "    var e = 5;\n"
+      "    int[] s = a[1..e];\n"
+      "    return s[0];\n"
+      "}\n");
+}
+#endif
