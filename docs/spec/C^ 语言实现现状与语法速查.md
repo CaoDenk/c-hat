@@ -317,7 +317,7 @@ extern "C" {
 
 | 功能 | 现状 |
 |---|---|
-| `defer` | 已按块级作用域执行；`break` / `continue` / `goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持 |
+| `defer` | 已按块级作用域执行；正常退出、return、throw、break、continue 会执行本层 defer；`goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持 |
 | `comptime { ... }` 块 | 解析失败（当前只支持部分 comptime 语句） |
 | 反射 `Fold` / `Expansion` | codegen 仍是 “not implemented” |
 | 协程 `await/yield` | 只有部分语法/分析 |
@@ -344,7 +344,7 @@ extern "C" {
 - `catch (T e)` 已按类型标签精确匹配：按书写顺序尝试 catch，未匹配的异常继续向外传播；`catch (...)` 接受所有异常。当前不做基类/隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
 - 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
 - `defer` 已按块级作用域执行：正常块退出、return、throw 会执行本层 defer；循环体内 defer 每轮执行。
-- 仍有边界：`break` / `continue` / `goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持；同函数 try 捕获异常时，catch 之外的 defer 可能在 throw 点提前执行。
+- 仍有边界：`goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持；同函数 try 捕获异常时，catch 之外的 defer 可能在 throw 点提前执行。
 - 自动析构/RAII 尚未实现；目前只有显式 `delete` 会调用析构函数。
 - 异常值按 64 位字传递，适合 int/char/bool/指针/类指针；结构体按值异常尚未完整支持。
 - 嵌套 try / `catch (...)` / catch 内再次 throw 已可用。

@@ -526,6 +526,26 @@ TEST_CASE("Integration: block-scoped defer", "[integration][defer]") {
       "}\n") == 42);
 
   REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    foreach (var i : 0..10) {\n"
+      "        defer r = r + 1;\n"
+      "        if (i == 2) { break; }\n"
+      "    }\n"
+      "    return r + 39;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    foreach (var i : 0..3) {\n"
+      "        defer r = r + 1;\n"
+      "        if (i == 1) { continue; }\n"
+      "    }\n"
+      "    return r + 39;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
       "class Box {\n"
       "    int value;\n"
       "    Box(int v) { value = v; }\n"

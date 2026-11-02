@@ -226,6 +226,8 @@ private:
   std::vector<llvm::AllocaInst *> deferFlags_;
   // 每个词法块在 deferExpressions_ 中的起始位置；块退出时只执行本层 defer。
   std::vector<size_t> deferScopeMarkers_;
+  // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
+  std::vector<size_t> loopDeferMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
   std::vector<llvm::Value *> exceptionHandlerStack_;
   std::vector<std::string> namespaceStack_;

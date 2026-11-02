@@ -4701,7 +4701,9 @@ llvm::Value *LLVMCodeGenerator::generateWhileStmt(
   builder()->SetInsertPoint(bodyBB);
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
+  loopDeferMarkers_.push_back(deferExpressions_.size());
   generateStatement(std::move(whileStmt->body));
+  loopDeferMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   builder()->CreateBr(condBB);
@@ -4732,7 +4734,9 @@ llvm::Value *LLVMCodeGenerator::generateDoWhileStmt(
   builder()->SetInsertPoint(bodyBB);
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
+  loopDeferMarkers_.push_back(deferExpressions_.size());
   generateStatement(std::move(doWhileStmt->body));
+  loopDeferMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (builder()->GetInsertBlock() &&
@@ -4917,7 +4921,9 @@ llvm::Value *LLVMCodeGenerator::generateForeachStmt(
 
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(stepBB);
+  loopDeferMarkers_.push_back(deferExpressions_.size());
   generateStatement(std::move(forStmt->body));
+  loopDeferMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (!builder()->GetInsertBlock()->getTerminator()) {
@@ -4990,7 +4996,9 @@ LLVMCodeGenerator::generateForStmt(std::unique_ptr<ast::ForStmt> forStmt) {
   builder()->SetInsertPoint(bodyBB);
   breakTargets_.push_back(afterBB);
   continueTargets_.push_back(condBB);
+  loopDeferMarkers_.push_back(deferExpressions_.size());
   generateStatement(std::move(forStmt->body));
+  loopDeferMarkers_.pop_back();
   breakTargets_.pop_back();
   continueTargets_.pop_back();
   if (forStmt->update) {
@@ -5013,6 +5021,9 @@ llvm::Value *LLVMCodeGenerator::generateBreakStmt(
     error("break outside loop");
     return nullptr;
   }
+  if (!loopDeferMarkers_.empty()) {
+    emitDeferCleanupFrom(loopDeferMarkers_.back(), false);
+  }
   builder()->CreateBr(breakTargets_.back());
   llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
       context(), "afterbreak", builder()->GetInsertBlock()->getParent());
@@ -5026,6 +5037,9 @@ llvm::Value *LLVMCodeGenerator::generateContinueStmt(
   if (continueTargets_.empty()) {
     error("continue outside loop");
     return nullptr;
+  }
+  if (!loopDeferMarkers_.empty()) {
+    emitDeferCleanupFrom(loopDeferMarkers_.back(), false);
   }
   builder()->CreateBr(continueTargets_.back());
   llvm::BasicBlock *deadBB = llvm::BasicBlock::Create(
@@ -5785,6 +5799,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   deferExpressions_.clear();
   deferFlags_.clear();
   deferScopeMarkers_.clear();
+  loopDeferMarkers_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *selfArg = &(*argIt++);
@@ -5830,6 +5845,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   deferExpressions_.clear();
   deferFlags_.clear();
   deferScopeMarkers_.clear();
+  loopDeferMarkers_.clear();
   return function;
 }
 
