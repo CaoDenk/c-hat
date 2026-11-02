@@ -4,6 +4,7 @@
 #include <fstream>
 #include <print>
 #include <stdexcept>
+#include <unordered_set>
 
 
 namespace c_hat {
@@ -117,9 +118,26 @@ bool ModuleLoader::isModuleLoaded(
 
 namespace {
 
+std::string topLevelName(ast::Declaration *decl) {
+  if (auto *func = dynamic_cast<ast::FunctionDecl *>(decl)) {
+    return func->name;
+  }
+  if (auto *cls = dynamic_cast<ast::ClassDecl *>(decl)) {
+    return cls->name;
+  }
+  if (auto *st = dynamic_cast<ast::StructDecl *>(decl)) {
+    return st->name;
+  }
+  if (auto *var = dynamic_cast<ast::VariableDecl *>(decl)) {
+    return var->name;
+  }
+  return {};
+}
+
 void appendLoadedProgram(ast::Program &target,
                          std::unique_ptr<ast::Program> loaded,
-                         ModuleLoader &loader) {
+                         ModuleLoader &loader,
+                         std::unordered_set<std::string> &seen) {
   if (!loaded) {
     return;
   }
@@ -132,7 +150,7 @@ void appendLoadedProgram(ast::Program &target,
     }
   }
   for (auto &child : nested) {
-    appendLoadedProgram(target, std::move(child), loader);
+    appendLoadedProgram(target, std::move(child), loader, seen);
   }
 
   // import/module 声明不进入 codegen；其余声明追加到主程序。
@@ -141,6 +159,11 @@ void appendLoadedProgram(ast::Program &target,
         dynamic_cast<ast::ModuleDecl *>(decl.get())) {
       continue;
     }
+    std::string name = topLevelName(decl.get());
+    if (!name.empty() && !seen.insert(name).second) {
+      throw std::runtime_error(
+          "Duplicate top-level symbol across modules: " + name);
+    }
     target.declarations.push_back(std::move(decl));
   }
 }
@@ -148,6 +171,13 @@ void appendLoadedProgram(ast::Program &target,
 } // namespace
 
 void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
+  std::unordered_set<std::string> seen;
+  for (auto &decl : program.declarations) {
+    std::string name = topLevelName(decl.get());
+    if (!name.empty()) {
+      seen.insert(name);
+    }
+  }
   std::vector<std::unique_ptr<ast::Program>> imported;
   for (auto &decl : program.declarations) {
     if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
@@ -155,7 +185,7 @@ void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
     }
   }
   for (auto &moduleProgram : imported) {
-    appendLoadedProgram(program, std::move(moduleProgram), loader);
+    appendLoadedProgram(program, std::move(moduleProgram), loader, seen);
   }
 }
 

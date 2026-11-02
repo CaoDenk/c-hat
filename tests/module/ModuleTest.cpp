@@ -1,7 +1,10 @@
 // ModuleTest.cpp - 模块系统设计 (docs/design/模块系统设计.md)
 #include "../src/parser/Parser.h"
 #include "../src/semantic/SemanticAnalyzer.h"
+#include "../src/semantic/ModuleLoader.h"
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace c_hat;
@@ -79,4 +82,27 @@ TEST_CASE("Module: public export", "[module][semantic]") {
             "public class Point { public int x; public int y; }\n"
             "func main() { }") == true);
     }
+}
+
+TEST_CASE("Module: duplicate top-level symbols are rejected", "[module][errors]") {
+  namespace fs = std::filesystem;
+  fs::path dir = fs::temp_directory_path() / "c_hat_module_dup_test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  {
+    std::ofstream a(dir / "A.ch");
+    a << "module A;\npublic func foo() -> int { return 1; }\n";
+  }
+  {
+    std::ofstream b(dir / "B.ch");
+    b << "module B;\npublic func foo() -> int { return 2; }\n";
+  }
+
+  parser::Parser parser("import A; import B; func main() { }");
+  auto program = parser.parseProgram();
+  REQUIRE(program != nullptr);
+  semantic::ModuleLoader loader(std::vector<std::string>{dir.string()});
+  REQUIRE_THROWS_AS(semantic::loadImportsInto(*program, loader),
+                    std::runtime_error);
+  fs::remove_all(dir);
 }
