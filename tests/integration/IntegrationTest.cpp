@@ -1268,6 +1268,16 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import A;\nfunc main() -> int { return A.foo(); }\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import A as X;\nfunc main() -> int { return X.foo(); }\n",
+      dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);
 }

@@ -301,7 +301,7 @@ extern "C" {
 - 枚举成员访问 `Color.Green` / `Color::Green`（本次修复）
 - `+=` / `-=` / `*=` / `++` / `--`（本次修复）
 - `extern "C"` 调用 libc（如 `puts`）
-- `import` 模块递归加载并合并到主程序（基础 whole-program 模式，无独立模块 ABI）
+- `import` 模块递归加载并合并到主程序；支持限定调用 `A.foo()` 和别名 `X.foo()`（基础 whole-program 模式，无独立模块 ABI）
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
@@ -353,7 +353,7 @@ extern "C" {
 
 - 当前是 whole-program 合并：import 的声明会加入主程序一起分析/codegen。
 - 还没有独立编译对象、模块级稳定 mangling、跨模块 ABI 或增量编译。
-- 模块别名/`A.foo()` 限定访问还未完整打通，简单场景优先使用导入后的非限定名。
+- `A.foo()` 与 `import A as X; X.foo()` 已在 whole-program 模式下支持。
 
 ### OOP 当前边界
 

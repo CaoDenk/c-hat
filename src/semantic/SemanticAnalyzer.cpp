@@ -4048,6 +4048,21 @@ void SemanticAnalyzer::applyOutArguments(
 
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
+  // 模块限定调用：A.foo(...) / alias.foo(...)。当前模块系统是
+  // whole-program 合并，限定名在语义层重写为非限定函数名。
+  if (auto *member =
+          dynamic_cast<ast::MemberExpr *>(callExpr->callee.get())) {
+    if (auto *objectIdent =
+            dynamic_cast<ast::Identifier *>(member->object.get())) {
+      auto objectSymbol = symbolTable.lookupSymbol(objectIdent->name);
+      if (std::dynamic_pointer_cast<ModuleSymbol>(objectSymbol)) {
+        auto callee = std::make_unique<ast::Identifier>(member->member);
+        callExpr->callee = std::move(callee);
+        return analyzeCallExpr(callExpr);
+      }
+    }
+  }
+
   // 分析参数类型。等待 out 解析的 &late 参数先不触发读取检查。
   std::vector<std::shared_ptr<types::Type>> argTypes;
   std::vector<bool> uninitializedRefArgs;
