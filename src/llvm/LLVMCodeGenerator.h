@@ -119,6 +119,10 @@ private:
   // 会移动原始 AST（仅函数正常结束时使用）。
   void emitDeferCleanup(bool consumeExpressions);
   void emitDeferCleanupFrom(size_t startIndex, bool consumeExpressions);
+  void emitDestructorCleanup(bool consumeEntries);
+  void emitDestructorCleanupFrom(size_t startIndex, bool consumeEntries);
+  void maybeRegisterDestructor(ast::VariableDecl *varDecl,
+                               llvm::Value *storage);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
@@ -240,6 +244,13 @@ private:
   std::vector<llvm::AllocaInst *> deferFlags_;
   // 每个词法块在 deferExpressions_ 中的起始位置；块退出时只执行本层 defer。
   std::vector<size_t> deferScopeMarkers_;
+  struct DestructorEntry {
+    llvm::Value *storage = nullptr;
+    std::string functionName;
+    llvm::AllocaInst *flag = nullptr;
+  };
+  std::vector<DestructorEntry> destructorEntries_;
+  std::vector<size_t> destructorScopeMarkers_;
   // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
   std::vector<size_t> loopDeferMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。

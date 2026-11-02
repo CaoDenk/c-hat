@@ -306,7 +306,8 @@ extern "C" {
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
 - 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用（本次修复；静态派发）
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
-- 显式 `delete` 调用析构函数（本次修复）
+- 显式 `delete` 调用析构函数
+- 栈上 class 值在块退出、return、throw 时自动析构
 - 结构体字段赋值/读取 `p.x = 7; return p.x;`
 - POD struct 值构造 `P(40, 2)` / 泛型结构体值构造 `Point<int>(40, 2)`
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
@@ -323,7 +324,7 @@ extern "C" {
 | 功能 | 现状 |
 |---|---|
 | `defer` | 已按块级作用域执行；正常退出、return、throw、break、continue 会执行本层 defer；支持 `defer expr;` 与 `defer { ... }`；defer 体内禁止 return/break/continue；`goto` 跳出块时尚未执行本层 defer |
-| `out T&` | 已实现标量/固定数组/POD struct/普通 class 及 return 路径检查；带析构对象、FFI out 待扩展 |
+| `out T&` | 已实现标量/固定数组/POD struct/普通 class 及 return 路径检查；out 到带析构对象、FFI out 待扩展 |
 | `[value; N]` | 已实现整数字面量 N、标量/指针元素；编译期常量与复杂元素待扩展 |
 | `late` 数组整体赋值 | 已实现：整体赋值/批量初始化后可用；逐元素写入仍报未初始化 |
 | `comptime { ... }` 块 | 解析失败（当前只支持部分 comptime 语句） |
@@ -349,7 +350,7 @@ extern "C" {
 - 继承目前是**静态派发**：`Animal^ a = new Dog(...); a->speak()` 调用 `Animal_speak`，不会走 `Dog_speak`；虚表/接口动态派发尚未实现。
 - 派生类构造函数支持 `: base(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
 - `static` 字段初始化目前只支持字面量；静态方法不能访问实例成员（语义层会检查）。
-- 自动析构/RAII 仍未实现；显式 `delete` 已能调用 `ClassName_~ClassName`。
+- 栈上 class 值已支持自动析构；`late` 对象、数组元素析构和完整 RAII 展开仍未实现。
 - 多继承、接口作为参数类型/动态派发、属性与继承的复杂交互仍不完整。
 
 ### 异常实现限制（v1）
@@ -359,7 +360,7 @@ extern "C" {
 - 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
 - `defer` 已按块级作用域执行：正常块退出、return、throw 会执行本层 defer；循环体内 defer 每轮执行。
 - 仍有边界：`goto` 跳出块时尚未执行本层 defer；同函数 try 捕获异常时，catch 之外的 defer 可能在 throw 点提前执行。
-- 自动析构/RAII 尚未实现；目前只有显式 `delete` 会调用析构函数。
+- 栈上 class 值会自动析构；`late` 成功构造对象、数组元素和堆对象的完整 RAII 仍待实现。
 - 异常值按 64 位字传递，适合 int/char/bool/指针/类指针；结构体按值异常尚未完整支持。
 - 嵌套 try / `catch (...)` / catch 内再次 throw 已可用。
 

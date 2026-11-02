@@ -264,6 +264,57 @@ TEST_CASE("Integration: struct value construction", "[integration][struct]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: stack object destructors", "[integration][raii]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    { C c = C(b); }\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func f(Box^ b) -> int {\n"
+      "    { C c = C(b); return 0; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    f(b);\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func f(Box^ b) -> void {\n"
+      "    C c = C(b);\n"
+      "    throw 3;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    try { f(b); } catch (int e) { }\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: out parameters", "[integration][out]") {
   REQUIRE(compileAndRun(
       "func assign_out(out int& x) { x = 42; }\n"
