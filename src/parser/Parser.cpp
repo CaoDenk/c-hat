@@ -2754,10 +2754,7 @@ std::unique_ptr<ast::Expression> Parser::parseUnaryExpr() {
     }
     expect(lexer::TokenType::RParen,
            "Expected ')' after type in sizeof expression");
-    // 创建一个 SizeofExpr 表达式
-    return std::make_unique<ast::CallExpr>(
-        std::make_unique<ast::Identifier>("sizeof"),
-        std::vector<std::unique_ptr<ast::Expression>>());
+    return std::make_unique<ast::SizeofExpr>(std::move(type));
   } else if (match(lexer::TokenType::Typeof)) {
     expect(lexer::TokenType::LParen, "Expected '(' after 'typeof'");
     auto expr = parseExpression();

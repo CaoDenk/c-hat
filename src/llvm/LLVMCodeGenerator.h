@@ -201,6 +201,8 @@ private:
   llvm::Value *
   generateTypeofExpr(std::unique_ptr<ast::TypeofExpr> typeofExpr);
   llvm::Value *
+  generateSizeofExpr(std::unique_ptr<ast::SizeofExpr> sizeofExpr);
+  llvm::Value *
   generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr> metaFieldExpr);
   llvm::Value *
   generateBuiltinVarExpr(std::unique_ptr<ast::BuiltinVarExpr> builtinVarExpr);

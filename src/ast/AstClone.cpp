@@ -136,6 +136,10 @@ std::unique_ptr<Expression> cloneExprImpl(const Expression *expr,
     }
     return std::make_unique<ArrayInitExpr>(std::move(elements));
   }
+  if (auto *sizeofExpr = dynamic_cast<const SizeofExpr *>(expr)) {
+    return std::make_unique<SizeofExpr>(
+        cloneTypeImpl(sizeofExpr->type.get(), subst));
+  }
   if (auto *newExpr = dynamic_cast<const NewExpr *>(expr)) {
     std::unique_ptr<Type> type;
     if (auto *typeNode = dynamic_cast<const Type *>(newExpr->type.get())) {

@@ -3394,6 +3394,9 @@ SemanticAnalyzer::analyzeExpressionImpl(ast::Expression *expression) {
   case ast::NodeType::TypeofExpr:
     return analyzeTypeofExpr(
         static_cast<ast::TypeofExpr *>(expression));
+  case ast::NodeType::SizeofExpr:
+    return analyzeSizeofExpr(
+        static_cast<ast::SizeofExpr *>(expression));
   case ast::NodeType::MetaFieldAccessExpr:
     return analyzeMetaFieldAccessExpr(
         static_cast<ast::MetaFieldAccessExpr *>(expression));
@@ -5225,6 +5228,20 @@ std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeTypeIsExpr(ast::TypeIsExpr *typeIsExpr) {
   // type is kind 返回 bool
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Bool);
+}
+
+std::shared_ptr<types::Type>
+SemanticAnalyzer::analyzeSizeofExpr(ast::SizeofExpr *sizeofExpr) {
+  if (!sizeofExpr || !sizeofExpr->type) {
+    error("sizeof requires a type", *sizeofExpr);
+    return nullptr;
+  }
+  if (!analyzeType(sizeofExpr->type.get())) {
+    error("Invalid type in sizeof expression", *sizeofExpr);
+    return nullptr;
+  }
+  return types::TypeFactory::getPrimitiveType(
+      types::PrimitiveType::Kind::Long);
 }
 
 std::shared_ptr<types::Type>

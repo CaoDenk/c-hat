@@ -2452,6 +2452,9 @@ LLVMCodeGenerator::generateExpression(std::unique_ptr<ast::Expression> expr) {
   case ast::NodeType::TypeofExpr:
     return generateTypeofExpr(std::unique_ptr<ast::TypeofExpr>(
         static_cast<ast::TypeofExpr *>(expr.release())));
+  case ast::NodeType::SizeofExpr:
+    return generateSizeofExpr(std::unique_ptr<ast::SizeofExpr>(
+        static_cast<ast::SizeofExpr *>(expr.release())));
   case ast::NodeType::MetaFieldAccessExpr:
     return generateMetaFieldAccessExpr(std::unique_ptr<ast::MetaFieldAccessExpr>(
         static_cast<ast::MetaFieldAccessExpr *>(expr.release())));
@@ -5419,6 +5422,22 @@ llvm::Value *LLVMCodeGenerator::generateTypeIsExpr(
 }
 
 // 生成 typeof 表达式
+llvm::Value *LLVMCodeGenerator::generateSizeofExpr(
+    std::unique_ptr<ast::SizeofExpr> sizeofExpr) {
+  if (!sizeofExpr || !sizeofExpr->type) {
+    error("sizeof requires a type", sizeofExpr.get());
+    return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0);
+  }
+  llvm::Type *type = generateType(sizeofExpr->type.get());
+  if (!type) {
+    error("Invalid type in sizeof expression", sizeofExpr.get());
+    return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0);
+  }
+  uint64_t size =
+      module()->getDataLayout().getTypeAllocSize(type).getFixedValue();
+  return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), size);
+}
+
 llvm::Value *LLVMCodeGenerator::generateTypeofExpr(
     std::unique_ptr<ast::TypeofExpr> typeofExpr) {
   // typeof 在编译期求值，返回类型信息

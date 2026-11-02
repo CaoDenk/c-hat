@@ -61,6 +61,22 @@ TEST_CASE("Integration: main returns constant", "[integration][e2e]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: sizeof", "[integration][sizeof]") {
+  REQUIRE(compileAndRun(
+      "struct P { int x; int y; }\n"
+      "func main() -> int {\n"
+      "    long a = sizeof(int);\n"
+      "    long b = sizeof(long);\n"
+      "    long c = sizeof(int[3]);\n"
+      "    long d = sizeof(P);\n"
+      "    if (a != 4) { return 1; }\n"
+      "    if (b != 8) { return 2; }\n"
+      "    if (c != 12) { return 3; }\n"
+      "    if (d != 8) { return 4; }\n"
+      "    return 42;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: computed value", "[integration][e2e]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

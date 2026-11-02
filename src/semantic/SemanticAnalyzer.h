@@ -302,6 +302,8 @@ private:
   // 分析 typeof 表达式
   std::shared_ptr<types::Type>
   analyzeTypeofExpr(ast::TypeofExpr *typeofExpr);
+  std::shared_ptr<types::Type>
+  analyzeSizeofExpr(ast::SizeofExpr *sizeofExpr);
 
   // 分析编译期字段访问表达式
   std::shared_ptr<types::Type>

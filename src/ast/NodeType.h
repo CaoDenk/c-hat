@@ -29,6 +29,7 @@ enum class NodeType {
   ConditionalExpr,
   TypeIsExpr,
   TypeofExpr,
+  SizeofExpr,
   MetaFieldAccessExpr,
 
   // 声明
