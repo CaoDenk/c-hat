@@ -350,7 +350,7 @@ extern "C" {
 - `out T&` 已覆盖 POD struct/class、带析构对象、out 数组元素析构和 extern C 基础调用（gettimeofday 测试）。
 - 结构体按值传参与 `p^` 解引用已补齐基础 codegen。
 - 不引入 `mut`：调用点 `&x` 表示可变引用/初始化引用，只读引用可隐式传递。
-- 枚举可用于 `Color.Green` / `Color::Green` 和整数比较，但 `match` 的枚举模式、穷尽性检查尚未实现。
+- 枚举可用于 `Color.Green` / `Color::Green` 和整数比较；`match` 支持 `Color.Red` 模式并做无 `_` 时的穷尽性检查。
 
 ### 模块当前边界
 

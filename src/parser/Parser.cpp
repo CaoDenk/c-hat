@@ -4067,6 +4067,17 @@ std::unique_ptr<ast::Pattern> Parser::parsePattern() {
       return pattern;
     }
     advance();
+    if (match(lexer::TokenType::Dot)) {
+      if (!check(lexer::TokenType::Identifier)) {
+        error("Expected enum member after '.' in pattern");
+        return nullptr;
+      }
+      std::string member = currentToken->getValue();
+      advance();
+      return std::make_unique<ast::Pattern>(
+          std::make_unique<ast::MemberExpr>(
+              std::make_unique<ast::Identifier>(val), member, false));
+    }
     return std::make_unique<ast::Pattern>(
         std::make_unique<ast::Identifier>(val));
   } else if (match(lexer::TokenType::IntegerLiteral)) {

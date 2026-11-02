@@ -71,3 +71,26 @@ TEST_CASE("Match: guards and bindings", "[match][semantic]") {
                 "func test() { var x = 1; match (x) { \"bad\" => { } _ => { } }; }") == false);
   }
 }
+
+TEST_CASE("Match: enum exhaustiveness", "[match][enum]") {
+  SECTION("Missing enum member is rejected") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; "
+                "match (c) { Color.Red => { } } }") == false);
+  }
+
+  SECTION("All enum members is accepted") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; "
+                "match (c) { Color.Red => { } Color.Green => { } } }") == true);
+  }
+
+  SECTION("Default arm makes enum match exhaustive") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; "
+                "match (c) { Color.Red => { } _ => { } } }") == true);
+  }
+}

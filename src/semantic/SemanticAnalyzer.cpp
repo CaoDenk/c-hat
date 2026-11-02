@@ -3045,6 +3045,68 @@ SemanticAnalyzer::analyzeMatchStmt(ast::MatchStmt *matchStmt) {
     symbolTable.exitScope();
   }
 
+  // 枚举 match 穷尽性：没有 _ 时必须覆盖所有枚举成员。
+  // 当前枚举表达式在语义模型中可能已退化为 int，因此也根据
+  // `Color.Red` 形式的具体模式反推枚举类型。
+  std::string enumName;
+  if (matchType && matchType->isClass()) {
+    auto classType = std::dynamic_pointer_cast<types::ClassType>(matchType);
+    if (classType) {
+      enumName = classType->getName();
+    }
+  }
+  if (enumName.empty()) {
+    for (const auto &arm : matchStmt->arms) {
+      if (!arm || !arm->pattern || arm->pattern->isDefault) {
+        continue;
+      }
+      if (auto *member =
+              dynamic_cast<ast::MemberExpr *>(arm->pattern->value.get())) {
+        if (auto *object =
+                dynamic_cast<ast::Identifier *>(member->object.get())) {
+          const TypeMetadata *patternMetadata =
+              MetadataRegistry::instance().getType(object->name);
+          if (patternMetadata && patternMetadata->isEnum) {
+            enumName = object->name;
+            break;
+          }
+        }
+      }
+    }
+  }
+  const TypeMetadata *metadata =
+      enumName.empty() ? nullptr
+                       : MetadataRegistry::instance().getType(enumName);
+  if (metadata && metadata->isEnum) {
+      bool hasDefault = false;
+      std::set<std::string> covered;
+      for (const auto &arm : matchStmt->arms) {
+        if (!arm || !arm->pattern) {
+          continue;
+        }
+        if (arm->pattern->isDefault) {
+          hasDefault = true;
+          continue;
+        }
+        if (auto *member = dynamic_cast<ast::MemberExpr *>(
+                arm->pattern->value.get())) {
+          auto *object = dynamic_cast<ast::Identifier *>(
+              member->object.get());
+          if (object && object->name == metadata->name) {
+            covered.insert(member->member);
+          }
+        }
+      }
+      if (!hasDefault) {
+        for (const auto &field : metadata->fields) {
+          if (!covered.count(field.name)) {
+            error("Non-exhaustive enum match, missing: " + field.name,
+                  *matchStmt);
+          }
+        }
+      }
+  }
+
   return nullptr;
 }
 std::shared_ptr<types::Type>
