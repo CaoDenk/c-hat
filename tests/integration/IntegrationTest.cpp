@@ -332,6 +332,47 @@ TEST_CASE("Integration: stack object destructors", "[integration][raii]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: goto cleanup", "[integration][goto][raii]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "func f(Box^ b) -> void {\n"
+      "    {\n"
+      "        defer b->value = 42;\n"
+      "        goto done;\n"
+      "    }\n"
+      "done:\n"
+      "    return;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    f(b);\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func f(Box^ b) -> void {\n"
+      "    {\n"
+      "        C c = C(b);\n"
+      "        goto done;\n"
+      "    }\n"
+      "done:\n"
+      "    return;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    f(b);\n"
+      "    return b->value;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: out object destructor", "[integration][out][raii]") {
   REQUIRE(compileAndRun(
       "class Box { int value; }\n"

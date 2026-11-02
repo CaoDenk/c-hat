@@ -266,6 +266,7 @@ private:
   size_t nextCleanupSequence_ = 0;
   std::vector<size_t> loopDestructorMarkers_;
   std::unordered_map<std::string, std::vector<bool>> functionOutParams_;
+  std::unordered_map<std::string, int> labelScopeDepths_;
   // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
   std::vector<size_t> loopDeferMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。

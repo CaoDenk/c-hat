@@ -16,6 +16,68 @@ namespace c_hat {
 namespace llvm_codegen {
 
 namespace {
+void collectLabelScopeDepths(ast::Statement *stmt, int depth,
+                             std::unordered_map<std::string, int> &out) {
+  if (!stmt) {
+    return;
+  }
+  switch (stmt->getType()) {
+  case ast::NodeType::CompoundStmt: {
+    auto *compound = static_cast<ast::CompoundStmt *>(stmt);
+    for (auto &node : compound->statements) {
+      if (auto *child = dynamic_cast<ast::Statement *>(node.get())) {
+        collectLabelScopeDepths(child, depth + 1, out);
+      }
+    }
+    break;
+  }
+  case ast::NodeType::LabelStmt:
+    out[static_cast<ast::LabelStmt *>(stmt)->label] = depth;
+    break;
+  case ast::NodeType::IfStmt: {
+    auto *ifStmt = static_cast<ast::IfStmt *>(stmt);
+    collectLabelScopeDepths(ifStmt->thenBranch.get(), depth, out);
+    collectLabelScopeDepths(ifStmt->elseBranch.get(), depth, out);
+    break;
+  }
+  case ast::NodeType::WhileStmt:
+    collectLabelScopeDepths(static_cast<ast::WhileStmt *>(stmt)->body.get(),
+                            depth, out);
+    break;
+  case ast::NodeType::DoWhileStmt:
+    collectLabelScopeDepths(static_cast<ast::DoWhileStmt *>(stmt)->body.get(),
+                            depth, out);
+    break;
+  case ast::NodeType::ForStmt:
+    collectLabelScopeDepths(static_cast<ast::ForStmt *>(stmt)->body.get(),
+                            depth, out);
+    break;
+  case ast::NodeType::TryStmt: {
+    auto *tryStmt = static_cast<ast::TryStmt *>(stmt);
+    collectLabelScopeDepths(tryStmt->tryBlock.get(), depth, out);
+    for (const auto &catchStmt : tryStmt->catchStmts) {
+      if (catchStmt) {
+        collectLabelScopeDepths(catchStmt->body.get(), depth, out);
+      }
+    }
+    break;
+  }
+  case ast::NodeType::MatchStmt: {
+    auto *matchStmt = static_cast<ast::MatchStmt *>(stmt);
+    for (const auto &arm : matchStmt->arms) {
+      if (arm) {
+        collectLabelScopeDepths(arm->body.get(), depth, out);
+      }
+    }
+    break;
+  }
+  default:
+    break;
+  }
+}
+} // namespace
+
+namespace {
 
 llvm::GlobalVariable *getOrCreateGlobal(llvm::Module *module, const char *name,
                                         llvm::Type *type,
@@ -782,6 +844,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -815,7 +878,9 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   }
 
   bool hasDefer = false;
+  labelScopeDepths_.clear();
   if (auto *bodyStmt = dynamic_cast<ast::Statement *>(funcDecl->body.get())) {
+    collectLabelScopeDepths(bodyStmt, 0, labelScopeDepths_);
     hasDefer = statementContainsDefer(bodyStmt);
   }
   llvm::Value *functionPrevHandler = nullptr;
@@ -929,6 +994,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -954,6 +1020,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1220,6 +1287,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1425,6 +1493,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
           deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1460,6 +1529,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1694,6 +1764,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1876,6 +1947,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -1900,6 +1972,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -6594,6 +6667,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -6644,6 +6718,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
         deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -6662,6 +6737,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   deferFlags_.clear();
   deferSequence_.clear();
   nextCleanupSequence_ = 0;
+  labelScopeDepths_.clear();
   destructorEntries_.clear();
   destructorScopeMarkers_.clear();
   loopDestructorMarkers_.clear();
@@ -6966,6 +7042,19 @@ llvm::Value *LLVMCodeGenerator::generateAwaitExpr(
 llvm::Value *
 LLVMCodeGenerator::generateGotoStmt(std::unique_ptr<ast::GotoStmt> gotoStmt) {
   if (!gotoStmt->label.empty()) {
+    auto depthIt = labelScopeDepths_.find(gotoStmt->label);
+    int currentDepth = static_cast<int>(deferScopeMarkers_.size());
+    if (depthIt != labelScopeDepths_.end() &&
+        depthIt->second < currentDepth) {
+      size_t targetDepth = static_cast<size_t>(depthIt->second);
+      size_t deferStart = targetDepth < deferScopeMarkers_.size()
+                              ? deferScopeMarkers_[targetDepth]
+                              : deferExpressions_.size();
+      size_t dtorStart = targetDepth < destructorScopeMarkers_.size()
+                             ? destructorScopeMarkers_[targetDepth]
+                             : destructorEntries_.size();
+      emitCombinedCleanup(deferStart, dtorStart, false);
+    }
     auto it = labelBlocks_.find(gotoStmt->label);
     if (it != labelBlocks_.end()) {
       builder()->CreateBr(it->second);
@@ -6987,6 +7076,10 @@ llvm::Value *LLVMCodeGenerator::generateLabelStmt(
     if (it != labelBlocks_.end()) {
       labelBlock = it->second;
       if (labelBlock->size() == 0) {
+        llvm::BasicBlock *prevBlock = builder()->GetInsertBlock();
+        if (prevBlock && !prevBlock->getTerminator()) {
+          builder()->CreateBr(labelBlock);
+        }
         builder()->SetInsertPoint(labelBlock);
       } else {
         llvm::BasicBlock *newBlock =
