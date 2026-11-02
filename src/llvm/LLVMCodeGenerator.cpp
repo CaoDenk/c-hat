@@ -2722,6 +2722,47 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
     llvm::Value *ptr = builder()->CreatePointerCast(
         raw, llvm::PointerType::getUnqual(context()), "array.ptr");
 
+    // 非平凡元素：逐元素调用默认构造函数。
+    std::string elementClassName;
+    if (auto *named = dynamic_cast<ast::NamedType *>(arrayType->baseType.get())) {
+      elementClassName = named->name;
+    }
+    if (!elementClassName.empty()) {
+      std::string ctorName = elementClassName + "_" + elementClassName;
+      auto ctorIt = functions_.find(ctorName);
+      if (ctorIt != functions_.end() && ctorIt->second->arg_size() == 1) {
+        llvm::Function *func = builder()->GetInsertBlock()->getParent();
+        llvm::AllocaInst *index = createEntryAlloca(
+            llvm::Type::getInt64Ty(context()), "new.ctor.index");
+        builder()->CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0),
+            index);
+        llvm::BasicBlock *condBB =
+            llvm::BasicBlock::Create(context(), "new.ctor.cond", func);
+        llvm::BasicBlock *bodyBB =
+            llvm::BasicBlock::Create(context(), "new.ctor.body", func);
+        llvm::BasicBlock *afterBB =
+            llvm::BasicBlock::Create(context(), "new.ctor.after", func);
+        builder()->CreateBr(condBB);
+        builder()->SetInsertPoint(condBB);
+        llvm::Value *idx = builder()->CreateLoad(
+            llvm::Type::getInt64Ty(context()), index, "new.ctor.idx");
+        llvm::Value *inBounds = builder()->CreateICmpULT(
+            idx, count64, "new.ctor.inbounds");
+        builder()->CreateCondBr(inBounds, bodyBB, afterBB);
+        builder()->SetInsertPoint(bodyBB);
+        llvm::Value *elementPtr = builder()->CreateGEP(
+            elementType, ptr, idx, "new.ctor.elem");
+        builder()->CreateCall(ctorIt->second, {elementPtr});
+        llvm::Value *next = builder()->CreateAdd(
+            idx, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 1),
+            "new.ctor.next");
+        builder()->CreateStore(next, index);
+        builder()->CreateBr(condBB);
+        builder()->SetInsertPoint(afterBB);
+      }
+    }
+
     llvm::StructType *sliceType = getOrCreateSliceType(elementType);
     llvm::Value *sliceValue =
         builder()->CreateInsertValue(llvm::UndefValue::get(sliceType), ptr, 0);
@@ -2787,6 +2828,11 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
 // 生成 delete 表达式
 llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     std::unique_ptr<ast::DeleteExpr> deleteExpr) {
+  std::shared_ptr<types::Type> deletedType;
+  if (semanticModel_ && deleteExpr->expr) {
+    deletedType = semanticModel_->getExpressionType(deleteExpr->expr.get());
+  }
+
   llvm::Value *exprValue = generateExpression(std::move(deleteExpr->expr));
   if (!exprValue) {
     return nullptr;
@@ -2794,6 +2840,8 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
 
   // 切片值 { ptr, len } 释放底层 ptr；指针值直接释放。
   llvm::Value *ptrValue = exprValue;
+  llvm::Value *sliceLen = nullptr;
+  llvm::Type *sliceElementType = nullptr;
   llvm::Type *valueType = exprValue->getType();
   if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(exprValue)) {
     llvm::Type *allocatedType = alloca->getAllocatedType();
@@ -2801,16 +2849,76 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
       llvm::Value *sliceValue =
           builder()->CreateLoad(allocatedType, alloca, "delete.slice");
       ptrValue = builder()->CreateExtractValue(sliceValue, 0, "delete.ptr");
+      sliceLen = builder()->CreateExtractValue(sliceValue, 1, "delete.len");
+      sliceElementType = getSliceElementType(
+          llvm::cast<llvm::StructType>(allocatedType));
     } else if (allocatedType->isPointerTy()) {
       ptrValue =
           builder()->CreateLoad(allocatedType, alloca, "delete.ptr.load");
     }
   } else if (valueType->isStructTy() && isSliceStructType(valueType)) {
-    ptrValue = builder()->CreateExtractValue(exprValue, 0, "delete.ptr");
+    llvm::Value *sliceValue = exprValue;
+    ptrValue = builder()->CreateExtractValue(sliceValue, 0, "delete.ptr");
+    sliceLen = builder()->CreateExtractValue(sliceValue, 1, "delete.len");
+    sliceElementType = getSliceElementType(
+        llvm::cast<llvm::StructType>(valueType));
+  }
+
+  // 切片元素析构：逐元素调用 ClassName_~ClassName。
+  if (sliceLen && deletedType && deletedType->isSlice()) {
+    auto sliceType =
+        std::dynamic_pointer_cast<types::SliceType>(deletedType);
+    auto elementType = sliceType ? sliceType->getElementType() : nullptr;
+    if (elementType && elementType->isClass()) {
+      auto classType =
+          std::dynamic_pointer_cast<types::ClassType>(elementType);
+      if (classType && classType->hasDestructor()) {
+        std::string dtorName =
+            classType->getName() + "_~" + classType->getName();
+        auto dtorIt = functions_.find(dtorName);
+        if (dtorIt != functions_.end()) {
+          llvm::Type *elementLLVMType =
+              sliceElementType ? sliceElementType
+                               : lowerSemanticType(elementType);
+          if (!elementLLVMType) {
+            elementLLVMType = llvm::Type::getInt8Ty(context());
+          }
+          llvm::Function *func = builder()->GetInsertBlock()->getParent();
+          llvm::AllocaInst *index = createEntryAlloca(
+              llvm::Type::getInt64Ty(context()), "delete.index");
+          builder()->CreateStore(
+              llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0),
+              index);
+          llvm::BasicBlock *condBB =
+              llvm::BasicBlock::Create(context(), "delete.cond", func);
+          llvm::BasicBlock *bodyBB =
+              llvm::BasicBlock::Create(context(), "delete.body", func);
+          llvm::BasicBlock *afterBB =
+              llvm::BasicBlock::Create(context(), "delete.after", func);
+          builder()->CreateBr(condBB);
+          builder()->SetInsertPoint(condBB);
+          llvm::Value *idx = builder()->CreateLoad(
+              llvm::Type::getInt64Ty(context()), index, "delete.idx");
+          llvm::Value *inBounds = builder()->CreateICmpULT(
+              idx, sliceLen, "delete.inbounds");
+          builder()->CreateCondBr(inBounds, bodyBB, afterBB);
+          builder()->SetInsertPoint(bodyBB);
+          llvm::Value *elementPtr = builder()->CreateGEP(
+              elementLLVMType, ptrValue, idx, "delete.elem");
+          builder()->CreateCall(dtorIt->second, {elementPtr});
+          llvm::Value *next = builder()->CreateAdd(
+              idx, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 1),
+              "delete.next");
+          builder()->CreateStore(next, index);
+          builder()->CreateBr(condBB);
+          builder()->SetInsertPoint(afterBB);
+        }
+      }
+    }
   }
 
   // 类指针：调用 ClassName_~ClassName(this)。
-  if (!deleteExpr->typeName.empty()) {
+  if (!deleteExpr->typeName.empty() && !sliceLen) {
     std::string dtorName =
         deleteExpr->typeName + "_~" + deleteExpr->typeName;
     auto it = functions_.find(dtorName);

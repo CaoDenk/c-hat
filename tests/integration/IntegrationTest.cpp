@@ -641,6 +641,25 @@ TEST_CASE("Integration: late array whole assignment", "[integration][array][late
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: new array element lifecycle", "[integration][array][raii]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    static Box^ target;\n"
+      "    Box^ p;\n"
+      "    C() { p = target; }\n"
+      "    ~C() { p->value = p->value + 1; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    C.target = b;\n"
+      "    C[] a = new C[3];\n"
+      "    delete[] a;\n"
+      "    return b->value;\n"
+      "}\n") == 3);
+}
+
 TEST_CASE("Integration: repeat array initializer", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
