@@ -990,6 +990,7 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
             << returnType->getTypeID() << std::endl;
 
   std::vector<llvm::Type *> paramTypes;
+  std::vector<bool> outParams;
   c_hat::debugStream() << "Debug: createFunctionPrototype - processing parameters"
             << std::endl;
   for (auto &paramNode : funcDecl->params) {
@@ -1002,6 +1003,7 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
                                  funcDecl->name);
       }
       paramTypes.push_back(paramType);
+      outParams.push_back(param->isOut);
       c_hat::debugStream() << "Debug: createFunctionPrototype - parameter type: "
                 << paramType->getTypeID() << std::endl;
     }
@@ -1018,6 +1020,9 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
       isVariadic = true;
       paramTypes
           .pop_back(); // 移除变参参数，因为 LLVM 函数类型中变参是单独标记的
+      if (!outParams.empty()) {
+        outParams.pop_back();
+      }
     }
   }
 
@@ -1082,6 +1087,8 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
       uniqueFuncName += typeName;
     }
   }
+
+  functionOutParams_[uniqueFuncName] = outParams;
 
   if (semanticModel_ && namespaceStack_.empty() &&
       funcDecl->specifiers.find("extern") == std::string::npos) {
@@ -3692,9 +3699,50 @@ std::vector<llvm::Value *> LLVMCodeGenerator::coerceCallArguments(
   return args;
 }
 
+void LLVMCodeGenerator::registerOutDestructors(
+    llvm::Function *func, const std::vector<std::string> &argNames) {
+  if (!func) {
+    return;
+  }
+  auto flagsIt = functionOutParams_.find(func->getName().str());
+  if (flagsIt == functionOutParams_.end()) {
+    return;
+  }
+  const auto &flags = flagsIt->second;
+  for (size_t i = 0; i < flags.size() && i < argNames.size(); ++i) {
+    if (!flags[i] || argNames[i].empty()) {
+      continue;
+    }
+    auto valueIt = namedValues_.find(argNames[i]);
+    if (valueIt == namedValues_.end()) {
+      continue;
+    }
+    auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(valueIt->second);
+    if (!alloca || !alloca->getAllocatedType()->isStructTy()) {
+      continue;
+    }
+    auto *structType = llvm::cast<llvm::StructType>(alloca->getAllocatedType());
+    if (structType->hasName()) {
+      registerDestructorForClassName(alloca, structType->getName().str());
+    }
+  }
+}
+
 // 生成调用表达式
 llvm::Value *
 LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
+  std::vector<std::string> outArgNames(callExpr->args.size());
+  for (size_t i = 0; i < callExpr->args.size(); ++i) {
+    if (auto *unary =
+            dynamic_cast<ast::UnaryExpr *>(callExpr->args[i].get());
+        unary && unary->op == ast::UnaryExpr::Op::Ref) {
+      if (auto *ident =
+              dynamic_cast<ast::Identifier *>(unary->expr.get())) {
+        outArgNames[i] = ident->name;
+      }
+    }
+  }
+
   // 获取函数名
   std::string funcName;
   if (auto *ident = dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
@@ -3853,7 +3901,9 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     auto it = functions_.find(callExpr->resolvedMangledName);
     if (it != functions_.end()) {
       auto callArgs = coerceCallArguments(it->second, args);
-      return builder()->CreateCall(it->second, callArgs);
+      auto *call = builder()->CreateCall(it->second, callArgs);
+      registerOutDestructors(it->second, outArgNames);
+      return call;
     }
     if (semanticModel_) {
       error("Resolved function not found: " + callExpr->resolvedMangledName,
@@ -3889,21 +3939,27 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
     auto callArgs = coerceCallArguments(it->second, args);
-    return builder()->CreateCall(it->second, callArgs);
+    auto *call = builder()->CreateCall(it->second, callArgs);
+    registerOutDestructors(it->second, outArgNames);
+    return call;
   }
 
   // 回退到简单名查找（无参函数或 extern 函数）
   it = functions_.find(funcName);
   if (it != functions_.end()) {
     auto callArgs = coerceCallArguments(it->second, args);
-    return builder()->CreateCall(it->second, callArgs);
+    auto *call = builder()->CreateCall(it->second, callArgs);
+    registerOutDestructors(it->second, outArgNames);
+    return call;
   }
 
   // 最后尝试使用 LLVM module 中的函数（extern 声明）
   llvm::Function *func = module()->getFunction(funcName);
   if (func) {
     auto callArgs = coerceCallArguments(func, args);
-    return builder()->CreateCall(func, callArgs);
+    auto *call = builder()->CreateCall(func, callArgs);
+    registerOutDestructors(func, outArgNames);
+    return call;
   }
 
   error("Unknown function: " + funcName + " (mangled: " + mangledName + ")");
@@ -6132,9 +6188,9 @@ void LLVMCodeGenerator::emitSingleDefer(size_t i, bool consumeExpressions) {
 }
 
 // 登记局部对象的析构清理。只对带析构函数的 class/struct 值生效。
-void LLVMCodeGenerator::registerDestructorForType(
-    llvm::Value *storage, const std::shared_ptr<types::Type> &type) {
-  if (!storage || !type || !type->isClass()) {
+void LLVMCodeGenerator::registerDestructorForClassName(
+    llvm::Value *storage, const std::string &className) {
+  if (!storage || className.empty()) {
     return;
   }
   for (const auto &entry : destructorEntries_) {
@@ -6142,12 +6198,7 @@ void LLVMCodeGenerator::registerDestructorForType(
       return;
     }
   }
-  auto classType = std::dynamic_pointer_cast<types::ClassType>(type);
-  if (!classType || !classType->hasDestructor()) {
-    return;
-  }
-  std::string dtorName =
-      classType->getName() + "_~" + classType->getName();
+  std::string dtorName = className + "_~" + className;
   if (functions_.find(dtorName) == functions_.end()) {
     return;
   }
@@ -6160,6 +6211,18 @@ void LLVMCodeGenerator::registerDestructorForType(
   builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
   destructorEntries_.push_back(
       {storage, dtorName, flag, nextCleanupSequence_++});
+}
+
+void LLVMCodeGenerator::registerDestructorForType(
+    llvm::Value *storage, const std::shared_ptr<types::Type> &type) {
+  if (!storage || !type || !type->isClass()) {
+    return;
+  }
+  auto classType = std::dynamic_pointer_cast<types::ClassType>(type);
+  if (!classType || !classType->hasDestructor()) {
+    return;
+  }
+  registerDestructorForClassName(storage, classType->getName());
 }
 
 void LLVMCodeGenerator::maybeRegisterDestructor(

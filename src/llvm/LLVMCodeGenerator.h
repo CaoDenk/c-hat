@@ -129,6 +129,10 @@ private:
                                llvm::Value *storage);
   void registerDestructorForType(llvm::Value *storage,
                                  const std::shared_ptr<types::Type> &type);
+  void registerDestructorForClassName(llvm::Value *storage,
+                                      const std::string &className);
+  void registerOutDestructors(llvm::Function *func,
+                              const std::vector<std::string> &argNames);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
@@ -261,6 +265,7 @@ private:
   std::vector<size_t> deferSequence_;
   size_t nextCleanupSequence_ = 0;
   std::vector<size_t> loopDestructorMarkers_;
+  std::unordered_map<std::string, std::vector<bool>> functionOutParams_;
   // 与 breakTargets_ 平行：break/continue 跳出循环体时要清理的 defer 起点。
   std::vector<size_t> loopDeferMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
