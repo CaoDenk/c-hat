@@ -322,7 +322,7 @@ extern "C" {
 | 功能 | 现状 |
 |---|---|
 | `defer` | 已按块级作用域执行；正常退出、return、throw、break、continue 会执行本层 defer；`goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持 |
-| `out T&` | 已实现标量/固定数组及 return 路径检查；POD struct、带析构对象、FFI out 待扩展 |
+| `out T&` | 已实现标量/固定数组/POD struct 及 return 路径检查；带析构对象、FFI out 待扩展 |
 | `[value; N]` | 已实现整数字面量 N、标量/指针元素；编译期常量与复杂元素待扩展 |
 | `late` 数组整体赋值 | 已实现：整体赋值/批量初始化后可用；逐元素写入仍报未初始化 |
 | `comptime { ... }` 块 | 解析失败（当前只支持部分 comptime 语句） |
@@ -338,7 +338,8 @@ extern "C" {
 - `late int[N] a;` 必须通过整体赋值或 `out T&` 初始化；逐元素写入不视为整体初始化。
 - `[value; N]` 的 N 目前只支持整数字面量；`const int N` 作为长度后续支持。
 - 引用参数/局部引用/`out T&` 已端到端可用（标量、固定数组）。
-- `out T&` 的 POD struct、带析构对象、FFI out 仍待扩展。
+- `out T&` 已覆盖 POD struct；带析构对象、FFI out 仍待扩展。
+- 结构体按值传参与 `p^` 解引用已补齐基础 codegen。
 - 不引入 `mut`：调用点 `&x` 表示可变引用/初始化引用，只读引用可隐式传递。
 - 枚举可用于 `Color.Green` / `Color::Green` 和整数比较，但 `match` 的枚举模式、穷尽性检查尚未实现。
 

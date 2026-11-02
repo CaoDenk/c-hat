@@ -298,6 +298,27 @@ TEST_CASE("Integration: out parameters", "[integration][out]") {
       "    good(&a);\n"
       "    return a;\n"
       "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "struct P { int x; int y; }\n"
+      "func copy_out(out P& dst, P src) { dst = src; }\n"
+      "func main() -> int {\n"
+      "    P^ s = new P();\n"
+      "    s->x = 40;\n"
+      "    s->y = 2;\n"
+      "    late P dst;\n"
+      "    copy_out(&dst, s^);\n"
+      "    return dst.x + dst.y;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "struct P { int x; int y; }\n"
+      "func bad(out P& dst) { }\n"
+      "func main() -> int {\n"
+      "    late P p;\n"
+      "    bad(&p);\n"
+      "    return 0;\n"
+      "}\n") == -2);
 }
 
 TEST_CASE("Integration: references", "[integration][reference]") {

@@ -3428,6 +3428,7 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
     break;
   }
 
+  ast::Expression *operandExpr = unaryExpr->expr.get();
   llvm::Value *operand = generateExpression(std::move(unaryExpr->expr));
   if (!operand) {
     return nullptr;
@@ -3478,8 +3479,30 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
     return builder()->CreateNeg(operand, "negtmp");
   case ast::UnaryExpr::Op::Not:
     return builder()->CreateNot(operand, "nottmp");
-  case ast::UnaryExpr::Op::Dereference:
-    return builder()->CreateLoad(operand->getType(), operand, "deref");
+  case ast::UnaryExpr::Op::Dereference: {
+    llvm::Type *pointeeType = nullptr;
+    if (semanticModel_) {
+      auto semanticType =
+          semanticModel_->getExpressionType(operandExpr);
+      if (semanticType && semanticType->isReference()) {
+        auto reference =
+            std::dynamic_pointer_cast<types::ReferenceType>(semanticType);
+        semanticType = reference ? reference->getBaseType() : nullptr;
+      }
+      if (semanticType && semanticType->isPointer()) {
+        auto pointer =
+            std::dynamic_pointer_cast<types::PointerType>(semanticType);
+        if (pointer) {
+          pointeeType = lowerSemanticType(pointer->getPointeeType());
+        }
+      }
+    }
+    if (!pointeeType) {
+      error("Cannot infer pointee type for dereference", unaryExpr.get());
+      return nullptr;
+    }
+    return builder()->CreateLoad(pointeeType, operand, "deref");
+  }
   case ast::UnaryExpr::Op::AddressOf:
     return operand; // 返回地址
   case ast::UnaryExpr::Op::PreIncrement: {
