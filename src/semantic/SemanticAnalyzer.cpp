@@ -4623,8 +4623,9 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
       auto memberSymbol = symbolTable.lookupSymbol(memberExpr->member);
       if (memberSymbol &&
           memberSymbol->getType() == SymbolType::Variable) {
-        return types::TypeFactory::getPrimitiveType(
-            types::PrimitiveType::Kind::Int);
+        return std::make_shared<types::EnumType>(
+            metadata->name, types::TypeFactory::getPrimitiveType(
+                                types::PrimitiveType::Kind::Int));
       }
       error("Unknown enum member: " + objectIdent->name + "." +
                 memberExpr->member,
@@ -5664,12 +5665,13 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
     return std::make_shared<types::ClassType>("string");
   }
 
-  // 枚举底层类型是 int。
+  // 枚举是名义类型，底层表示仍为 int。
   const TypeMetadata *metadata =
       MetadataRegistry::instance().getType(typeName);
   if (metadata && metadata->isEnum) {
-    return types::TypeFactory::getPrimitiveType(
-        types::PrimitiveType::Kind::Int);
+    return std::make_shared<types::EnumType>(
+        typeName, types::TypeFactory::getPrimitiveType(
+                     types::PrimitiveType::Kind::Int));
   }
 
   // 检查符号表

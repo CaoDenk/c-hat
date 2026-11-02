@@ -44,6 +44,9 @@ public:
   // 检查是否为接口类型
   virtual bool isInterface() const { return false; }
 
+  // 检查是否为枚举类型
+  virtual bool isEnum() const { return false; }
+
   // 检查是否为泛型类型
   virtual bool isGeneric() const { return false; }
 

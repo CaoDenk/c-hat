@@ -2,6 +2,7 @@
 
 #include "ArrayType.h"
 #include "ClassType.h"
+#include "EnumType.h"
 #include "FunctionType.h"
 #include "GenericType.h"
 #include "LiteralViewType.h"

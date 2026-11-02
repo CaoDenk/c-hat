@@ -2125,6 +2125,9 @@ llvm::Type *LLVMCodeGenerator::lowerSemanticType(
     return llvm::StructType::get(context(), {baseType,
                                             llvm::Type::getInt1Ty(context())});
   }
+  if (auto *enumType = dynamic_cast<types::EnumType *>(type.get())) {
+    return llvm::Type::getInt32Ty(context());
+  }
   if (auto *primitiveType = dynamic_cast<types::PrimitiveType *>(type.get())) {
     switch (primitiveType->getKind()) {
     case types::PrimitiveType::Kind::Void:

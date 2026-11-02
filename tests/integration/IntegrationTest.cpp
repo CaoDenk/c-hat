@@ -886,7 +886,9 @@ TEST_CASE("Integration: do-while goto and enum", "[integration][control]") {
       "    goto done;\n"
       "    i = 99;\n"
       "done:\n"
-      "    return i + Color.Green;\n"
+      "    Color c = Color.Green;\n"
+      "    if (c == Color.Green) { return i + 1; }\n"
+      "    return 0;\n"
       "}\n") == 4);
 }
 

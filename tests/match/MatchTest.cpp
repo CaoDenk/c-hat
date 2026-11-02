@@ -94,3 +94,23 @@ TEST_CASE("Match: enum exhaustiveness", "[match][enum]") {
                 "match (c) { Color.Red => { } _ => { } } }") == true);
   }
 }
+
+TEST_CASE("Match: enum nominal type", "[match][enum]") {
+  SECTION("Enum value can initialize enum variable") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; }") == true);
+  }
+
+  SECTION("Enum cannot implicitly convert to int") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; int x = c; }") == false);
+  }
+
+  SECTION("Int cannot implicitly convert to enum") {
+    REQUIRE(analyzeSource(
+                "enum Color { Red, Green } "
+                "func test() { Color c = Color.Red; c = 1; }") == false);
+  }
+}
