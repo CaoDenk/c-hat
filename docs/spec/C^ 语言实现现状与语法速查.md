@@ -322,7 +322,7 @@ extern "C" {
 | 功能 | 现状 |
 |---|---|
 | `defer` | 已按块级作用域执行；正常退出、return、throw、break、continue 会执行本层 defer；`goto` 跳出块时尚未执行本层 defer；`defer { ... }` 语法尚未支持 |
-| `out T&` | 已实现标量/固定数组/POD struct 及 return 路径检查；带析构对象、FFI out 待扩展 |
+| `out T&` | 已实现标量/固定数组/POD struct/普通 class 及 return 路径检查；带析构对象、FFI out 待扩展 |
 | `[value; N]` | 已实现整数字面量 N、标量/指针元素；编译期常量与复杂元素待扩展 |
 | `late` 数组整体赋值 | 已实现：整体赋值/批量初始化后可用；逐元素写入仍报未初始化 |
 | `comptime { ... }` 块 | 解析失败（当前只支持部分 comptime 语句） |

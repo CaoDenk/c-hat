@@ -319,6 +319,17 @@ TEST_CASE("Integration: out parameters", "[integration][out]") {
       "    bad(&p);\n"
       "    return 0;\n"
       "}\n") == -2);
+
+  REQUIRE(compileAndRun(
+      "class C { int x; }\n"
+      "func copy_out(out C& dst, C src) { dst = src; }\n"
+      "func main() -> int {\n"
+      "    C^ s = new C();\n"
+      "    s->x = 42;\n"
+      "    late C dst;\n"
+      "    copy_out(&dst, s^);\n"
+      "    return dst.x;\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: references", "[integration][reference]") {
