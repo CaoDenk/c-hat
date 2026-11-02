@@ -1,10 +1,31 @@
-
 module std.io.Console;
 
 extern "C" {
-    func puts(byte^ s) -> int;
+    func puts(byte!^ s) -> int;
+    func printf(byte!^ format, ...) -> int;
 }
 
 public func println(byte!^ message) {
     puts(message);
+}
+
+public func print_int(int value) {
+    printf("%d", value);
+}
+
+public func println_int(int value) {
+    printf("%d\n", value);
+}
+
+public func print_bool(bool value) {
+    if (value) {
+        printf("true");
+    } else {
+        printf("false");
+    }
+}
+
+public func println_bool(bool value) {
+    print_bool(value);
+    printf("\n");
 }

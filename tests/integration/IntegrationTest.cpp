@@ -1380,6 +1380,14 @@ TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
       "    return 0;\n"
       "}\n",
       stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.io.Console;\n"
+      "func main() -> int {\n"
+      "    print_int(42);\n"
+      "    return 42;\n"
+      "}\n",
+      stdlibDir) == 42);
 }
 
 TEST_CASE("Integration: module imports", "[integration][module]") {
