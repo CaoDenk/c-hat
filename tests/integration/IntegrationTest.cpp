@@ -363,6 +363,24 @@ TEST_CASE("Integration: stack object destructors", "[integration][raii]") {
       "}\n") == 2);
 }
 
+TEST_CASE("Integration: goto defer registration count", "[integration][goto][defer]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "func f(Box^ b) -> void {\n"
+      "    var i = 0;\n"
+      "start:\n"
+      "    i = i + 1;\n"
+      "    defer b->value = b->value + 1;\n"
+      "    if (i < 3) { goto start; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    f(b);\n"
+      "    return b->value;\n"
+      "}\n") == 3);
+}
+
 TEST_CASE("Integration: goto cleanup", "[integration][goto][raii]") {
   REQUIRE(compileAndRun(
       "class Box { int value; }\n"

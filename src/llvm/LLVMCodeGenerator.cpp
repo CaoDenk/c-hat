@@ -6276,9 +6276,15 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
   llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                  func->getEntryBlock().begin());
   llvm::AllocaInst *flag = entryBuilder.CreateAlloca(
-      llvm::Type::getInt1Ty(context()), nullptr, "defer.flag");
-  entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
-  builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
+      llvm::Type::getInt64Ty(context()), nullptr, "defer.count");
+  entryBuilder.CreateStore(
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0), flag);
+  llvm::Value *oldCount = builder()->CreateLoad(
+      llvm::Type::getInt64Ty(context()), flag, "defer.count.old");
+  llvm::Value *newCount = builder()->CreateAdd(
+      oldCount, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 1),
+      "defer.count.new");
+  builder()->CreateStore(newCount, flag);
 
   if (deferStmt->body) {
     deferExpressions_.push_back(nullptr);
@@ -6310,6 +6316,7 @@ void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
 }
 
 void LLVMCodeGenerator::emitSingleDefer(size_t i, bool consumeExpressions) {
+  (void)consumeExpressions;
   if (i >= deferExpressions_.size()) {
     return;
   }
@@ -6325,51 +6332,52 @@ void LLVMCodeGenerator::emitSingleDefer(size_t i, bool consumeExpressions) {
   }
   llvm::AllocaInst *flag =
       i < deferFlags_.size() ? deferFlags_[i] : nullptr;
-  llvm::BasicBlock *thenBB =
+  if (!flag) {
+    return;
+  }
+
+  llvm::BasicBlock *checkBB =
+      llvm::BasicBlock::Create(context(), "defer.check", func);
+  llvm::BasicBlock *bodyBB =
       llvm::BasicBlock::Create(context(), "defer.then", func);
   llvm::BasicBlock *mergeBB =
       llvm::BasicBlock::Create(context(), "defer.cont", func);
+  builder()->CreateBr(checkBB);
 
-  if (flag) {
-    llvm::Value *enabled = builder()->CreateLoad(
-        llvm::Type::getInt1Ty(context()), flag, "defer.enabled");
-    builder()->CreateCondBr(enabled, thenBB, mergeBB);
-  } else {
-    builder()->CreateBr(thenBB);
-  }
+  builder()->SetInsertPoint(checkBB);
+  llvm::Value *count = builder()->CreateLoad(
+      llvm::Type::getInt64Ty(context()), flag, "defer.count");
+  llvm::Value *active = builder()->CreateICmpSGT(
+      count, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0),
+      "defer.active");
+  builder()->CreateCondBr(active, bodyBB, mergeBB);
 
-  builder()->SetInsertPoint(thenBB);
-  if (consumeExpressions) {
-    if (deferExpr) {
-      generateExpression(std::move(deferExpr));
-    } else if (deferBody && i < deferStatements_.size()) {
-      generateStatement(std::move(deferStatements_[i]));
+  builder()->SetInsertPoint(bodyBB);
+  if (deferExpr) {
+    auto cloned = ast::cloneExprWithSubst(deferExpr.get(), {});
+    if (cloned) {
+      generateExpression(std::move(cloned));
     }
-  } else {
-    if (deferExpr) {
-      auto cloned = ast::cloneExprWithSubst(deferExpr.get(), {});
-      if (cloned) {
-        generateExpression(std::move(cloned));
-      }
-    } else if (deferBody) {
-      auto cloned = ast::cloneStmtWithSubst(deferBody, {});
-      if (cloned) {
-        generateStatement(std::move(cloned));
-      }
-    }
-    if (flag && builder()->GetInsertBlock() &&
-        !builder()->GetInsertBlock()->getTerminator()) {
-      builder()->CreateStore(llvm::ConstantInt::getFalse(context()), flag);
+  } else if (deferBody) {
+    auto cloned = ast::cloneStmtWithSubst(deferBody, {});
+    if (cloned) {
+      generateStatement(std::move(cloned));
     }
   }
   if (builder()->GetInsertBlock() &&
       !builder()->GetInsertBlock()->getTerminator()) {
-    builder()->CreateBr(mergeBB);
+    llvm::Value *currentCount = builder()->CreateLoad(
+        llvm::Type::getInt64Ty(context()), flag, "defer.count.current");
+    llvm::Value *nextCount = builder()->CreateSub(
+        currentCount,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 1),
+        "defer.count.next");
+    builder()->CreateStore(nextCount, flag);
+    builder()->CreateBr(checkBB);
   }
   builder()->SetInsertPoint(mergeBB);
 }
 
-// 登记局部对象的析构清理。只对带析构函数的 class/struct 值生效。
 void LLVMCodeGenerator::registerDestructorForClassName(
     llvm::Value *storage, const std::string &className) {
   if (!storage || className.empty()) {
