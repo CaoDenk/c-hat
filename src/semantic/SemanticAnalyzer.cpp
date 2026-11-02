@@ -4021,7 +4021,18 @@ void SemanticAnalyzer::applyOutArguments(
         error("out argument must be &variable", *callExpr->args[i]);
         continue;
       }
+      auto symbol = symbolTable.lookupSymbol(ident->name);
+      auto varSymbol = std::dynamic_pointer_cast<VariableSymbol>(symbol);
       auto lateIt = lateVariables_.find(ident->name);
+      const bool isLateUninitialized =
+          lateIt != lateVariables_.end() && !lateIt->second.isInitialized;
+      if (varSymbol && varSymbol->isImmutableBinding() &&
+          !isLateUninitialized) {
+        error("out cannot rebind an initialized let variable: " +
+                  ident->name,
+              *callExpr->args[i]);
+        continue;
+      }
       if (lateIt != lateVariables_.end()) {
         lateIt->second.isInitialized = true;
       }

@@ -698,8 +698,9 @@ std::unique_ptr<ast::VariableDecl> Parser::tryParseVariableDecl() {
     }
 
     std::unique_ptr<ast::Node> type;
-    // 只有 Explicit 类型（没有 let/var）才需要显式类型
-    if (kind == ast::VariableKind::Explicit) {
+    // Explicit 必须写类型；late let 也必须写类型；late var 仍然非法。
+    if (kind == ast::VariableKind::Explicit ||
+        (isLate && kind == ast::VariableKind::Let)) {
       if (auto parsedType = parseType()) {
         type = std::move(parsedType);
       }

@@ -511,6 +511,22 @@ TEST_CASE("Integration: out parameters", "[integration][out]") {
       "}\n") == 42);
 
   REQUIRE(compileAndRun(
+      "func assign_out(out int& x) { x = 42; }\n"
+      "func main() -> int {\n"
+      "    late let int a;\n"
+      "    assign_out(&a);\n"
+      "    return a;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func assign_out(out int& x) { x = 42; }\n"
+      "func main() -> int {\n"
+      "    let a = 0;\n"
+      "    assign_out(&a);\n"
+      "    return a;\n"
+      "}\n") == -2);
+
+  REQUIRE(compileAndRun(
       "class C { int x; }\n"
       "func copy_out(out C& dst, C src) { dst = src; }\n"
       "func main() -> int {\n"

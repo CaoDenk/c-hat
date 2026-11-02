@@ -50,6 +50,12 @@ TEST_CASE("Late: Basic late declaration", "[late][basic]") {
   }
 }
 
+TEST_CASE("Late: let with explicit type", "[late][let]") {
+  SECTION("late let with explicit type is valid") {
+    REQUIRE(analyzeSource("func test() { late let int x; }") == true);
+  }
+}
+
 TEST_CASE("Late: arrays require whole-value initialization", "[late][array]") {
   SECTION("Whole array assignment initializes") {
     REQUIRE(analyzeSource(
