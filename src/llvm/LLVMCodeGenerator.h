@@ -77,6 +77,8 @@ private:
   llvm::Value *generateDeclaration(std::unique_ptr<ast::Declaration> decl);
 
   llvm::Value *generateVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
+  llvm::Value *
+  generateGlobalVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   llvm::Value *generateTupleDestructuringDecl(
       std::unique_ptr<ast::TupleDestructuringDecl> tupleDecl);
   llvm::Value *generateEnumDecl(std::unique_ptr<ast::EnumDecl> enumDecl);

@@ -300,6 +300,15 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
     }
   }
 
+  // 生成顶层变量（全局变量）。
+  for (auto &decl : program->declarations) {
+    if (decl && decl->getType() == ast::NodeType::VariableDecl) {
+      auto varDecl = std::unique_ptr<ast::VariableDecl>(
+          static_cast<ast::VariableDecl *>(decl.release()));
+      generateGlobalVariableDecl(std::move(varDecl));
+    }
+  }
+
   // 处理 extern 声明
   for (auto &decl : program->declarations) {
     if (decl && decl->getType() == ast::NodeType::ExternDecl) {
@@ -392,6 +401,65 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
   default:
     return nullptr;
   }
+}
+
+llvm::Value *LLVMCodeGenerator::generateGlobalVariableDecl(
+    std::unique_ptr<ast::VariableDecl> varDecl) {
+  llvm::Type *varType = nullptr;
+  if (semanticModel_) {
+    varType = lowerSemanticType(
+        semanticModel_->getDeclarationType(varDecl.get()));
+  }
+  if (!varType && varDecl->type) {
+    if (auto *typeNode = dynamic_cast<ast::Type *>(varDecl->type.get())) {
+      varType = generateType(typeNode);
+    }
+  }
+  if (!varType) {
+    error("Unknown global variable type: " + varDecl->name, varDecl.get());
+    return nullptr;
+  }
+
+  llvm::Constant *initializer = llvm::Constant::getNullValue(varType);
+  if (varDecl->initializer) {
+    if (auto *literal =
+            dynamic_cast<ast::Literal *>(varDecl->initializer.get())) {
+      switch (literal->type) {
+      case ast::Literal::Type::Integer:
+        initializer = llvm::ConstantInt::get(varType,
+                                             std::stoll(literal->value),
+                                             true);
+        break;
+      case ast::Literal::Type::Floating:
+        initializer = llvm::ConstantFP::get(varType,
+                                            std::stod(literal->value));
+        break;
+      case ast::Literal::Type::Boolean:
+        initializer = llvm::ConstantInt::get(
+            varType, literal->value == "true" ? 1 : 0, false);
+        break;
+      case ast::Literal::Type::Null:
+        initializer = llvm::Constant::getNullValue(varType);
+        break;
+      default:
+        error("Unsupported global initializer: " + varDecl->name,
+              varDecl.get());
+        return nullptr;
+      }
+    } else {
+      error("Global initializer must be a literal: " + varDecl->name,
+            varDecl.get());
+      return nullptr;
+    }
+  }
+
+  auto linkage = varDecl->specifiers.find("public") != std::string::npos
+                     ? llvm::GlobalValue::ExternalLinkage
+                     : llvm::GlobalValue::InternalLinkage;
+  auto *global = new llvm::GlobalVariable(*module(), varType,
+                                          varDecl->isConst, linkage,
+                                          initializer, varDecl->name);
+  return global;
 }
 
 llvm::Value *LLVMCodeGenerator::generateVariableDecl(
@@ -3219,6 +3287,12 @@ LLVMCodeGenerator::generateIdentifier(std::unique_ptr<ast::Identifier> ident) {
       return builder()->CreateLoad(global->getValueType(), global,
                                    ident->name + ".static");
     }
+  }
+
+  // 全局变量。
+  if (auto *global = module()->getNamedGlobal(ident->name)) {
+    return builder()->CreateLoad(global->getValueType(), global,
+                                 ident->name + ".global");
   }
 
   // 成员函数体内的裸字段名（如 self.x 写成 x）按当前类的字段解析。
@@ -7217,6 +7291,10 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
         return getReferencePointer(ident->name);
       }
       return it->second;
+    }
+
+    if (auto *global = module()->getNamedGlobal(ident->name)) {
+      return global;
     }
 
     // 裸字段名作为赋值目标：x = v（等价于 self.x = v）

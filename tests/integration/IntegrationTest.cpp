@@ -61,6 +61,20 @@ static int compileAndRunWithModules(const std::string &source,
   return codeGen.runJIT("main");
 }
 
+TEST_CASE("Integration: global variables", "[integration][global]") {
+  REQUIRE(compileAndRun(
+      "var g = 40;\n"
+      "func main() -> int {\n"
+      "    g = g + 2;\n"
+      "    return g;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "var a = 40;\n"
+      "var b = 2;\n"
+      "func main() -> int { return a + b; }\n") == 42);
+}
+
 TEST_CASE("Integration: main returns constant", "[integration][e2e]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
