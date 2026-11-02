@@ -316,7 +316,7 @@ extern "C" {
 - defer 与析构共用注册序列，严格按注册顺序 LIFO 执行
 - 结构体字段赋值/读取 `p.x = 7; return p.x;`
 - POD struct 值构造 `P(40, 2)` / 泛型结构体值构造 `Point<int>(40, 2)`
-- `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
+- `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定；语义分析会检查守卫类型、绑定作用域和基础模式类型
 - `foreach`：数组、切片、`a..b` / `a..=b` 范围、可选的 index 变量
 - `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`、按类型顺序匹配 catch、未匹配继续向外抛；catch 外 defer/析构不会被提前执行（本版为 setjmp/longjmp 实现）
 - `defer`：块级作用域；支持表达式和多语句块；正常块退出、return、throw 时按 LIFO 执行；含 defer 的中间函数也会在异常穿过时执行清理

@@ -3000,16 +3000,49 @@ SemanticAnalyzer::analyzeContinueStmt(ast::ContinueStmt *continueStmt) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeMatchStmt(ast::MatchStmt *matchStmt) {
-  // 分析 match 的表达式
+  std::shared_ptr<types::Type> matchType;
   if (matchStmt->expr) {
-    analyzeExpression(matchStmt->expr.get());
+    matchType = analyzeExpression(matchStmt->expr.get());
   }
 
-  // 分析每个 match arm
   for (auto &arm : matchStmt->arms) {
-    if (arm) {
-      analyzeStatement(arm->body.get());
+    if (!arm) {
+      continue;
     }
+    symbolTable.enterScope();
+
+    if (arm->pattern && !arm->pattern->isDefault &&
+        arm->pattern->value) {
+      if (auto *ident = dynamic_cast<ast::Identifier *>(
+              arm->pattern->value.get())) {
+        if (matchType) {
+          auto binding = std::make_shared<VariableSymbol>(
+              ident->name, matchType, ast::VariableKind::Let);
+          symbolTable.addSymbol(binding);
+        }
+      } else {
+        auto patternType = analyzeExpression(arm->pattern->value.get());
+        if (matchType && patternType && matchType->isPrimitive() &&
+            !isTypeCompatible(matchType, patternType)) {
+          error("Match pattern type mismatch", *arm->pattern);
+        }
+      }
+    }
+
+    if (arm->guard) {
+      auto guardType = analyzeExpression(arm->guard.get());
+      if (guardType) {
+        auto primitive =
+            std::dynamic_pointer_cast<types::PrimitiveType>(guardType);
+        if (!primitive ||
+            primitive->getKind() != types::PrimitiveType::Kind::Bool) {
+          error("Match guard must be bool", *arm->guard);
+        }
+      }
+    }
+
+    analyzeStatement(arm->body.get());
+    symbolTable.exitScope();
   }
 
   return nullptr;

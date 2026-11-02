@@ -44,3 +44,30 @@ TEST_CASE("Match: Basic match with integer", "[match][basic]") {
         "func test() { var x = 1; match (x) { 1 => { } }; }") == true);
   }
 }
+
+TEST_CASE("Match: guards and bindings", "[match][semantic]") {
+  SECTION("Bool guard is accepted") {
+    REQUIRE(analyzeSource(
+                "func test() { var x = 1; match (x) { 1 if true => { } _ => { } }; }") == true);
+  }
+
+  SECTION("Non-bool guard is rejected") {
+    REQUIRE(analyzeSource(
+                "func test() { var x = 1; match (x) { 1 if 1 => { } _ => { } }; }") == false);
+  }
+
+  SECTION("Undefined guard identifier is rejected") {
+    REQUIRE(analyzeSource(
+                "func test() { var x = 1; match (x) { 1 if missing => { } _ => { } }; }") == false);
+  }
+
+  SECTION("Binding is visible in guard and body") {
+    REQUIRE(analyzeSource(
+                "func test() -> int { var x = 1; var r = 0; match (x) { y if y > 0 => { r = y; } _ => { } }; return r; }") == true);
+  }
+
+  SECTION("Literal pattern type mismatch is rejected") {
+    REQUIRE(analyzeSource(
+                "func test() { var x = 1; match (x) { \"bad\" => { } _ => { } }; }") == false);
+  }
+}
