@@ -3563,6 +3563,42 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     break;
   }
 
+  // 逻辑与/或短路求值。
+  if (binaryExpr->op == ast::BinaryExpr::Op::LogicAnd ||
+      binaryExpr->op == ast::BinaryExpr::Op::LogicOr) {
+    const bool isAnd = binaryExpr->op == ast::BinaryExpr::Op::LogicAnd;
+    llvm::Value *lhs = generateExpression(std::move(binaryExpr->left));
+    if (!lhs) {
+      return nullptr;
+    }
+    lhs = toBoolean(builder(), lhs, "logic.lhs");
+    llvm::BasicBlock *lhsBB = builder()->GetInsertBlock();
+    llvm::Function *func = lhsBB->getParent();
+    llvm::BasicBlock *rhsBB =
+        llvm::BasicBlock::Create(context(), "logic.rhs", func);
+    llvm::BasicBlock *endBB =
+        llvm::BasicBlock::Create(context(), "logic.end", func);
+    if (isAnd) {
+      builder()->CreateCondBr(lhs, rhsBB, endBB);
+    } else {
+      builder()->CreateCondBr(lhs, endBB, rhsBB);
+    }
+    builder()->SetInsertPoint(rhsBB);
+    llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
+    if (!rhs) {
+      return nullptr;
+    }
+    rhs = toBoolean(builder(), rhs, "logic.rhs.bool");
+    llvm::BasicBlock *rhsEnd = builder()->GetInsertBlock();
+    builder()->CreateBr(endBB);
+    builder()->SetInsertPoint(endBB);
+    llvm::PHINode *phi = builder()->CreatePHI(
+        llvm::Type::getInt1Ty(context()), 2, "logic.result");
+    phi->addIncoming(lhs, lhsBB);
+    phi->addIncoming(rhs, rhsEnd);
+    return phi;
+  }
+
   llvm::Value *lhs = generateExpression(std::move(binaryExpr->left));
   llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
 

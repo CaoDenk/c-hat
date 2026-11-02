@@ -61,6 +61,27 @@ TEST_CASE("Integration: main returns constant", "[integration][e2e]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: logical short circuit", "[integration][logic]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "func touch(Box^ b) -> bool { b->value = b->value + 1; return true; }\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    if (false && touch(b)) { return 1; }\n"
+      "    if (true || touch(b)) { }\n"
+      "    return b->value + 42;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    long a = 4;\n"
+      "    long b = 8;\n"
+      "    if (a == 4 && b == 8) { return 42; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: sizeof", "[integration][sizeof]") {
   REQUIRE(compileAndRun(
       "struct P { int x; int y; }\n"
