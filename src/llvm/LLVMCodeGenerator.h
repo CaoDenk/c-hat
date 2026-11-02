@@ -149,6 +149,9 @@ private:
   llvm::Value *generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
                                  bool isLValue = false);
   llvm::Value *generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr);
+  llvm::Value *coerceCallArgument(llvm::Value *arg, llvm::Type *paramType);
+  std::vector<llvm::Value *>
+  coerceCallArguments(llvm::Function *func, std::vector<llvm::Value *> args);
   llvm::Value *generateMemberExpr(std::unique_ptr<ast::MemberExpr> memberExpr);
   llvm::Value *
   generateSubscriptExpr(std::unique_ptr<ast::SubscriptExpr> subscriptExpr,

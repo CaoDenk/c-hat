@@ -439,12 +439,57 @@ normal_var_path:
     }
   }
 
-  // 检查是否是数组初始化表达式
-  if (varDecl->initializer) {
+  // 固定数组字面量：生成真正的数组值，而不是切片视图。
+  if (varDecl->initializer && varType && varType->isArrayTy()) {
     if (auto *arrayInitExpr =
             dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
-      // 对于数组初始化表达式，直接调用 generateArrayInitExpr
-      // 它会返回一个 AllocaInst，我们直接使用它
+      auto *arrayType = llvm::cast<llvm::ArrayType>(varType);
+      if (arrayInitExpr->elements.size() != arrayType->getNumElements()) {
+        error("Array literal size does not match fixed array type: " +
+                  varDecl->name,
+              varDecl.get());
+        return nullptr;
+      }
+
+      llvm::AllocaInst *arrayAlloca =
+          createEntryAlloca(arrayType, varDecl->name);
+      llvm::Type *elementType = arrayType->getElementType();
+      for (size_t i = 0; i < arrayInitExpr->elements.size(); ++i) {
+        llvm::Value *elementValue =
+            generateExpression(std::move(arrayInitExpr->elements[i]));
+        if (!elementValue) {
+          return nullptr;
+        }
+        if (elementValue->getType() != elementType) {
+          if (elementType->isFloatingPointTy() &&
+              elementValue->getType()->isIntegerTy()) {
+            elementValue = builder()->CreateSIToFP(elementValue, elementType,
+                                                   "array.elem.cast");
+          } else if (elementType->isIntegerTy() &&
+                     elementValue->getType()->isFloatingPointTy()) {
+            elementValue = builder()->CreateFPToSI(elementValue, elementType,
+                                                   "array.elem.cast");
+          } else if (elementType->isIntegerTy() &&
+                     elementValue->getType()->isIntegerTy()) {
+            elementValue = builder()->CreateIntCast(
+                elementValue, elementType, true, "array.elem.cast");
+          }
+        }
+        llvm::Value *elementPtr = builder()->CreateGEP(
+            arrayType, arrayAlloca,
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
+            "array.elem.ptr");
+        builder()->CreateStore(elementValue, elementPtr);
+      }
+      namedValues_[varDecl->name] = arrayAlloca;
+      return arrayAlloca;
+    }
+  }
+
+  // 切片/上下文相关的数组字面量：保留原来的切片视图路径。
+  if (varDecl->initializer) {
+    if (dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
       llvm::Value *initValue =
           generateExpression(std::move(varDecl->initializer));
       if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
@@ -3340,6 +3385,93 @@ LLVMCodeGenerator::generateUnaryExpr(std::unique_ptr<ast::UnaryExpr> unaryExpr,
   }
 }
 
+// 调用实参转换：数组值/数组地址转切片，数值实参按形参类型提升。
+llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
+                                                   llvm::Type *paramType) {
+  if (!arg || !paramType || arg->getType() == paramType) {
+    return arg;
+  }
+
+  llvm::Type *valueType = arg->getType();
+  llvm::AllocaInst *alloca = llvm::dyn_cast<llvm::AllocaInst>(arg);
+  if (alloca) {
+    valueType = alloca->getAllocatedType();
+  }
+
+  auto asArrayAlloca = [&]() -> llvm::AllocaInst * {
+    if (alloca && valueType->isArrayTy()) {
+      return alloca;
+    }
+    if (valueType->isArrayTy()) {
+      llvm::AllocaInst *tmp =
+          createEntryAlloca(valueType, "call.array.tmp");
+      builder()->CreateStore(arg, tmp);
+      return tmp;
+    }
+    return nullptr;
+  };
+
+  // 数组 -> 切片视图 {ptr, len}。
+  if (auto *arrayAlloca = asArrayAlloca()) {
+    auto *arrayType = llvm::cast<llvm::ArrayType>(valueType);
+    llvm::StructType *sliceType =
+        getOrCreateSliceType(arrayType->getElementType());
+    if (paramType == sliceType) {
+      llvm::Value *ptr = builder()->CreateGEP(
+          arrayType, arrayAlloca,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+          "call.slice.ptr");
+      llvm::Value *slice = builder()->CreateInsertValue(
+          llvm::UndefValue::get(sliceType), ptr, 0);
+      return builder()->CreateInsertValue(
+          slice,
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
+                                 arrayType->getNumElements()),
+          1);
+    }
+    // 数组 -> 指向首元素的指针。
+    if (paramType->isPointerTy()) {
+      return builder()->CreateGEP(
+          arrayType, arrayAlloca,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)},
+          "call.array.ptr");
+    }
+  }
+
+  // 切片地址 -> 切片值。
+  if (alloca && isSliceStructType(valueType) && paramType == valueType) {
+    return builder()->CreateLoad(valueType, alloca, "call.slice.load");
+  }
+
+  // 数值转换。
+  if (paramType->isFloatingPointTy() && valueType->isIntegerTy()) {
+    return builder()->CreateSIToFP(arg, paramType, "call.cast");
+  }
+  if (paramType->isIntegerTy() && valueType->isFloatingPointTy()) {
+    return builder()->CreateFPToSI(arg, paramType, "call.cast");
+  }
+  if (paramType->isIntegerTy() && valueType->isIntegerTy()) {
+    return builder()->CreateIntCast(arg, paramType, true, "call.cast");
+  }
+  if (paramType->isFloatingPointTy() && valueType->isFloatingPointTy()) {
+    return builder()->CreateFPExt(arg, paramType, "call.cast");
+  }
+  return arg;
+}
+
+std::vector<llvm::Value *> LLVMCodeGenerator::coerceCallArguments(
+    llvm::Function *func, std::vector<llvm::Value *> args) {
+  if (!func) {
+    return args;
+  }
+  for (size_t i = 0; i < args.size() && i < func->arg_size(); ++i) {
+    args[i] = coerceCallArgument(args[i], func->getArg(i)->getType());
+  }
+  return args;
+}
+
 // 生成调用表达式
 llvm::Value *
 LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
@@ -3472,7 +3604,8 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   if (!callExpr->resolvedMangledName.empty()) {
     auto it = functions_.find(callExpr->resolvedMangledName);
     if (it != functions_.end()) {
-      return builder()->CreateCall(it->second, args);
+      auto callArgs = coerceCallArguments(it->second, args);
+      return builder()->CreateCall(it->second, callArgs);
     }
     if (semanticModel_) {
       error("Resolved function not found: " + callExpr->resolvedMangledName,
@@ -3507,19 +3640,22 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   // 用 LLVM 类型 mangled 名查找
   auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
-    return builder()->CreateCall(it->second, args);
+    auto callArgs = coerceCallArguments(it->second, args);
+    return builder()->CreateCall(it->second, callArgs);
   }
 
   // 回退到简单名查找（无参函数或 extern 函数）
   it = functions_.find(funcName);
   if (it != functions_.end()) {
-    return builder()->CreateCall(it->second, args);
+    auto callArgs = coerceCallArguments(it->second, args);
+    return builder()->CreateCall(it->second, callArgs);
   }
 
   // 最后尝试使用 LLVM module 中的函数（extern 声明）
   llvm::Function *func = module()->getFunction(funcName);
   if (func) {
-    return builder()->CreateCall(func, args);
+    auto callArgs = coerceCallArguments(func, args);
+    return builder()->CreateCall(func, callArgs);
   }
 
   error("Unknown function: " + funcName + " (mangled: " + mangledName + ")");
