@@ -3047,9 +3047,18 @@ std::unique_ptr<ast::Expression> Parser::parseArrayInit() {
   std::vector<std::unique_ptr<ast::Expression>> elements;
 
   if (!check(lexer::TokenType::RBracket)) {
-    do {
+    auto first = parseExpression();
+    if (match(lexer::TokenType::Semicolon)) {
+      auto count = parseExpression();
+      expect(lexer::TokenType::RBracket,
+             "Expected ']' after repeated array initializer");
+      return std::make_unique<ast::ArrayInitExpr>(std::move(first),
+                                                  std::move(count));
+    }
+    elements.push_back(std::move(first));
+    while (match(lexer::TokenType::Comma)) {
       elements.push_back(parseExpression());
-    } while (match(lexer::TokenType::Comma));
+    }
   }
 
   expect(lexer::TokenType::RBracket, "Expected ']' after array elements");

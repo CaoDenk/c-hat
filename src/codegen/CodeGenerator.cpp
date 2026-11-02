@@ -798,6 +798,11 @@ CodeGenerator::generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr) {
 
 std::string CodeGenerator::generateArrayInitExpr(
     std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr) {
+  if (arrayInitExpr->isRepeat()) {
+    return "{" + generateExpression(std::move(arrayInitExpr->repeatValue)) +
+           "; " + generateExpression(std::move(arrayInitExpr->repeatCount)) +
+           "}";
+  }
   std::string code = "{";
   for (size_t i = 0; i < arrayInitExpr->elements.size(); ++i) {
     if (i > 0) {

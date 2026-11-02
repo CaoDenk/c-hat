@@ -50,6 +50,23 @@ TEST_CASE("Late: Basic late declaration", "[late][basic]") {
   }
 }
 
+TEST_CASE("Late: arrays require whole-value initialization", "[late][array]") {
+  SECTION("Whole array assignment initializes") {
+    REQUIRE(analyzeSource(
+        "func test() -> int { late int[5] a; a = [1, 2, 3, 4, 5]; return a[0]; }") == true);
+  }
+
+  SECTION("Element writes do not initialize whole array") {
+    REQUIRE(analyzeSource(
+        "func test() -> int { late int[5] a; a[0] = 1; return a[0]; }") == false);
+  }
+
+  SECTION("Repeat initializer assigns whole array") {
+    REQUIRE(analyzeSource(
+        "func test() -> int { int[5] a = [0; 5]; return a[0]; }") == true);
+  }
+}
+
 TEST_CASE("Late: Late in if-else", "[late][if_else]") {
   SECTION("Late initialized in if-else both branches") {
     REQUIRE(analyzeSource(

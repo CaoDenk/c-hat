@@ -14,9 +14,20 @@ public:
   ArrayInitExpr(std::vector<std::unique_ptr<Expression>> elements)
       : elements(std::move(elements)) {}
 
+  ArrayInitExpr(std::unique_ptr<Expression> repeatValue,
+                std::unique_ptr<Expression> repeatCount)
+      : repeatValue(std::move(repeatValue)),
+        repeatCount(std::move(repeatCount)) {}
+
+  bool isRepeat() const { return repeatValue != nullptr; }
+
   NodeType getType() const override { return NodeType::ArrayInitExpr; }
   std::string toString() const override;
   std::unique_ptr<Expression> clone() const override {
+    if (isRepeat()) {
+      return std::make_unique<ArrayInitExpr>(repeatValue->clone(),
+                                             repeatCount->clone());
+    }
     std::vector<std::unique_ptr<Expression>> clonedElements;
     for (const auto &element : elements) {
       clonedElements.push_back(element->clone());
@@ -25,6 +36,8 @@ public:
   }
 
   std::vector<std::unique_ptr<Expression>> elements;
+  std::unique_ptr<Expression> repeatValue;
+  std::unique_ptr<Expression> repeatCount;
 };
 
 } // namespace ast

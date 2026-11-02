@@ -5,6 +5,10 @@ namespace c_hat {
 namespace ast {
 
 std::string ArrayInitExpr::toString() const {
+  if (isRepeat()) {
+    return std::format("ArrayInitExpr([{}; {}])", repeatValue->toString(),
+                       repeatCount->toString());
+  }
   std::string elementsStr = "";
   for (size_t i = 0; i < elements.size(); i++) {
     if (i > 0)

@@ -4819,6 +4819,39 @@ SemanticAnalyzer::analyzeLambdaExpr(ast::LambdaExpr *lambdaExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeArrayInitExpr(ast::ArrayInitExpr *arrayInitExpr) {
+  if (arrayInitExpr->isRepeat()) {
+    auto elementType = analyzeExpression(arrayInitExpr->repeatValue.get());
+    auto countType = analyzeExpression(arrayInitExpr->repeatCount.get());
+    if (!elementType || !countType) {
+      return nullptr;
+    }
+    auto *countLiteral =
+        dynamic_cast<ast::Literal *>(arrayInitExpr->repeatCount.get());
+    if (!countLiteral || countLiteral->type != ast::Literal::Type::Integer) {
+      error("Repeat array count must be an integer literal", *arrayInitExpr);
+      return nullptr;
+    }
+    long long count = 0;
+    try {
+      count = std::stoll(countLiteral->value);
+    } catch (...) {
+      error("Invalid repeat array count", *arrayInitExpr);
+      return nullptr;
+    }
+    if (count < 0) {
+      error("Repeat array count must be non-negative", *arrayInitExpr);
+      return nullptr;
+    }
+    if (!elementType->isPrimitive() && !elementType->isPointer()) {
+      error("Repeat array initializer currently supports scalar or pointer "
+            "elements",
+            *arrayInitExpr);
+      return nullptr;
+    }
+    return std::make_shared<types::ArrayType>(elementType,
+                                              static_cast<size_t>(count));
+  }
+
   // 分析数组元素类型
   std::shared_ptr<types::Type> elementType;
 
@@ -6255,6 +6288,10 @@ bool SemanticAnalyzer::containsAwaitOrYield(ast::Expression *expr) {
 
   case ast::NodeType::ArrayInitExpr: {
     auto *array = static_cast<ast::ArrayInitExpr *>(expr);
+    if (array->isRepeat()) {
+      return containsAwaitOrYield(array->repeatValue.get()) ||
+             containsAwaitOrYield(array->repeatCount.get());
+    }
     for (auto &elem : array->elements) {
       if (containsAwaitOrYield(elem.get()))
         return true;

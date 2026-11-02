@@ -125,6 +125,11 @@ std::unique_ptr<Expression> cloneExprImpl(const Expression *expr,
     return std::make_unique<TupleExpr>(std::move(elements));
   }
   if (auto *array = dynamic_cast<const ArrayInitExpr *>(expr)) {
+    if (array->isRepeat()) {
+      return std::make_unique<ArrayInitExpr>(
+          cloneExprImpl(array->repeatValue.get(), subst),
+          cloneExprImpl(array->repeatCount.get(), subst));
+    }
     std::vector<std::unique_ptr<Expression>> elements;
     for (const auto &element : array->elements) {
       elements.push_back(cloneExprImpl(element.get(), subst));

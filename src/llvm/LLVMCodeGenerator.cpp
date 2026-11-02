@@ -444,44 +444,9 @@ normal_var_path:
     if (auto *arrayInitExpr =
             dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
       auto *arrayType = llvm::cast<llvm::ArrayType>(varType);
-      if (arrayInitExpr->elements.size() != arrayType->getNumElements()) {
-        error("Array literal size does not match fixed array type: " +
-                  varDecl->name,
-              varDecl.get());
-        return nullptr;
-      }
-
       llvm::AllocaInst *arrayAlloca =
           createEntryAlloca(arrayType, varDecl->name);
-      llvm::Type *elementType = arrayType->getElementType();
-      for (size_t i = 0; i < arrayInitExpr->elements.size(); ++i) {
-        llvm::Value *elementValue =
-            generateExpression(std::move(arrayInitExpr->elements[i]));
-        if (!elementValue) {
-          return nullptr;
-        }
-        if (elementValue->getType() != elementType) {
-          if (elementType->isFloatingPointTy() &&
-              elementValue->getType()->isIntegerTy()) {
-            elementValue = builder()->CreateSIToFP(elementValue, elementType,
-                                                   "array.elem.cast");
-          } else if (elementType->isIntegerTy() &&
-                     elementValue->getType()->isFloatingPointTy()) {
-            elementValue = builder()->CreateFPToSI(elementValue, elementType,
-                                                   "array.elem.cast");
-          } else if (elementType->isIntegerTy() &&
-                     elementValue->getType()->isIntegerTy()) {
-            elementValue = builder()->CreateIntCast(
-                elementValue, elementType, true, "array.elem.cast");
-          }
-        }
-        llvm::Value *elementPtr = builder()->CreateGEP(
-            arrayType, arrayAlloca,
-            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
-             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
-            "array.elem.ptr");
-        builder()->CreateStore(elementValue, elementPtr);
-      }
+      emitArrayLiteralInitialization(arrayType, arrayAlloca, arrayInitExpr);
       namedValues_[varDecl->name] = arrayAlloca;
       return arrayAlloca;
     }
@@ -507,21 +472,19 @@ normal_var_path:
     if (auto *arrayInit =
             dynamic_cast<ast::ArrayInitExpr *>(varDecl->initializer.get())) {
       size_t arraySize = arrayInit->elements.size();
+      if (arrayInit->isRepeat()) {
+        auto *countLiteral =
+            dynamic_cast<ast::Literal *>(arrayInit->repeatCount.get());
+        if (countLiteral && countLiteral->type == ast::Literal::Type::Integer) {
+          arraySize = static_cast<size_t>(std::stoull(countLiteral->value));
+        }
+      }
       llvm::ArrayType *arrayType =
           llvm::ArrayType::get(sliceElementType, arraySize);
       llvm::AllocaInst *tempArrayAlloca =
           createEntryAlloca(arrayType, "temp_array");
 
-      for (size_t i = 0; i < arraySize; ++i) {
-        auto &element = arrayInit->elements[i];
-        llvm::Value *elementValue = generateExpression(std::move(element));
-        llvm::Value *elementPtr = builder()->CreateGEP(
-            arrayType, tempArrayAlloca,
-            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
-             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
-            "element_ptr");
-        builder()->CreateStore(elementValue, elementPtr);
-      }
+      emitArrayLiteralInitialization(arrayType, tempArrayAlloca, arrayInit);
 
       llvm::Value *arrayPtr = builder()->CreateGEP(
           arrayType, tempArrayAlloca,
@@ -3072,15 +3035,33 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     }
 
     llvm::Value *lhsPtr = getExpressionLValue(std::move(binaryExpr->left));
-    llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
-    if (!lhsPtr || !rhs) {
+    if (!lhsPtr) {
       return nullptr;
     }
 
     llvm::Type *targetType = nullptr;
-    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(lhsPtr)) {
-      targetType = alloca->getAllocatedType();
-    } else if (lhsPtr->getType()->isPointerTy()) {
+    llvm::AllocaInst *targetAlloca =
+        llvm::dyn_cast<llvm::AllocaInst>(lhsPtr);
+    if (targetAlloca) {
+      targetType = targetAlloca->getAllocatedType();
+    }
+
+    // 固定数组整体赋值：数组字面量直接写入目标存储。
+    if (targetType && targetType->isArrayTy()) {
+      if (auto *arrayInit =
+              dynamic_cast<ast::ArrayInitExpr *>(binaryExpr->right.get())) {
+        emitArrayLiteralInitialization(llvm::cast<llvm::ArrayType>(targetType),
+                                       targetAlloca, arrayInit);
+        return lhsPtr;
+      }
+    }
+
+    llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
+    if (!rhs) {
+      return nullptr;
+    }
+
+    if (!targetType && lhsPtr->getType()->isPointerTy()) {
       // LLVM 15+ uses opaque pointers: a GEP result no longer carries the
       // pointee type.  The RHS type is the best available approximation for
       // the store type here; typed conversions are handled by the callers
@@ -3091,6 +3072,16 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     if (!targetType) {
       error("Assignment target is not addressable");
       return nullptr;
+    }
+
+    // 固定数组整体赋值：从另一数组 alloca 加载整个数组值。
+    if (targetType->isArrayTy()) {
+      if (auto *rhsAlloca = llvm::dyn_cast<llvm::AllocaInst>(rhs)) {
+        if (rhsAlloca->getAllocatedType() == targetType) {
+          rhs = builder()->CreateLoad(targetType, rhsAlloca,
+                                      "array.assign.load");
+        }
+      }
     }
 
     if (rhs->getType() != targetType) {
@@ -4304,9 +4295,189 @@ llvm::Value *LLVMCodeGenerator::generateExpansionExpr(
   return nullptr;
 }
 
+// 生成重复数组初始化 [value; N]。
+void LLVMCodeGenerator::emitRepeatArrayInitialization(
+    llvm::ArrayType *arrayType, llvm::AllocaInst *arrayAlloca,
+    ast::ArrayInitExpr *arrayInitExpr, size_t count) {
+  if (!arrayType || !arrayAlloca || !arrayInitExpr || count == 0) {
+    return;
+  }
+
+  llvm::Value *elementValue =
+      generateExpression(arrayInitExpr->repeatValue->clone());
+  if (!elementValue) {
+    error("Failed to generate repeated array element", arrayInitExpr);
+    return;
+  }
+
+  llvm::Type *elementType = arrayType->getElementType();
+  if (elementValue->getType() != elementType) {
+    if (elementType->isFloatingPointTy() &&
+        elementValue->getType()->isIntegerTy()) {
+      elementValue = builder()->CreateSIToFP(elementValue, elementType,
+                                             "repeat.cast");
+    } else if (elementType->isIntegerTy() &&
+               elementValue->getType()->isFloatingPointTy()) {
+      elementValue = builder()->CreateFPToSI(elementValue, elementType,
+                                             "repeat.cast");
+    } else if (elementType->isIntegerTy() &&
+               elementValue->getType()->isIntegerTy()) {
+      elementValue = builder()->CreateIntCast(elementValue, elementType, true,
+                                              "repeat.cast");
+    }
+  }
+
+  // 全零数组可以直接用一个 aggregate zero store 完成。
+  auto *constantValue = llvm::dyn_cast<llvm::Constant>(elementValue);
+  if (constantValue && constantValue->isNullValue()) {
+    builder()->CreateStore(llvm::ConstantAggregateZero::get(arrayType),
+                           arrayAlloca);
+    return;
+  }
+
+  // 小数组展开，避免为几个元素生成循环。
+  if (count <= 8) {
+    for (size_t i = 0; i < count; ++i) {
+      llvm::Value *ptr = builder()->CreateGEP(
+          arrayType, arrayAlloca,
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+           llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
+          "repeat.ptr");
+      builder()->CreateStore(elementValue, ptr);
+    }
+    return;
+  }
+
+  // 大数组用运行时循环，避免 code size 随 N 增长。
+  llvm::Function *func = builder()->GetInsertBlock()->getParent();
+  llvm::AllocaInst *indexAlloca =
+      createEntryAlloca(llvm::Type::getInt64Ty(context()), "repeat.index");
+  builder()->CreateStore(
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0),
+      indexAlloca);
+
+  llvm::BasicBlock *condBB =
+      llvm::BasicBlock::Create(context(), "repeatcond", func);
+  llvm::BasicBlock *bodyBB =
+      llvm::BasicBlock::Create(context(), "repeatbody", func);
+  llvm::BasicBlock *afterBB =
+      llvm::BasicBlock::Create(context(), "repeatafter", func);
+  builder()->CreateBr(condBB);
+
+  builder()->SetInsertPoint(condBB);
+  llvm::Value *index = builder()->CreateLoad(
+      llvm::Type::getInt64Ty(context()), indexAlloca, "repeat.idx");
+  llvm::Value *inBounds = builder()->CreateICmpULT(
+      index, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), count),
+      "repeat.inbounds");
+  builder()->CreateCondBr(inBounds, bodyBB, afterBB);
+
+  builder()->SetInsertPoint(bodyBB);
+  llvm::Value *ptr = builder()->CreateGEP(arrayType, arrayAlloca,
+                                          {llvm::ConstantInt::get(
+                                               llvm::Type::getInt32Ty(context()), 0),
+                                           index},
+                                          "repeat.ptr");
+  builder()->CreateStore(elementValue, ptr);
+  llvm::Value *next = builder()->CreateAdd(
+      index, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 1),
+      "repeat.next");
+  builder()->CreateStore(next, indexAlloca);
+  builder()->CreateBr(condBB);
+
+  builder()->SetInsertPoint(afterBB);
+}
+
+// 把数组字面量写入已分配的固定数组存储。
+void LLVMCodeGenerator::emitArrayLiteralInitialization(
+    llvm::ArrayType *arrayType, llvm::AllocaInst *arrayAlloca,
+    ast::ArrayInitExpr *arrayInitExpr) {
+  if (!arrayType || !arrayAlloca || !arrayInitExpr) {
+    return;
+  }
+  if (arrayInitExpr->isRepeat()) {
+    emitRepeatArrayInitialization(arrayType, arrayAlloca, arrayInitExpr,
+                                  arrayType->getNumElements());
+    return;
+  }
+  if (arrayInitExpr->elements.size() != arrayType->getNumElements()) {
+    error("Array literal size does not match fixed array type", arrayInitExpr);
+    return;
+  }
+
+  llvm::Type *elementType = arrayType->getElementType();
+  for (size_t i = 0; i < arrayInitExpr->elements.size(); ++i) {
+    llvm::Value *elementValue =
+        generateExpression(std::move(arrayInitExpr->elements[i]));
+    if (!elementValue) {
+      return;
+    }
+    if (elementValue->getType() != elementType) {
+      if (elementType->isFloatingPointTy() &&
+          elementValue->getType()->isIntegerTy()) {
+        elementValue = builder()->CreateSIToFP(elementValue, elementType,
+                                               "array.elem.cast");
+      } else if (elementType->isIntegerTy() &&
+                 elementValue->getType()->isFloatingPointTy()) {
+        elementValue = builder()->CreateFPToSI(elementValue, elementType,
+                                               "array.elem.cast");
+      } else if (elementType->isIntegerTy() &&
+                 elementValue->getType()->isIntegerTy()) {
+        elementValue = builder()->CreateIntCast(elementValue, elementType, true,
+                                                "array.elem.cast");
+      }
+    }
+    llvm::Value *elementPtr = builder()->CreateGEP(
+        arrayType, arrayAlloca,
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), i)},
+        "array.elem.ptr");
+    builder()->CreateStore(elementValue, elementPtr);
+  }
+}
+
 // 生成数组初始化表达式
 llvm::Value *LLVMCodeGenerator::generateArrayInitExpr(
     std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr) {
+  // 重复数组初始化 [value; N]
+  if (arrayInitExpr->isRepeat()) {
+    auto *countLiteral =
+        dynamic_cast<ast::Literal *>(arrayInitExpr->repeatCount.get());
+    if (!countLiteral || countLiteral->type != ast::Literal::Type::Integer) {
+      error("Repeat array count must be an integer literal",
+            arrayInitExpr.get());
+      return nullptr;
+    }
+    size_t size = static_cast<size_t>(std::stoull(countLiteral->value));
+    llvm::Value *firstValue =
+        generateExpression(arrayInitExpr->repeatValue->clone());
+    if (!firstValue) {
+      return nullptr;
+    }
+    llvm::ArrayType *arrayType =
+        llvm::ArrayType::get(firstValue->getType(), size);
+    llvm::AllocaInst *tempArrayAlloca =
+        createEntryAlloca(arrayType, "temp_array");
+    emitRepeatArrayInitialization(arrayType, tempArrayAlloca,
+                                  arrayInitExpr.get(), size);
+
+    llvm::StructType *sliceStructType =
+        getOrCreateSliceType(firstValue->getType());
+    llvm::AllocaInst *sliceAlloca =
+        createEntryAlloca(sliceStructType, "slice");
+    llvm::Value *arrayPtr = builder()->CreateGEP(
+        arrayType, tempArrayAlloca,
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0),
+         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()), 0)});
+    llvm::Value *sliceValue = builder()->CreateInsertValue(
+        llvm::UndefValue::get(sliceStructType), arrayPtr, 0);
+    sliceValue = builder()->CreateInsertValue(
+        sliceValue,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), size), 1);
+    builder()->CreateStore(sliceValue, sliceAlloca);
+    return sliceAlloca;
+  }
+
   // 计算数组大小
   size_t size = arrayInitExpr->elements.size();
 

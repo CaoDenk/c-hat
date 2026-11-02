@@ -269,6 +269,47 @@ TEST_CASE("Integration: fixed array value semantics", "[integration][array]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: late array whole assignment", "[integration][array][late]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    late int[5] a;\n"
+      "    a = [1, 2, 3, 4, 5];\n"
+      "    return a[0] + a[4] + 36;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    late int[100] a;\n"
+      "    a = [0; 100];\n"
+      "    a[0] = 20;\n"
+      "    a[99] = 22;\n"
+      "    return a[0] + a[99];\n"
+      "}\n") == 42);
+}
+
+TEST_CASE("Integration: repeat array initializer", "[integration][array]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[10000] a = [0; 10000];\n"
+      "    a[0] = 1;\n"
+      "    a[9999] = 2;\n"
+      "    return a[0] + a[9999] + 39;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[3] a = [5; 3];\n"
+      "    return a[0] + a[2] + 32;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    int[] s = [5; 4];\n"
+      "    if (s.len == 4) { return s[0] + s[3] + 32; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: new array and delete[]", "[integration][array]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"

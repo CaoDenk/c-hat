@@ -165,6 +165,13 @@ private:
   generateExpansionExpr(std::unique_ptr<ast::ExpansionExpr> expansionExpr);
   llvm::Value *
   generateArrayInitExpr(std::unique_ptr<ast::ArrayInitExpr> arrayInitExpr);
+  void emitRepeatArrayInitialization(llvm::ArrayType *arrayType,
+                                     llvm::AllocaInst *arrayAlloca,
+                                     ast::ArrayInitExpr *arrayInitExpr,
+                                     size_t count);
+  void emitArrayLiteralInitialization(llvm::ArrayType *arrayType,
+                                      llvm::AllocaInst *arrayAlloca,
+                                      ast::ArrayInitExpr *arrayInitExpr);
   llvm::Value *
   generateStructInitExpr(std::unique_ptr<ast::StructInitExpr> structInitExpr);
   llvm::Value *generateTupleExpr(std::unique_ptr<ast::TupleExpr> tupleExpr);
