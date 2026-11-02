@@ -183,6 +183,7 @@ void appendLoadedProgram(
       if (func->name != "main" && !prefix.empty()) {
         std::string originalName = func->name;
         func->name = prefix + originalName;
+        func->modulePrefix = prefix;
         candidates[originalName].push_back(func->name);
       }
     }
@@ -203,8 +204,10 @@ void appendLoadedProgram(
       std::string newName = prefix + oldName;
       if (auto *cls = dynamic_cast<ast::ClassDecl *>(decl.get())) {
         cls->name = newName;
+        cls->modulePrefix = prefix;
       } else if (auto *st = dynamic_cast<ast::StructDecl *>(decl.get())) {
         st->name = newName;
+        st->modulePrefix = prefix;
       }
       typeCandidates[oldName].push_back(newName);
       for (auto &member : *members) {
@@ -225,6 +228,7 @@ void appendLoadedProgram(
       if (!prefix.empty()) {
         std::string originalName = var->name;
         var->name = prefix + originalName;
+        var->modulePrefix = prefix;
         varCandidates[originalName].push_back(var->name);
       }
     }

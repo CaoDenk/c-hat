@@ -272,7 +272,8 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
   literalViewInfo["len"] = 1;
   structInfo_["literalview"] = literalViewInfo;
 
-  // 先处理类型声明（不处理 VariableDecl）
+  // 先处理类型声明（不处理 VariableDecl）；成员函数体延迟生成。
+  deferMemberBodies_ = true;
   for (auto &decl : program->declarations) {
     ast::NodeType type = decl->getType();
     if (type == ast::NodeType::StructDecl) {
@@ -299,6 +300,8 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
           static_cast<ast::EnumDecl *>(decl.release())));
     }
   }
+
+  deferMemberBodies_ = false;
 
   // 生成顶层变量（全局变量）。
   for (auto &decl : program->declarations) {
@@ -333,6 +336,9 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
       funcDecls.push_back(std::move(funcDecl));
     }
   }
+
+  // 类/结构体成员函数体：此时类型布局、全局变量和顶层函数原型都已就绪。
+  generateDeferredMemberBodies();
 
   // 生成函数体
   for (auto &funcDecl : funcDecls) {
@@ -400,6 +406,31 @@ LLVMCodeGenerator::generateDeclaration(std::unique_ptr<ast::Declaration> decl) {
     return nullptr;
   default:
     return nullptr;
+  }
+}
+
+void LLVMCodeGenerator::generateDeferredMemberBodies() {
+  auto deferred = std::move(deferredMemberBodies_);
+  deferredMemberBodies_.clear();
+  for (auto &entry : deferred) {
+    auto &node = entry.node;
+    if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(node.get())) {
+      auto owned = std::unique_ptr<ast::FunctionDecl>(
+          static_cast<ast::FunctionDecl *>(node.release()));
+      bool isConstructor = (owned->name == entry.ownerName);
+      bool isDestructor =
+          (!owned->name.empty() && owned->name[0] == '~');
+      generateClassMemberFunction(std::move(owned), entry.ownerName,
+                                  isConstructor, isDestructor);
+    } else if (auto *getterDecl = dynamic_cast<ast::GetterDecl *>(node.get())) {
+      auto owned = std::unique_ptr<ast::GetterDecl>(
+          static_cast<ast::GetterDecl *>(node.release()));
+      generateGetterDecl(std::move(owned), entry.ownerName);
+    } else if (auto *setterDecl = dynamic_cast<ast::SetterDecl *>(node.get())) {
+      auto owned = std::unique_ptr<ast::SetterDecl>(
+          static_cast<ast::SetterDecl *>(node.release()));
+      generateSetterDecl(std::move(owned), entry.ownerName);
+    }
   }
 }
 
@@ -1705,22 +1736,30 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   structTypes_[classDecl->name] = classType;
   structInfo_[classDecl->name] = memberIndices;
 
-  for (auto &funcNode : functions) {
-    if (dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
-      auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
-          static_cast<ast::FunctionDecl *>(funcNode.release()));
-      bool isConstructor = (funcDecl->name == classDecl->name);
-      bool isDestructor = (!funcDecl->name.empty() && funcDecl->name[0] == '~');
-      generateClassMemberFunction(std::move(funcDecl), classDecl->name,
-                                  isConstructor, isDestructor);
-    } else if (dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
-      auto getterDecl = std::unique_ptr<ast::GetterDecl>(
-          static_cast<ast::GetterDecl *>(funcNode.release()));
-      generateGetterDecl(std::move(getterDecl), classDecl->name);
-    } else if (dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
-      auto setterDecl = std::unique_ptr<ast::SetterDecl>(
-          static_cast<ast::SetterDecl *>(funcNode.release()));
-      generateSetterDecl(std::move(setterDecl), classDecl->name);
+  if (deferMemberBodies_) {
+    for (auto &funcNode : functions) {
+      deferredMemberBodies_.push_back(
+          {std::move(funcNode), classDecl->name});
+    }
+  } else {
+    for (auto &funcNode : functions) {
+      if (dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
+        auto funcDecl = std::unique_ptr<ast::FunctionDecl>(
+            static_cast<ast::FunctionDecl *>(funcNode.release()));
+        bool isConstructor = (funcDecl->name == classDecl->name);
+        bool isDestructor =
+            (!funcDecl->name.empty() && funcDecl->name[0] == '~');
+        generateClassMemberFunction(std::move(funcDecl), classDecl->name,
+                                    isConstructor, isDestructor);
+      } else if (dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
+        auto getterDecl = std::unique_ptr<ast::GetterDecl>(
+            static_cast<ast::GetterDecl *>(funcNode.release()));
+        generateGetterDecl(std::move(getterDecl), classDecl->name);
+      } else if (dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
+        auto setterDecl = std::unique_ptr<ast::SetterDecl>(
+            static_cast<ast::SetterDecl *>(funcNode.release()));
+        generateSetterDecl(std::move(setterDecl), classDecl->name);
+      }
     }
   }
 
@@ -1760,26 +1799,33 @@ llvm::Value *LLVMCodeGenerator::generateStructDecl(
   structInfo_[structDecl->name] = memberIndices;
   structValueTypes_.insert(structDecl->name);
 
-  for (auto &funcNode : functions) {
-    if (auto *funcDecl =
-            dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
-      auto owned = std::unique_ptr<ast::FunctionDecl>(
-          static_cast<ast::FunctionDecl *>(funcNode.release()));
-      bool isConstructor = (owned->name == structDecl->name);
-      bool isDestructor =
-          (!owned->name.empty() && owned->name[0] == '~');
-      generateClassMemberFunction(std::move(owned), structDecl->name,
-                                  isConstructor, isDestructor);
-    } else if (auto *getterDecl =
-                   dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
-      auto owned = std::unique_ptr<ast::GetterDecl>(
-          static_cast<ast::GetterDecl *>(funcNode.release()));
-      generateGetterDecl(std::move(owned), structDecl->name);
-    } else if (auto *setterDecl =
-                   dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
-      auto owned = std::unique_ptr<ast::SetterDecl>(
-          static_cast<ast::SetterDecl *>(funcNode.release()));
-      generateSetterDecl(std::move(owned), structDecl->name);
+  if (deferMemberBodies_) {
+    for (auto &funcNode : functions) {
+      deferredMemberBodies_.push_back(
+          {std::move(funcNode), structDecl->name});
+    }
+  } else {
+    for (auto &funcNode : functions) {
+      if (auto *funcDecl =
+              dynamic_cast<ast::FunctionDecl *>(funcNode.get())) {
+        auto owned = std::unique_ptr<ast::FunctionDecl>(
+            static_cast<ast::FunctionDecl *>(funcNode.release()));
+        bool isConstructor = (owned->name == structDecl->name);
+        bool isDestructor =
+            (!owned->name.empty() && owned->name[0] == '~');
+        generateClassMemberFunction(std::move(owned), structDecl->name,
+                                    isConstructor, isDestructor);
+      } else if (auto *getterDecl =
+                     dynamic_cast<ast::GetterDecl *>(funcNode.get())) {
+        auto owned = std::unique_ptr<ast::GetterDecl>(
+            static_cast<ast::GetterDecl *>(funcNode.release()));
+        generateGetterDecl(std::move(owned), structDecl->name);
+      } else if (auto *setterDecl =
+                     dynamic_cast<ast::SetterDecl *>(funcNode.get())) {
+        auto owned = std::unique_ptr<ast::SetterDecl>(
+            static_cast<ast::SetterDecl *>(funcNode.release()));
+        generateSetterDecl(std::move(owned), structDecl->name);
+      }
     }
   }
 

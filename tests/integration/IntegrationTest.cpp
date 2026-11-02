@@ -1433,11 +1433,30 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   }
   {
     std::ofstream v(dir / "V.ch");
-    v << "module V;\npublic var g = 40;\n";
+    v << "module V;\npublic var g = 40;\n"
+         "public class C {\n"
+         "    public int x;\n"
+         "    public C() { x = 0; }\n"
+         "    public func bump() { g = g + 2; x = g; }\n"
+         "}\n"
+         "public func helper() -> int { return 0; }\n"
+         "public func add(a: int, b: int) -> int {\n"
+         "    return a + b + helper();\n"
+         "}\n"
+         "public func make() -> C { C c = C(); c.x = 40; return c; }\n";
   }
   {
     std::ofstream x(dir / "X.ch");
-    x << "module X;\npublic var g = 0;\n";
+    x << "module X;\npublic var g = 0;\n"
+         "public class C {\n"
+         "    public int x;\n"
+         "    public C() { x = 0; }\n"
+         "}\n"
+         "public func helper() -> int { return 0; }\n"
+         "public func add(a: int, b: int) -> int {\n"
+         "    return a + b + helper();\n"
+         "}\n"
+         "public func make() -> C { C c = C(); c.x = 0; return c; }\n";
   }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
@@ -1491,6 +1510,16 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
       "func main() -> int {\n"
       "    V.g = V.g + 2;\n"
       "    return V.g + X.g;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import V;\nimport X;\n"
+      "func main() -> int {\n"
+      "    V.C c = V.make();\n"
+      "    c.bump();\n"
+      "    return V.g + X.g + V.add(0, 0) + X.add(0, 0);\n"
       "}\n",
       dir.string());
   fs::remove_all(dir);

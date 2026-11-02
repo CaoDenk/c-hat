@@ -30,6 +30,25 @@
 namespace c_hat {
 namespace semantic {
 
+namespace {
+
+class ModulePrefixGuard {
+public:
+  ModulePrefixGuard(std::string &slot, const std::string &prefix)
+      : slot_(slot), saved_(slot) {
+    if (!prefix.empty()) {
+      slot_ = prefix;
+    }
+  }
+  ~ModulePrefixGuard() { slot_ = saved_; }
+
+private:
+  std::string &slot_;
+  std::string saved_;
+};
+
+} // namespace
+
 SemanticAnalyzer::SemanticAnalyzer(const std::string &stdlibPath,
                                    bool requireMainFunction) {
   requireMainFunction_ = requireMainFunction;
@@ -600,6 +619,7 @@ void SemanticAnalyzer::analyzeDeclaration(ast::Declaration *declaration) {
 }
 
 void SemanticAnalyzer::analyzeVariableDecl(ast::VariableDecl *varDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, varDecl->modulePrefix);
   const bool isLocal = currentFunctionReturnType_ != nullptr;
 
   if (varDecl->isLate) {
@@ -777,6 +797,7 @@ void SemanticAnalyzer::analyzeTupleDestructuringDecl(
 void SemanticAnalyzer::analyzeFunctionDecl(
     ast::FunctionDecl *funcDecl,
     std::shared_ptr<types::ClassType> currentClassType, bool analyzeBody) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, funcDecl->modulePrefix);
   // 分析模板参数
   std::vector<std::shared_ptr<types::Type>> templateParams;
   if (!funcDecl->templateParams.empty()) {
@@ -1148,6 +1169,7 @@ bool SemanticAnalyzer::isAwaitableType(
 }
 
 void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, classDecl->modulePrefix);
   // 保存当前的类名
   std::string oldClassName = currentClassName_;
   auto oldClassType = currentClassType_;
@@ -2240,6 +2262,7 @@ void SemanticAnalyzer::analyzeAttributeDecl(ast::AttributeDecl *attributeDecl) {
 }
 
 void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, structDecl->modulePrefix);
   structTypeNames_.insert(structDecl->name);
   // 创建结构体类型（值类型，复用 ClassType 基础设施）
   auto structType = std::make_shared<types::ClassType>(structDecl->name);
@@ -3515,6 +3538,15 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
           }
         }
       }
+      if (!symbol && !currentModulePrefix_.empty() &&
+          identifier->name.find('.') == std::string::npos) {
+        auto target = symbolTable.lookupSymbol(currentModulePrefix_ +
+                                                identifier->name);
+        if (std::dynamic_pointer_cast<VariableSymbol>(target)) {
+          identifier->name = currentModulePrefix_ + identifier->name;
+          symbol = target;
+        }
+      }
       if (!symbol) {
         error("Undeclared identifier: " + identifier->name, *identifier);
         return nullptr;
@@ -3989,6 +4021,15 @@ SemanticAnalyzer::analyzeIdentifierExpr(ast::Identifier *identifier) {
       }
     }
   }
+  if (!symbol && !currentModulePrefix_.empty() &&
+      identifier->name.find('.') == std::string::npos) {
+    auto target = symbolTable.lookupSymbol(currentModulePrefix_ +
+                                            identifier->name);
+    if (std::dynamic_pointer_cast<VariableSymbol>(target)) {
+      identifier->name = currentModulePrefix_ + identifier->name;
+      symbol = target;
+    }
+  }
   if (symbol) {
     // 检查符号类型
     if (auto variableSymbol =
@@ -4241,6 +4282,15 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
   // 处理标识符调用的情况
   if (auto *identifier =
           dynamic_cast<ast::Identifier *>(callExpr->callee.get())) {
+    // 模块内非限定构造：优先当前模块自己的类/结构体。
+    if (!currentModulePrefix_.empty() &&
+        identifier->name.find('.') == std::string::npos) {
+      auto ownTarget =
+          symbolTable.lookupSymbol(currentModulePrefix_ + identifier->name);
+      if (std::dynamic_pointer_cast<ClassSymbol>(ownTarget)) {
+        identifier->name = currentModulePrefix_ + identifier->name;
+      }
+    }
     // 结构体值构造：Point(...) / Point<int>(...)
     if (genericStructs_.count(identifier->name) &&
         !identifier->templateArgs.empty()) {
@@ -4366,6 +4416,15 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
 
     // 从符号表中查找所有同名函数
     auto functionSymbols = symbolTable.lookupFunctionSymbols(identifier->name);
+    if (functionSymbols.empty() && !currentModulePrefix_.empty() &&
+        identifier->name.find('.') == std::string::npos) {
+      auto prefixedName = currentModulePrefix_ + identifier->name;
+      auto prefixedSymbols = symbolTable.lookupFunctionSymbols(prefixedName);
+      if (!prefixedSymbols.empty()) {
+        identifier->name = prefixedName;
+        functionSymbols = prefixedSymbols;
+      }
+    }
     if (functionSymbols.empty()) {
       // 检查是否是构造函数调用（类名作为函数名）
       auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(
@@ -4386,6 +4445,8 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
         auto classType =
             std::dynamic_pointer_cast<types::ClassType>(classSymbol->getType());
         if (classType) {
+          callExpr->resolvedMangledName =
+              identifier->name + "_" + identifier->name;
           // 如果有模板参数，创建实例化类型
           if (!identifier->templateArgs.empty()) {
             std::vector<std::shared_ptr<types::Type>> typeArgs;
@@ -5644,6 +5705,21 @@ SemanticAnalyzer::analyzeFunctionType(const ast::FunctionType *functionType) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNamedType(const ast::NamedType *namedType) {
+  if (!currentModulePrefix_.empty() &&
+      namedType->name.find('.') == std::string::npos) {
+    auto ownTarget =
+        symbolTable.lookupSymbol(currentModulePrefix_ + namedType->name);
+    if (auto ownClass = std::dynamic_pointer_cast<ClassSymbol>(ownTarget)) {
+      const_cast<ast::NamedType *>(namedType)->name =
+          currentModulePrefix_ + namedType->name;
+      return ownClass->getType();
+    }
+    if (auto ownStruct = std::dynamic_pointer_cast<StructSymbol>(ownTarget)) {
+      const_cast<ast::NamedType *>(namedType)->name =
+          currentModulePrefix_ + namedType->name;
+      return ownStruct->getType();
+    }
+  }
   auto type = analyzeTypeByName(namedType->name);
   if (type && namedType->name.find('.') != std::string::npos) {
     std::string prefix;
@@ -5785,6 +5861,20 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
     }
     if (auto structSymbol =
             std::dynamic_pointer_cast<StructSymbol>(target)) {
+      return structSymbol->getType();
+    }
+  }
+
+  // 模块内非限定类型解析：优先当前模块自己的前缀类型。
+  if (!currentModulePrefix_.empty() &&
+      typeName.find('.') == std::string::npos) {
+    auto ownTarget = symbolTable.lookupSymbol(currentModulePrefix_ + typeName);
+    if (auto classSymbol =
+            std::dynamic_pointer_cast<ClassSymbol>(ownTarget)) {
+      return classSymbol->getType();
+    }
+    if (auto structSymbol =
+            std::dynamic_pointer_cast<StructSymbol>(ownTarget)) {
       return structSymbol->getType();
     }
   }

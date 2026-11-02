@@ -89,6 +89,7 @@ private:
   generateFunctionBody(std::unique_ptr<ast::FunctionDecl> funcDecl);
   llvm::Value *generateClassDecl(std::unique_ptr<ast::ClassDecl> classDecl);
   llvm::Value *generateStructDecl(std::unique_ptr<ast::StructDecl> structDecl);
+  void generateDeferredMemberBodies();
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,
@@ -304,6 +305,14 @@ private:
 
   // 枚举类型名集合
   std::unordered_set<std::string> enumTypes_;
+
+  // 类型布局阶段延迟到全局变量和顶层函数原型之后的类/结构体成员函数体。
+  bool deferMemberBodies_ = false;
+  struct DeferredMemberBody {
+    std::unique_ptr<ast::Node> node;
+    std::string ownerName;
+  };
+  std::vector<DeferredMemberBody> deferredMemberBodies_;
 
   // 异常处理
   llvm::FunctionCallee personalityFunc_;

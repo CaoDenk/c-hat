@@ -436,6 +436,9 @@ private:
   // 当前模块路径
   std::vector<std::string> currentModulePath_;
 
+  // 当前声明的模块前缀（导入模块为 A__），用于模块内非限定名解析。
+  std::string currentModulePrefix_;
+
   // 已加载的模块符号表（模块路径 -> 符号表）
   std::unordered_map<std::string, std::unique_ptr<SymbolTable>>
       loadedModuleSymbols_;
