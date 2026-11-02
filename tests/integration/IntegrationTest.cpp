@@ -1367,6 +1367,19 @@ TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
       "    return 0;\n"
       "}\n",
       stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.core;\n"
+      "func main() -> int { return min(2, 42) + max(40, 0); }\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.string;\n"
+      "func main() -> int {\n"
+      "    if (equal(\"abc\", \"abc\") && !equal(\"abc\", \"abd\")) { return 42; }\n"
+      "    return 0;\n"
+      "}\n",
+      stdlibDir) == 42);
 }
 
 TEST_CASE("Integration: module imports", "[integration][module]") {
