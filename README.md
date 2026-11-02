@@ -192,6 +192,29 @@ late int z;     // OK：预留存储，暂不构造
 z = 42;         // 第一次赋值 = 构造
 ```
 
+初始化检查是变量级的；固定数组按整体值初始化：
+
+```c^
+int[10000] zero = [0; 10000];   // 批量初始化
+late int[5] a;
+a = [1, 2, 3, 4, 5];           // 整体赋值后 a 才可用
+
+a[0] = 9;                      // 可修改元素，但不改变整体初始化状态
+```
+
+跨函数初始化使用初始化引用：
+
+```c^
+func fill(out int[5]& dst) {
+    dst = [0; 5];
+}
+
+late int[5] a;
+fill(&a);      // 正常返回后 a 视为已初始化
+```
+
+`out T!&` 非法；`out` 不会发生值拷贝。
+
 ### 3.6 错误处理
 
 三层模型：
@@ -337,7 +360,7 @@ Lexer
 1. SemanticModel + TypeLowering
 2. 数组 / 切片 / 元组值语义
 3. 块级 defer + cleanup 栈
-4. 非 late 必须初始化 + late definite assignment
+4. 非 late 必须初始化 + 变量级 late + out T& + [value; N]
 5. 栈上/late RAII + 异常展开
 6. OOP vtable / 接口派发
 7. 模块 / ABI / FFI
