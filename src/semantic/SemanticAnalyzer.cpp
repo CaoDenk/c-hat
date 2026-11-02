@@ -2796,7 +2796,21 @@ SemanticAnalyzer::analyzeReturnStmt(ast::ReturnStmt *returnStmt) {
       error("Return type mismatch", *returnStmt);
       return nullptr;
     }
+    for (const auto &outName : currentOutParams_) {
+      auto lateIt = lateVariables_.find(outName);
+      if (lateIt != lateVariables_.end() && !lateIt->second.isInitialized) {
+        error("out parameter must be initialized before return: " + outName,
+              *returnStmt);
+      }
+    }
     return returnType;
+  }
+  for (const auto &outName : currentOutParams_) {
+    auto lateIt = lateVariables_.find(outName);
+    if (lateIt != lateVariables_.end() && !lateIt->second.isInitialized) {
+      error("out parameter must be initialized before return: " + outName,
+            *returnStmt);
+    }
   }
   return types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Void);
 }

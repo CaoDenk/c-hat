@@ -275,6 +275,29 @@ TEST_CASE("Integration: out parameters", "[integration][out]") {
       "    bad(&a);\n"
       "    return 0;\n"
       "}\n") == -2);
+
+  REQUIRE(compileAndRun(
+      "func bad_return(out int& x, bool c) -> int {\n"
+      "    if (c) { return 0; }\n"
+      "    x = 1;\n"
+      "    return 0;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    late int a;\n"
+      "    bad_return(&a, true);\n"
+      "    return 0;\n"
+      "}\n") == -2);
+
+  REQUIRE(compileAndRun(
+      "func good(out int& x) -> int {\n"
+      "    x = 42;\n"
+      "    return 0;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    late int a;\n"
+      "    good(&a);\n"
+      "    return a;\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: references", "[integration][reference]") {
