@@ -3909,10 +3909,25 @@ void LLVMCodeGenerator::registerOutDestructors(
       continue;
     }
     auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(valueIt->second);
-    if (!alloca || !alloca->getAllocatedType()->isStructTy()) {
+    if (!alloca) {
       continue;
     }
-    auto *structType = llvm::cast<llvm::StructType>(alloca->getAllocatedType());
+    llvm::Type *allocatedType = alloca->getAllocatedType();
+    if (auto *arrayType = llvm::dyn_cast<llvm::ArrayType>(allocatedType)) {
+      llvm::Type *elementType = arrayType->getElementType();
+      if (auto *elementStruct = llvm::dyn_cast<llvm::StructType>(elementType)) {
+        if (elementStruct->hasName()) {
+          registerDestructorForArray(
+              alloca, elementStruct->getName().str(), arrayType,
+              arrayType->getNumElements());
+        }
+      }
+      continue;
+    }
+    if (!allocatedType->isStructTy()) {
+      continue;
+    }
+    auto *structType = llvm::cast<llvm::StructType>(allocatedType);
     if (structType->hasName()) {
       registerDestructorForClassName(alloca, structType->getName().str());
     }

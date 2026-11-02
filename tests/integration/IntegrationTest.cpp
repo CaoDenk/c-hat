@@ -422,6 +422,26 @@ TEST_CASE("Integration: goto cleanup", "[integration][goto][raii]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: out array element destructor", "[integration][out][raii]") {
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = p->value + 1; }\n"
+      "}\n"
+      "func fill(out C[2]& dst, Box^ b) { dst = [C(b), C(b)]; }\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    {\n"
+      "        late C[2] arr;\n"
+      "        fill(&arr, b);\n"
+      "    }\n"
+      "    return b->value;\n"
+      "}\n") == 2);
+}
+
 TEST_CASE("Integration: out object destructor", "[integration][out][raii]") {
   REQUIRE(compileAndRun(
       "class Box { int value; }\n"
