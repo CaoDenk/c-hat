@@ -51,6 +51,14 @@ SemanticAnalyzer::SemanticAnalyzer(const std::vector<std::string> &modulePaths,
 void SemanticAnalyzer::analyze(ast::Program &program) {
   currentProgram_ = &program;
 
+  // 预注册 import 模块符号，确保导入模块内部代码在后续遍历中
+  // 可以使用模块限定名（如 V.g）。
+  for (auto &decl : program.declarations) {
+    if (auto *importDecl = dynamic_cast<ast::ImportDecl *>(decl.get())) {
+      analyzeImportDecl(importDecl);
+    }
+  }
+
   // 第一遍：收集所有顶级声明，创建它们的符号并添加到全局符号表中
   for (auto &decl : program.declarations) {
     if (auto *classDecl = dynamic_cast<ast::ClassDecl *>(decl.get())) {
@@ -2439,42 +2447,10 @@ void SemanticAnalyzer::analyzeImportDecl(ast::ImportDecl *importDecl) {
                                             : importDecl->modulePath.back())
           : importDecl->alias;
 
+  // whole-program 模式下，导入模块的声明已经在主程序中合并并分析；
+  // 这里只注册模块符号，避免重复分析导入模块产生重复诊断。
   if (moduleLoader_) {
-    auto loadedProgram = moduleLoader_->loadModule(importDecl->modulePath);
-    if (loadedProgram) {
-      SymbolTable importedSymbolTable;
-      {
-        SemanticAnalyzer importedAnalyzer(
-            moduleLoader_->getLoadedModules().empty() ? "" : "", false);
-        importedAnalyzer.currentModulePath_ = importDecl->modulePath;
-        importedAnalyzer.analyze(*loadedProgram);
-        importedSymbolTable = std::move(importedAnalyzer.symbolTable);
-      }
-
-      auto symbols = importedSymbolTable.getAllSymbols();
-      for (const auto &[name, symbol] : symbols) {
-        if (symbol->getVisibility() == Visibility::Public) {
-          auto importedSymbol = symbol;
-          if (!importDecl->alias.empty()) {
-            auto aliasModule =
-                std::make_shared<ModuleSymbol>(importDecl->alias);
-            aliasModule->modulePath = importDecl->modulePath;
-            if (isPublic) {
-              aliasModule->setVisibility(Visibility::Public);
-            }
-            symbolTable.addSymbol(aliasModule);
-          } else {
-            auto moduleSym = std::make_shared<ModuleSymbol>(importedName);
-            moduleSym->modulePath = importDecl->modulePath;
-            if (isPublic) {
-              moduleSym->setVisibility(Visibility::Public);
-            }
-            symbolTable.addSymbol(moduleSym);
-          }
-          break;
-        }
-      }
-    }
+    moduleLoader_->loadModule(importDecl->modulePath);
   }
 
   if (!symbolTable.lookupSymbol(importedName)) {
@@ -3632,17 +3608,27 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
     // 检查是否是属性赋值
     if (auto *memberExpr =
             dynamic_cast<ast::MemberExpr *>(binaryExpr->left.get())) {
-      auto objectType = analyzeExpression(memberExpr->object.get());
-      if (objectType && objectType->isClass()) {
-        auto classType =
-            std::dynamic_pointer_cast<types::ClassType>(objectType);
+      bool moduleGlobal = false;
+      if (auto *objectIdent =
+              dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+        moduleGlobal = std::dynamic_pointer_cast<ModuleSymbol>(
+                           symbolTable.lookupSymbol(objectIdent->name)) !=
+                       nullptr;
+      }
+      if (!moduleGlobal) {
+        auto objectType = analyzeExpression(memberExpr->object.get());
+        if (objectType && objectType->isClass()) {
+          auto classType =
+              std::dynamic_pointer_cast<types::ClassType>(objectType);
 
-        // 检查是否是属性
-        if (classType->hasProperty(memberExpr->member)) {
-          const auto *property = classType->getProperty(memberExpr->member);
-          if (property && !property->hasSetter) {
-            error("Property has no setter: " + memberExpr->member, *binaryExpr);
-            return nullptr;
+          // 检查是否是属性
+          if (classType->hasProperty(memberExpr->member)) {
+            const auto *property = classType->getProperty(memberExpr->member);
+            if (property && !property->hasSetter) {
+              error("Property has no setter: " + memberExpr->member,
+                    *binaryExpr);
+              return nullptr;
+            }
           }
         }
       }
@@ -4662,6 +4648,31 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
+  // 模块全局变量：A.g
+  if (auto *objectIdent =
+          dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
+    auto objectSymbol = symbolTable.lookupSymbol(objectIdent->name);
+    if (auto moduleSymbol =
+            std::dynamic_pointer_cast<ModuleSymbol>(objectSymbol)) {
+      std::string prefix;
+      for (size_t i = 0; i < moduleSymbol->modulePath.size(); ++i) {
+        if (i > 0) {
+          prefix += "__";
+        }
+        prefix += moduleSymbol->modulePath[i];
+      }
+      if (!prefix.empty()) {
+        prefix += "__";
+      }
+      std::string linkName = prefix + memberExpr->member;
+      auto target = symbolTable.lookupSymbol(linkName);
+      if (auto varSymbol = std::dynamic_pointer_cast<VariableSymbol>(target)) {
+        memberExpr->resolvedGlobalName = linkName;
+        return varSymbol->getType();
+      }
+    }
+  }
+
   // 枚举成员访问：Color.Green
   if (auto *objectIdent =
           dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {

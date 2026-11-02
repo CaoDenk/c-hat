@@ -21,6 +21,7 @@ public:
     auto cloned = std::make_unique<MemberExpr>(object->clone(), member, isPointerMember);
     cloned->structName = structName;
     cloned->memberIndex = memberIndex;
+    cloned->resolvedGlobalName = resolvedGlobalName;
     return cloned;
   }
 
@@ -29,6 +30,7 @@ public:
   bool isPointerMember;
   std::string structName;
   unsigned memberIndex = 0;
+  std::string resolvedGlobalName;
 };
 
 } // namespace ast

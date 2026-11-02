@@ -316,20 +316,39 @@ void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
     }
   }
   for (const auto &[name, links] : varCandidates) {
-    if (links.size() > 1) {
-      throw std::runtime_error(
-          "Duplicate top-level variable across modules: " + name);
-    }
     if (links.size() == 1 && !mainNames.count(name)) {
       loader.addVariableAlias(name, links.front());
     }
   }
 
-  // 导入声明放在主程序之前，保证主程序解析类型时符号已注册。
-  if (mainDeclarationCount < program.declarations.size()) {
-    std::rotate(program.declarations.begin(),
-                program.declarations.begin() + mainDeclarationCount,
-                program.declarations.end());
+  // 排序：主程序 import 声明 -> 导入模块声明 -> 主程序其余声明。
+  // 这样模块符号先注册，导入函数/类也先于主程序函数体分析。
+  if (mainDeclarationCount <= program.declarations.size()) {
+    std::vector<std::unique_ptr<ast::Declaration>> mainDecls;
+    std::vector<std::unique_ptr<ast::Declaration>> importedDecls;
+    for (size_t i = 0; i < program.declarations.size(); ++i) {
+      if (i < mainDeclarationCount) {
+        mainDecls.push_back(std::move(program.declarations[i]));
+      } else {
+        importedDecls.push_back(std::move(program.declarations[i]));
+      }
+    }
+    std::vector<std::unique_ptr<ast::Declaration>> ordered;
+    std::vector<std::unique_ptr<ast::Declaration>> remaining;
+    for (auto &decl : mainDecls) {
+      if (dynamic_cast<ast::ImportDecl *>(decl.get())) {
+        ordered.push_back(std::move(decl));
+      } else {
+        remaining.push_back(std::move(decl));
+      }
+    }
+    for (auto &decl : importedDecls) {
+      ordered.push_back(std::move(decl));
+    }
+    for (auto &decl : remaining) {
+      ordered.push_back(std::move(decl));
+    }
+    program.declarations = std::move(ordered);
   }
 }
 

@@ -4403,6 +4403,14 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
 // 生成成员表达式
 llvm::Value *LLVMCodeGenerator::generateMemberExpr(
     std::unique_ptr<ast::MemberExpr> memberExpr) {
+  if (!memberExpr->resolvedGlobalName.empty()) {
+    if (auto *global =
+            module()->getNamedGlobal(memberExpr->resolvedGlobalName)) {
+      return builder()->CreateLoad(global->getValueType(), global,
+                                   memberExpr->resolvedGlobalName + ".load");
+    }
+  }
+
   // 枚举成员：Color.Green 对应全局常量 Color_Green。
   if (auto *objectIdent =
           dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
@@ -7328,6 +7336,12 @@ LLVMCodeGenerator::getExpressionLValue(std::unique_ptr<ast::Expression> expr) {
   }
 
   if (auto *memberExpr = dynamic_cast<ast::MemberExpr *>(expr.get())) {
+    if (!memberExpr->resolvedGlobalName.empty()) {
+      if (auto *global =
+              module()->getNamedGlobal(memberExpr->resolvedGlobalName)) {
+        return global;
+      }
+    }
     if (auto *objectIdent =
             dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
       if (auto *global = module()->getNamedGlobal(

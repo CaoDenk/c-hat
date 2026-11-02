@@ -1433,8 +1433,11 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   }
   {
     std::ofstream v(dir / "V.ch");
-    v << "module V;\npublic var g = 40;\n"
-         "public func bump() { g = g + 2; }\n";
+    v << "module V;\npublic var g = 40;\n";
+  }
+  {
+    std::ofstream x(dir / "X.ch");
+    x << "module X;\npublic var g = 0;\n";
   }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
@@ -1476,7 +1479,19 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
 
   result = compileAndRunWithModules(
       "import V;\n"
-      "func main() -> int { bump(); return g; }\n",
+      "func main() -> int {\n"
+      "    g = g + 2;\n"
+      "    return g;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import V;\nimport X;\n"
+      "func main() -> int {\n"
+      "    V.g = V.g + 2;\n"
+      "    return V.g + X.g;\n"
+      "}\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);
