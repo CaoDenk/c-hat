@@ -4522,6 +4522,9 @@ LLVMCodeGenerator::generateExprStmt(std::unique_ptr<ast::ExprStmt> exprStmt) {
 // 生成复合语句
 llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
     std::unique_ptr<ast::CompoundStmt> compoundStmt) {
+  const size_t deferMarker = deferExpressions_.size();
+  deferScopeMarkers_.push_back(deferMarker);
+
   for (size_t i = 0; i < compoundStmt->statements.size(); ++i) {
     auto &stmt = compoundStmt->statements[i];
     if (!stmt) {
@@ -4543,6 +4546,17 @@ llvm::Value *LLVMCodeGenerator::generateCompoundStmt(
           context(), "unreachable", currentFunction_);
       builder()->SetInsertPoint(deadBlock);
     }
+  }
+
+  // 块级 defer：正常离开块时执行本层注册的 defer。这里使用克隆而不是
+  // 移动 AST，因为函数级异常清理块在函数体生成之后还要再次引用这些
+  // defer；执行后 flag 会被清除，外层/函数级清理不会重复执行。
+  if (builder()->GetInsertBlock() &&
+      !builder()->GetInsertBlock()->getTerminator()) {
+    emitDeferCleanupFrom(deferMarker, false);
+  }
+  if (!deferScopeMarkers_.empty()) {
+    deferScopeMarkers_.pop_back();
   }
   return nullptr;
 }
@@ -5442,7 +5456,12 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
 // 保护；consumeExpressions 为 true 时移动原始 AST（函数正常结束），
 // 否则克隆 AST（return/throw 路径，后续路径仍需使用原始节点）。
 void LLVMCodeGenerator::emitDeferCleanup(bool consumeExpressions) {
-  if (deferExpressions_.empty()) {
+  emitDeferCleanupFrom(0, consumeExpressions);
+}
+
+void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
+                                             bool consumeExpressions) {
+  if (deferExpressions_.empty() || startIndex >= deferExpressions_.size()) {
     return;
   }
   llvm::Function *func = currentFunction_;
@@ -5451,7 +5470,7 @@ void LLVMCodeGenerator::emitDeferCleanup(bool consumeExpressions) {
   }
   llvm::Type *i1Ty = llvm::Type::getInt1Ty(context());
 
-  for (size_t i = deferExpressions_.size(); i-- > 0;) {
+  for (size_t i = deferExpressions_.size(); i-- > startIndex;) {
     if (!deferExpressions_[i]) {
       continue;
     }
@@ -5765,6 +5784,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   namedValues_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferScopeMarkers_.clear();
 
   auto argIt = function->args().begin();
   llvm::Value *selfArg = &(*argIt++);
@@ -5809,6 +5829,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   currentFunction_ = prevFunction;
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferScopeMarkers_.clear();
   return function;
 }
 

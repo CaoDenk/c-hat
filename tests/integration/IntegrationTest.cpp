@@ -504,6 +504,45 @@ TEST_CASE("Integration: defer on throw and return", "[integration][exception][de
       "}\n") == 8);
 }
 
+TEST_CASE("Integration: block-scoped defer", "[integration][defer]") {
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    {\n"
+      "        defer r = r + 1;\n"
+      "        r = 10;\n"
+      "    }\n"
+      "    if (r == 11) { return 42; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "func main() -> int {\n"
+      "    var r = 0;\n"
+      "    foreach (var i : 0..3) {\n"
+      "        defer r = r + 1;\n"
+      "    }\n"
+      "    return r + 39;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box {\n"
+      "    int value;\n"
+      "    Box(int v) { value = v; }\n"
+      "}\n"
+      "func f(Box^ b) -> int {\n"
+      "    {\n"
+      "        defer b->value = 7;\n"
+      "        return 0;\n"
+      "    }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box(0);\n"
+      "    var x = f(b);\n"
+      "    return b->value + x;\n"
+      "}\n") == 7);
+}
+
 TEST_CASE("Integration: defer unwinds intermediate frames", "[integration][exception][defer]") {
   REQUIRE(compileAndRun(
       "class Box {\n"

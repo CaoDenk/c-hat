@@ -118,6 +118,7 @@ private:
   // 生成按 LIFO 顺序执行 defer 的代码；consumeExpressions 为 true 时
   // 会移动原始 AST（仅函数正常结束时使用）。
   void emitDeferCleanup(bool consumeExpressions);
+  void emitDeferCleanupFrom(size_t startIndex, bool consumeExpressions);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);
@@ -223,6 +224,8 @@ private:
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
   std::vector<llvm::AllocaInst *> deferFlags_;
+  // 每个词法块在 deferExpressions_ 中的起始位置；块退出时只执行本层 defer。
+  std::vector<size_t> deferScopeMarkers_;
   // 每层 try 保存的“上一层 handler”地址；return 时用于恢复全局 handler。
   std::vector<llvm::Value *> exceptionHandlerStack_;
   std::vector<std::string> namespaceStack_;
