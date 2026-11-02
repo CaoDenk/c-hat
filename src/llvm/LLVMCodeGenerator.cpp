@@ -4805,6 +4805,38 @@ llvm::Value *LLVMCodeGenerator::generateSubscriptExpr(
       end = builder()->CreateIntCast(end, llvm::Type::getInt64Ty(context()),
                                      true, "slice.end64");
     }
+    if (base.length) {
+      llvm::Value *zero =
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()), 0);
+      llvm::Value *startNegative =
+          builder()->CreateICmpSLT(start, zero, "slice.start.negative");
+      llvm::Value *endBeforeStart =
+          builder()->CreateICmpSLT(end, start, "slice.end.before.start");
+      llvm::Value *endOutOfBounds =
+          rangeInclusive
+              ? builder()->CreateICmpSGE(end, base.length,
+                                         "slice.end.out.of.bounds")
+              : builder()->CreateICmpSGT(end, base.length,
+                                         "slice.end.out.of.bounds");
+      llvm::Value *badStart = builder()->CreateOr(
+          startNegative, endBeforeStart, "slice.bad.start");
+      llvm::Value *bad = builder()->CreateOr(
+          badStart, endOutOfBounds, "slice.bounds.fail.cond");
+      llvm::Function *func = currentFunction_;
+      llvm::BasicBlock *failBB =
+          llvm::BasicBlock::Create(context(), "slice.bounds.fail", func);
+      llvm::BasicBlock *continueBB =
+          llvm::BasicBlock::Create(context(), "slice.bounds.ok", func);
+      builder()->CreateCondBr(bad, failBB, continueBB);
+      builder()->SetInsertPoint(failBB);
+      llvm::FunctionCallee abortFn = module()->getOrInsertFunction(
+          "abort", llvm::FunctionType::get(llvm::Type::getVoidTy(context()),
+                                           false));
+      builder()->CreateCall(abortFn);
+      builder()->CreateUnreachable();
+      builder()->SetInsertPoint(continueBB);
+    }
+
     llvm::Value *ptr = getElementPtr(base, start);
     llvm::Value *len =
         builder()->CreateSub(end, start, "slice.len");
