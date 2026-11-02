@@ -1575,6 +1575,7 @@ llvm::Value *LLVMCodeGenerator::generateStructDecl(
       llvm::StructType::create(context(), memberTypes, structDecl->name);
   structTypes_[structDecl->name] = structType;
   structInfo_[structDecl->name] = memberIndices;
+  structValueTypes_.insert(structDecl->name);
 
   for (auto &funcNode : functions) {
     if (auto *funcDecl =
@@ -3758,6 +3759,34 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
         ctorArgs.insert(ctorArgs.end(), args.begin(), args.end());
         builder()->CreateCall(ctorIt->second, ctorArgs);
         return builder()->CreateLoad(structTy, tmp, funcName + ".value");
+      }
+      // 无显式构造函数的 POD struct：按字段顺序构造结构体值。
+      if (structValueTypes_.count(funcName) &&
+          args.size() == structIt->second->getNumElements()) {
+        llvm::StructType *structTy = structIt->second;
+        llvm::Value *value = llvm::UndefValue::get(structTy);
+        for (size_t i = 0; i < args.size(); ++i) {
+          llvm::Value *fieldValue = args[i];
+          llvm::Type *fieldType = structTy->getElementType(i);
+          if (fieldValue->getType() != fieldType) {
+            if (fieldType->isFloatingPointTy() &&
+                fieldValue->getType()->isIntegerTy()) {
+              fieldValue = builder()->CreateSIToFP(fieldValue, fieldType,
+                                                   "struct.field.cast");
+            } else if (fieldType->isIntegerTy() &&
+                       fieldValue->getType()->isFloatingPointTy()) {
+              fieldValue = builder()->CreateFPToSI(fieldValue, fieldType,
+                                                   "struct.field.cast");
+            } else if (fieldType->isIntegerTy() &&
+                       fieldValue->getType()->isIntegerTy()) {
+              fieldValue = builder()->CreateIntCast(fieldValue, fieldType,
+                                                    true, "struct.field.cast");
+            }
+          }
+          value = builder()->CreateInsertValue(value, fieldValue, i,
+                                               "struct.field");
+        }
+        return value;
       }
     }
   }

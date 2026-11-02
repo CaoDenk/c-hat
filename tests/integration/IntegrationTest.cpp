@@ -248,6 +248,22 @@ TEST_CASE("Integration: array and slice properties", "[integration][array]") {
       "}\n") == 23);
 }
 
+TEST_CASE("Integration: struct value construction", "[integration][struct]") {
+  REQUIRE(compileAndRun(
+      "struct P { int x; int y; }\n"
+      "func main() -> int {\n"
+      "    P p = P(40, 2);\n"
+      "    return p.x + p.y;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "struct Point<T> { T x; T y; }\n"
+      "func main() -> int {\n"
+      "    Point<int> p = Point<int>(40, 2);\n"
+      "    return p.x + p.y;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: out parameters", "[integration][out]") {
   REQUIRE(compileAndRun(
       "func assign_out(out int& x) { x = 42; }\n"
@@ -319,6 +335,15 @@ TEST_CASE("Integration: out parameters", "[integration][out]") {
       "    bad(&p);\n"
       "    return 0;\n"
       "}\n") == -2);
+
+  REQUIRE(compileAndRun(
+      "struct P { int x; int y; }\n"
+      "func fill(out P& dst) { dst = P(40, 2); }\n"
+      "func main() -> int {\n"
+      "    late P p;\n"
+      "    fill(&p);\n"
+      "    return p.x + p.y;\n"
+      "}\n") == 42);
 
   REQUIRE(compileAndRun(
       "class C { int x; }\n"

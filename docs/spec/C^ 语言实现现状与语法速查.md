@@ -307,7 +307,8 @@ extern "C" {
 - 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用（本次修复；静态派发）
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
 - 显式 `delete` 调用析构函数（本次修复）
-- 结构体字段赋值/读取 `p.x = 7; return p.x;`（本次修复）
+- 结构体字段赋值/读取 `p.x = 7; return p.x;`
+- POD struct 值构造 `P(40, 2)` / 泛型结构体值构造 `Point<int>(40, 2)`
 - `match`：整数/字符/布尔/字符串、`_` 默认、`if` 守卫、标识符绑定（本次修复）
 - `foreach`：数组、切片、`a..b` / `a..=b` 范围、可选的 index 变量
 - `try/catch/throw`：基础抛出/捕获、跨函数抛出、嵌套 try、`catch (...)`、按类型顺序匹配 catch、未匹配继续向外抛（本版为 setjmp/longjmp 实现）
