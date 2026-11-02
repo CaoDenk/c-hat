@@ -123,6 +123,8 @@ private:
   void emitDestructorCleanupFrom(size_t startIndex, bool consumeEntries);
   void maybeRegisterDestructor(ast::VariableDecl *varDecl,
                                llvm::Value *storage);
+  void registerDestructorForType(llvm::Value *storage,
+                                 const std::shared_ptr<types::Type> &type);
   llvm::Value *generateIfStmt(std::unique_ptr<ast::IfStmt> ifStmt);
   llvm::Value *generateWhileStmt(std::unique_ptr<ast::WhileStmt> whileStmt);
   llvm::Value *generateDoWhileStmt(std::unique_ptr<ast::DoWhileStmt> doWhileStmt);

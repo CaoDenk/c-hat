@@ -313,6 +313,23 @@ TEST_CASE("Integration: stack object destructors", "[integration][raii]") {
       "    try { f(b); } catch (int e) { }\n"
       "    return b->value;\n"
       "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Box { int value; }\n"
+      "class C {\n"
+      "    Box^ p;\n"
+      "    C(Box^ q) { p = q; }\n"
+      "    ~C() { p->value = 42; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Box^ b = new Box();\n"
+      "    b->value = 0;\n"
+      "    {\n"
+      "        late C c;\n"
+      "        c = C(b);\n"
+      "    }\n"
+      "    return b->value;\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: out parameters", "[integration][out]") {

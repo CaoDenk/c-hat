@@ -3160,6 +3160,14 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     }
 
     ast::Expression *leftExpr = binaryExpr->left.get();
+    std::string leftName;
+    std::shared_ptr<types::Type> leftDtorType;
+    if (auto *leftIdent = dynamic_cast<ast::Identifier *>(leftExpr)) {
+      leftName = leftIdent->name;
+      if (semanticModel_) {
+        leftDtorType = semanticModel_->getExpressionType(leftExpr);
+      }
+    }
     llvm::Type *leftRefTarget = nullptr;
     if (auto *leftIdent = dynamic_cast<ast::Identifier *>(leftExpr)) {
       auto refTypeIt = referencePointeeTypes_.find(leftIdent->name);
@@ -3251,6 +3259,9 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
     }
 
     builder()->CreateStore(rhs, lhsPtr);
+    if (!leftName.empty() && targetAlloca && leftDtorType) {
+      registerDestructorForType(targetAlloca, leftDtorType);
+    }
     return rhs;
   }
   default:
@@ -6093,17 +6104,17 @@ void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
 }
 
 // 登记局部对象的析构清理。只对带析构函数的 class/struct 值生效。
-void LLVMCodeGenerator::maybeRegisterDestructor(
-    ast::VariableDecl *varDecl, llvm::Value *storage) {
-  if (!semanticModel_ || !varDecl || !storage) {
+void LLVMCodeGenerator::registerDestructorForType(
+    llvm::Value *storage, const std::shared_ptr<types::Type> &type) {
+  if (!storage || !type || !type->isClass()) {
     return;
   }
-  auto semanticType = semanticModel_->getDeclarationType(varDecl);
-  if (!semanticType || !semanticType->isClass()) {
-    return;
+  for (const auto &entry : destructorEntries_) {
+    if (entry.storage == storage) {
+      return;
+    }
   }
-  auto classType =
-      std::dynamic_pointer_cast<types::ClassType>(semanticType);
+  auto classType = std::dynamic_pointer_cast<types::ClassType>(type);
   if (!classType || !classType->hasDestructor()) {
     return;
   }
@@ -6112,7 +6123,6 @@ void LLVMCodeGenerator::maybeRegisterDestructor(
   if (functions_.find(dtorName) == functions_.end()) {
     return;
   }
-
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                  func->getEntryBlock().begin());
@@ -6121,6 +6131,15 @@ void LLVMCodeGenerator::maybeRegisterDestructor(
   entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
   builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
   destructorEntries_.push_back({storage, dtorName, flag});
+}
+
+void LLVMCodeGenerator::maybeRegisterDestructor(
+    ast::VariableDecl *varDecl, llvm::Value *storage) {
+  if (!semanticModel_ || !varDecl) {
+    return;
+  }
+  registerDestructorForType(
+      storage, semanticModel_->getDeclarationType(varDecl));
 }
 
 void LLVMCodeGenerator::emitDestructorCleanup(bool consumeEntries) {
