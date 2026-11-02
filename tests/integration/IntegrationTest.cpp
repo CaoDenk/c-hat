@@ -877,6 +877,19 @@ TEST_CASE("Integration: tuple access and destructuring", "[integration][tuple]")
       "}\n") == 45);
 }
 
+TEST_CASE("Integration: enum match dispatch", "[integration][match][enum]") {
+  REQUIRE(compileAndRun(
+      "enum Color { Red, Green }\n"
+      "func main() -> int {\n"
+      "    Color c = Color.Green;\n"
+      "    match (c) {\n"
+      "        Color.Red => { return 1; }\n"
+      "        Color.Green => { return 42; }\n"
+      "    }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: do-while goto and enum", "[integration][control]") {
   REQUIRE(compileAndRun(
       "enum Color { Red, Green, Blue }\n"
