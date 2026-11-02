@@ -290,10 +290,6 @@ void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
     }
   }
   for (const auto &[name, links] : typeCandidates) {
-    if (links.size() > 1) {
-      throw std::runtime_error(
-          "Duplicate top-level type across modules: " + name);
-    }
     if (links.size() == 1 && !mainNames.count(name)) {
       loader.addTypeAlias(name, links.front());
     }

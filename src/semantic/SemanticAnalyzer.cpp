@@ -5610,6 +5610,23 @@ SemanticAnalyzer::analyzeFunctionType(const ast::FunctionType *functionType) {
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeNamedType(const ast::NamedType *namedType) {
   auto type = analyzeTypeByName(namedType->name);
+  if (type && namedType->name.find('.') != std::string::npos) {
+    std::string prefix;
+    size_t start = 0;
+    while (true) {
+      size_t dot = namedType->name.find('.', start);
+      if (dot == std::string::npos) {
+        break;
+      }
+      if (!prefix.empty()) {
+        prefix += "__";
+      }
+      prefix += namedType->name.substr(start, dot - start);
+      start = dot + 1;
+    }
+    std::string last = namedType->name.substr(start);
+    const_cast<ast::NamedType *>(namedType)->name = prefix + "__" + last;
+  }
   if (type) {
     // 模块类型别名：把 AST 类型节点解析为实际的模块前缀名，
     // 让 codegen 能直接找到对应 LLVM 类型。
@@ -5708,6 +5725,33 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
     return std::make_shared<types::EnumType>(
         typeName, types::TypeFactory::getPrimitiveType(
                      types::PrimitiveType::Kind::Int));
+  }
+
+  // 模块限定类型：A.P -> A__P
+  if (typeName.find('.') != std::string::npos) {
+    std::string prefix;
+    size_t start = 0;
+    while (true) {
+      size_t dot = typeName.find('.', start);
+      if (dot == std::string::npos) {
+        break;
+      }
+      if (!prefix.empty()) {
+        prefix += "__";
+      }
+      prefix += typeName.substr(start, dot - start);
+      start = dot + 1;
+    }
+    std::string last = typeName.substr(start);
+    std::string linkName = prefix + "__" + last;
+    auto target = symbolTable.lookupSymbol(linkName);
+    if (auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(target)) {
+      return classSymbol->getType();
+    }
+    if (auto structSymbol =
+            std::dynamic_pointer_cast<StructSymbol>(target)) {
+      return structSymbol->getType();
+    }
   }
 
   // 检查符号表

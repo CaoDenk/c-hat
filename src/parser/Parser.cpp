@@ -3398,7 +3398,18 @@ std::unique_ptr<ast::Type> Parser::parseBasicType() {
   } else if (name == "literalview") {
     type = std::make_unique<ast::NamedType>("literalview");
   } else {
-    type = std::make_unique<ast::NamedType>(name);
+    std::string fullName = name;
+    while (check(lexer::TokenType::Dot)) {
+      ParserState dotState = saveState();
+      advance(); // consume '.'
+      if (!check(lexer::TokenType::Identifier)) {
+        restoreState(dotState);
+        break;
+      }
+      fullName += "." + currentToken->getValue();
+      advance();
+    }
+    type = std::make_unique<ast::NamedType>(fullName);
   }
 
   // 检查是否有泛型参数 <Type1, Type2, ...>

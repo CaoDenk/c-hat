@@ -121,13 +121,22 @@ TEST_CASE("Module: duplicate top-level symbols are rejected", "[module][errors]"
     std::ofstream e(dir / "E.ch");
     e << "module E;\npublic struct P { int y; }\n";
   }
-  parser::Parser dupTypeParser("import D; import E; func main() { }");
+  parser::Parser dupTypeParser(
+      "import D; import E; "
+      "func main() { D.P^ a = new D.P(); E.P^ b = new E.P(); }");
   auto dupTypeProgram = dupTypeParser.parseProgram();
   REQUIRE(dupTypeProgram != nullptr);
   semantic::ModuleLoader dupTypeLoader(std::vector<std::string>{dir.string()});
-  REQUIRE_THROWS_AS(
-      semantic::loadImportsInto(*dupTypeProgram, dupTypeLoader),
-      std::runtime_error);
+  REQUIRE_NOTHROW(
+      semantic::loadImportsInto(*dupTypeProgram, dupTypeLoader));
+  REQUIRE(dupTypeLoader.getTypeAliases().empty());
+  semantic::SemanticAnalyzer dupTypeAnalyzer(
+      std::vector<std::string>{dir.string()}, false);
+  dupTypeAnalyzer.setModuleFunctionAliases(
+      dupTypeLoader.getFunctionAliases());
+  dupTypeAnalyzer.setModuleTypeAliases(dupTypeLoader.getTypeAliases());
+  dupTypeAnalyzer.analyze(*dupTypeProgram);
+  REQUIRE(!dupTypeAnalyzer.hasError());
 
   fs::remove_all(dir);
 }

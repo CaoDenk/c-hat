@@ -1398,7 +1398,8 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   fs::create_directories(dir);
   {
     std::ofstream a(dir / "A.ch");
-    a << "module A;\npublic func foo() -> int { return 42; }\n";
+    a << "module A;\npublic func foo() -> int { return 42; }\n"
+         "public class C { public int x; }\n";
   }
   {
     std::ofstream b(dir / "B.ch");
@@ -1407,7 +1408,8 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   }
   {
     std::ofstream c(dir / "C.ch");
-    c << "module C;\npublic func foo() -> int { return 10; }\n";
+    c << "module C;\npublic func foo() -> int { return 10; }\n"
+         "public class C { public int x; }\n";
   }
   {
     std::ofstream d(dir / "D.ch");
@@ -1437,6 +1439,18 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   result = compileAndRunWithModules(
       "import D;\n"
       "func main() -> int { P p = D.make(); return p.x + p.y; }\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import A;\nimport C;\n"
+      "func main() -> int {\n"
+      "    A.C^ a = new A.C();\n"
+      "    C.C^ c = new C.C();\n"
+      "    a->x = 40;\n"
+      "    c->x = 2;\n"
+      "    return a->x + c->x;\n"
+      "}\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);
