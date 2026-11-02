@@ -1350,6 +1350,23 @@ TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
       "import std.core.Types;\n"
       "func main() -> int { return compare(40, 2) + 41; }\n",
       stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.mem;\n"
+      "func main() -> int {\n"
+      "    int[3] a = [1, 2, 3];\n"
+      "    zero(a);\n"
+      "    return a[0] + a[1] + a[2] + 42;\n"
+      "}\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.string;\n"
+      "func main() -> int {\n"
+      "    if (length(\"hello\") == 5) { return 42; }\n"
+      "    return 0;\n"
+      "}\n",
+      stdlibDir) == 42);
 }
 
 TEST_CASE("Integration: module imports", "[integration][module]") {

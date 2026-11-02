@@ -293,6 +293,7 @@ extern "C" {
 - 数组字面量 `[...]`：固定数组上下文生成真正的数组值；切片上下文生成视图
 - 重复数组字面量 `[value; N]`：整数字面量 N 的批量初始化（标量/指针元素；大 N 生成循环）
 - 固定数组下标读写、数组复制初始化、数组整体赋值、按值传参；数组实参传给 `T[]` 形参时自动构造切片视图
+- 字符串字面量可传给 `byte![]` 形参（按 NUL 终止计算长度）
 - 数组/切片属性 `.len` / `.ptr`；`.len` 类型为 `long`，切片 ABI 长度字段为 `long`，切片区间 `a[start..end]` / `a[start..=end]`
 - 数组变量赋予切片时保留 backing array 别名；支持 `out int[]&` 初始化切片描述符
 - `new T[n]` 返回切片、`delete[]` 释放底层数组（本次修复）
@@ -304,7 +305,7 @@ extern "C" {
 - `+=` / `-=` / `*=` / `++` / `--`（本次修复）
 - `extern "C"` 调用 libc（如 `puts`）
 - `import` 模块递归加载并合并到主程序；支持限定调用 `A.foo()` 和别名 `X.foo()`（基础 whole-program 模式，无独立模块 ABI）
-- 标准库模块已可导入：`std.math.basic`、`std.core.Types`、`std.io.Console` 等
+- 标准库模块已可导入并测试：`std.math.basic`、`std.core.Types`、`std.mem`、`std.string`、`std.io.Console`
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）

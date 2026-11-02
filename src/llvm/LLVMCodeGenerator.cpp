@@ -3920,6 +3920,11 @@ llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
     valueType = alloca->getAllocatedType();
   }
 
+  // 按值传固定数组：从 alloca 加载完整数组值。
+  if (alloca && paramType->isArrayTy() && valueType == paramType) {
+    return builder()->CreateLoad(paramType, alloca, "call.array.load");
+  }
+
   auto asArrayAlloca = [&]() -> llvm::AllocaInst * {
     if (alloca && valueType->isArrayTy()) {
       return alloca;
@@ -3965,6 +3970,23 @@ llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
   // 切片地址 -> 切片值。
   if (alloca && isSliceStructType(valueType) && paramType == valueType) {
     return builder()->CreateLoad(valueType, alloca, "call.slice.load");
+  }
+
+  // 字节指针 / 字符串字面量 -> byte[] 切片视图。
+  if (paramType->isStructTy() && isSliceStructType(paramType) &&
+      arg->getType()->isPointerTy()) {
+    auto *sliceType = llvm::cast<llvm::StructType>(paramType);
+    llvm::Type *elementType = getSliceElementType(sliceType);
+    if (elementType && elementType->isIntegerTy(8)) {
+      llvm::FunctionCallee strlenFn = module()->getOrInsertFunction(
+          "strlen", llvm::FunctionType::get(llvm::Type::getInt64Ty(context()),
+                                           {llvm::PointerType::getUnqual(context())},
+                                           false));
+      llvm::Value *len = builder()->CreateCall(strlenFn, {arg}, "slice.strlen");
+      llvm::Value *sliceValue = builder()->CreateInsertValue(
+          llvm::UndefValue::get(paramType), arg, 0);
+      return builder()->CreateInsertValue(sliceValue, len, 1);
+    }
   }
 
   // 引用参数：需要地址。显式 &x 已是指针；隐式只读引用则物化临时值。
@@ -4165,9 +4187,20 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     return nullptr;
   }
 
-  // 生成参数
+  // 生成参数。数组标识符保留 alloca，以便按形参类型决定是按值加载
+  // 还是构造切片视图，避免切片参数悄悄指向临时副本。
   std::vector<llvm::Value *> args;
   for (auto &arg : callExpr->args) {
+    if (auto *ident = dynamic_cast<ast::Identifier *>(arg.get())) {
+      auto valueIt = namedValues_.find(ident->name);
+      if (valueIt != namedValues_.end()) {
+        auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(valueIt->second);
+        if (alloca && alloca->getAllocatedType()->isArrayTy()) {
+          args.push_back(alloca);
+          continue;
+        }
+      }
+    }
     args.push_back(generateExpression(std::move(arg)));
   }
 
