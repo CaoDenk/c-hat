@@ -179,6 +179,20 @@ TEST_CASE("Array: Array to slice conversion", "[array][slice][conversion]") {
   }
 }
 
+TEST_CASE("Array: constant bounds checks", "[array][bounds]") {
+  SECTION("In-bounds constant index") {
+    REQUIRE(analyzeSource("int[3] a = [1, 2, 3]; int x = a[2];") == true);
+  }
+
+  SECTION("Out-of-bounds constant index") {
+    REQUIRE(analyzeSource("int[3] a = [1, 2, 3]; int x = a[3];") == false);
+  }
+
+  SECTION("Negative constant index") {
+    REQUIRE(analyzeSource("int[3] a = [1, 2, 3]; int x = a[-1];") == false);
+  }
+}
+
 TEST_CASE("Array: Error path tests", "[array][errors]") {
   SECTION("Array reassign with wrong size") {
     REQUIRE(analyzeSource("var arr = [1, 2, 3]; arr = [1, 2];") == false);

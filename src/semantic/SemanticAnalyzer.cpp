@@ -20,6 +20,8 @@
 #include "ConceptSymbol.h"
 #include "TypeMetadata.h"
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -4780,9 +4782,38 @@ SemanticAnalyzer::analyzeSubscriptExpr(ast::SubscriptExpr *subscriptExpr) {
     return nullptr;
   }
 
+  std::function<std::optional<long long>(ast::Expression *)> constantIndex =
+      [&](ast::Expression *expr) -> std::optional<long long> {
+    if (auto *literal = dynamic_cast<ast::Literal *>(expr)) {
+      if (literal->type == ast::Literal::Type::Integer) {
+        try {
+          return std::stoll(literal->value);
+        } catch (...) {
+          return std::nullopt;
+        }
+      }
+    }
+    if (auto *unary = dynamic_cast<ast::UnaryExpr *>(expr)) {
+      if (unary->op == ast::UnaryExpr::Op::Minus ||
+          unary->op == ast::UnaryExpr::Op::Plus) {
+        auto value = constantIndex(unary->expr.get());
+        if (value) {
+          return unary->op == ast::UnaryExpr::Op::Minus ? -*value : *value;
+        }
+      }
+    }
+    return std::nullopt;
+      };
+
   // 检查是否是数组类型
   if (arrayType->isArray()) {
     auto array = std::dynamic_pointer_cast<types::ArrayType>(arrayType);
+    if (auto index = constantIndex(subscriptExpr->index.get())) {
+      if (*index < 0 || static_cast<size_t>(*index) >= array->getSize()) {
+        error("Array subscript out of bounds", *subscriptExpr);
+        return nullptr;
+      }
+    }
     return std::make_shared<types::ReferenceType>(array->getElementType());
   }
 
