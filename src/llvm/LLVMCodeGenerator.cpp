@@ -4087,6 +4087,12 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
       registerOutDestructors(it->second, outArgNames);
       return call;
     }
+    if (auto *externFunc = module()->getFunction(callExpr->resolvedMangledName)) {
+      auto callArgs = coerceCallArguments(externFunc, args);
+      auto *call = builder()->CreateCall(externFunc, callArgs);
+      registerOutDestructors(externFunc, outArgNames);
+      return call;
+    }
     if (semanticModel_) {
       error("Resolved function not found: " + callExpr->resolvedMangledName,
             callExpr.get());

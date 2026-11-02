@@ -478,6 +478,18 @@ TEST_CASE("Integration: unified cleanup order", "[integration][raii][defer]") {
       "}\n") == 32);
 }
 
+TEST_CASE("Integration: FFI out reference", "[integration][ffi][out]") {
+  REQUIRE(compileAndRun(
+      "struct Timeval { long tv_sec; long tv_usec; }\n"
+      "extern \"C\" func gettimeofday(out Timeval& tv, byte^ tz) -> int;\n"
+      "func main() -> int {\n"
+      "    late Timeval tv;\n"
+      "    gettimeofday(&tv, null);\n"
+      "    if (tv.tv_sec > 0) { return 42; }\n"
+      "    return 0;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: out parameters", "[integration][out]") {
   REQUIRE(compileAndRun(
       "func assign_out(out int& x) { x = 42; }\n"

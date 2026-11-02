@@ -2576,6 +2576,7 @@ void SemanticAnalyzer::analyzeExternDecl(ast::ExternDecl *externDecl) {
         }
       }
 
+      std::vector<bool> outParams;
       for (auto &param : funcDecl->params) {
         if (auto *paramNode = dynamic_cast<ast::Parameter *>(param.get())) {
           // 跳过可变参数标记
@@ -2584,12 +2585,14 @@ void SemanticAnalyzer::analyzeExternDecl(ast::ExternDecl *externDecl) {
           }
           auto paramType = analyzeType(paramNode->type.get());
           funcType->addParameterType(paramType);
+          outParams.push_back(paramNode->isOut);
         }
       }
 
       auto funcSymbol = std::make_shared<FunctionSymbol>(
           funcDecl->name, funcType, Visibility::Default, funcDecl->isImmutable,
           funcDecl->isVariadic);
+      funcSymbol->setOutParams(outParams);
       funcSymbol->setExtern(true);
       funcSymbol->setAbi(externDecl->abi);
       symbolTable.addSymbol(funcSymbol);
@@ -4373,8 +4376,12 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       auto selectedFunc = exactCandidates[0];
       applyOutArguments(selectedFunc, callExpr, uninitializedRefArgs);
       // 设置 mangled name
-      callExpr->resolvedMangledName = getMangledFuncName(
-          identifier->name, selectedFunc->getType()->getParameterTypes());
+      if (selectedFunc->isExternFunction()) {
+        callExpr->resolvedMangledName = identifier->name;
+      } else {
+        callExpr->resolvedMangledName = getMangledFuncName(
+            identifier->name, selectedFunc->getType()->getParameterTypes());
+      }
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&
           selectedFunc->isTemplate()) {
         // 替换返回类型中的模板参数
@@ -4401,8 +4408,12 @@ SemanticAnalyzer::analyzeCallExpr(ast::CallExpr *callExpr) {
       auto selectedFunc = viableCandidates[0];
       applyOutArguments(selectedFunc, callExpr, uninitializedRefArgs);
       // 设置 mangled name
-      callExpr->resolvedMangledName = getMangledFuncName(
-          identifier->name, selectedFunc->getType()->getParameterTypes());
+      if (selectedFunc->isExternFunction()) {
+        callExpr->resolvedMangledName = identifier->name;
+      } else {
+        callExpr->resolvedMangledName = getMangledFuncName(
+            identifier->name, selectedFunc->getType()->getParameterTypes());
+      }
       // 如果有显式模板参数，返回替换后的返回类型
       if (hasExplicitTemplateArgs && !identifier->templateArgs.empty() &&
           selectedFunc->isTemplate()) {
