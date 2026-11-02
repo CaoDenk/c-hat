@@ -1332,6 +1332,26 @@ TEST_CASE("Integration: struct value constructor", "[integration][generics]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
+  const std::string stdlibDir =
+      std::string(C_HAT_SOURCE_DIR) + "/stdlib";
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.math.basic;\n"
+      "func main() -> int { return add(40, 2); }\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.math.basic as math;\n"
+      "func main() -> int { return math.multiply(21, 2); }\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.core.Types;\n"
+      "func main() -> int { return compare(40, 2) + 41; }\n",
+      stdlibDir) == 42);
+}
+
 TEST_CASE("Integration: module imports", "[integration][module]") {
   namespace fs = std::filesystem;
   fs::path dir = fs::temp_directory_path() / "c_hat_module_test";

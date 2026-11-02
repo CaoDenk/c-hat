@@ -1,5 +1,7 @@
 add_executable(integration_catch2_test IntegrationTest.cpp)
 target_include_directories(integration_catch2_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(integration_catch2_test PRIVATE
+  C_HAT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(integration_catch2_test PRIVATE Catch2::Catch2WithMain
   lexer ast parser semantic types llvm_codegen)
 
