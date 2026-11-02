@@ -3101,7 +3101,11 @@ SemanticAnalyzer::analyzeThrowStmt(ast::ThrowStmt *throwStmt) {
 }
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeDeferStmt(ast::DeferStmt *deferStmt) {
-  if (deferStmt->expr) {
+  if (deferStmt->body) {
+    symbolTable.enterScope();
+    analyzeStatement(deferStmt->body.get());
+    symbolTable.exitScope();
+  } else if (deferStmt->expr) {
     analyzeExpression(deferStmt->expr.get());
   }
   return nullptr;
@@ -6311,6 +6315,9 @@ bool SemanticAnalyzer::containsAwaitOrYield(ast::Statement *stmt) {
 
   case ast::NodeType::DeferStmt: {
     auto *deferStmt = static_cast<ast::DeferStmt *>(stmt);
+    if (deferStmt->body) {
+      return containsAwaitOrYield(deferStmt->body.get());
+    }
     return containsAwaitOrYield(deferStmt->expr.get());
   }
 

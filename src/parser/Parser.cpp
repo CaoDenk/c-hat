@@ -4137,6 +4137,10 @@ std::unique_ptr<ast::CatchStmt> Parser::parseCatchStmt() {
 }
 
 std::unique_ptr<ast::Statement> Parser::parseDeferStmt() {
+  if (check(lexer::TokenType::LBrace)) {
+    auto body = parseCompoundStmt();
+    return std::make_unique<ast::DeferStmt>(std::move(body));
+  }
   auto expr = parseExpression();
   expect(lexer::TokenType::Semicolon, "Expected ';' after defer expression");
   return std::make_unique<ast::DeferStmt>(std::move(expr));

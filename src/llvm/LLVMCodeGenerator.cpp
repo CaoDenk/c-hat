@@ -779,6 +779,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
 
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferStatements_.clear();
   lateVariables_.clear();
 
   size_t paramIndex = 0;
@@ -920,6 +921,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
       emitDeferCleanup(true);
       deferExpressions_.clear();
       deferFlags_.clear();
+  deferStatements_.clear();
 
       if (hasDefer) {
         auto *excHandler = getExceptionHandlerGlobal(module());
@@ -939,6 +941,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferStatements_.clear();
 
   return function;
 }
@@ -1192,6 +1195,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
 
       deferExpressions_.clear();
     deferFlags_.clear();
+  deferStatements_.clear();
     lateVariables_.clear();
 
     size_t paramIndex = 0;
@@ -1391,6 +1395,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
           emitDeferCleanup(true);
           deferExpressions_.clear();
           deferFlags_.clear();
+  deferStatements_.clear();
 
           if (hasDefer) {
             auto *excHandler = getExceptionHandlerGlobal(module());
@@ -1420,6 +1425,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
     c_hat::debugStream() << "Debug: Before clearing deferExpressions_" << std::endl;
     deferExpressions_.clear();
     deferFlags_.clear();
+  deferStatements_.clear();
   }
 
   c_hat::debugStream() << "Debug: Before returning function" << std::endl;
@@ -1647,6 +1653,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
       deferExpressions_.clear();
     deferFlags_.clear();
+  deferStatements_.clear();
     lateVariables_.clear();
 
     auto prevClassName = currentClassName_;
@@ -1823,6 +1830,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         emitDeferCleanup(true);
         deferExpressions_.clear();
         deferFlags_.clear();
+  deferStatements_.clear();
 
         if (hasDefer) {
           auto *excHandler = getExceptionHandlerGlobal(module());
@@ -1841,6 +1849,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     currentClassName_ = prevClassName;
     deferExpressions_.clear();
     deferFlags_.clear();
+  deferStatements_.clear();
   }
 
   functions_[mangledName] = function;
@@ -5932,7 +5941,13 @@ llvm::Value *LLVMCodeGenerator::generateDeferStmt(
   entryBuilder.CreateStore(llvm::ConstantInt::getFalse(context()), flag);
   builder()->CreateStore(llvm::ConstantInt::getTrue(context()), flag);
 
-  deferExpressions_.push_back(std::move(deferStmt->expr));
+  if (deferStmt->body) {
+    deferExpressions_.push_back(nullptr);
+    deferStatements_.push_back(std::move(deferStmt->body));
+  } else {
+    deferExpressions_.push_back(std::move(deferStmt->expr));
+    deferStatements_.push_back(nullptr);
+  }
   deferFlags_.push_back(flag);
   return nullptr;
 }
@@ -5956,7 +5971,10 @@ void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
   llvm::Type *i1Ty = llvm::Type::getInt1Ty(context());
 
   for (size_t i = deferExpressions_.size(); i-- > startIndex;) {
-    if (!deferExpressions_[i]) {
+    auto &deferExpr = deferExpressions_[i];
+    auto &deferBody = i < deferStatements_.size() ? deferStatements_[i]
+                                                   : deferStatements_.front();
+    if (!deferExpr && !deferBody) {
       continue;
     }
     llvm::AllocaInst *flag =
@@ -5976,11 +5994,22 @@ void LLVMCodeGenerator::emitDeferCleanupFrom(size_t startIndex,
 
     builder()->SetInsertPoint(thenBB);
     if (consumeExpressions) {
-      generateExpression(std::move(deferExpressions_[i]));
+      if (deferExpr) {
+        generateExpression(std::move(deferExpr));
+      } else if (deferBody) {
+        generateStatement(std::move(deferBody));
+      }
     } else {
-      auto cloned = ast::cloneExprWithSubst(deferExpressions_[i].get(), {});
-      if (cloned) {
-        generateExpression(std::move(cloned));
+      if (deferExpr) {
+        auto cloned = ast::cloneExprWithSubst(deferExpr.get(), {});
+        if (cloned) {
+          generateExpression(std::move(cloned));
+        }
+      } else if (deferBody) {
+        auto cloned = ast::cloneStmtWithSubst(deferBody.get(), {});
+        if (cloned) {
+          generateStatement(std::move(cloned));
+        }
       }
       // 清理路径已经执行过该 defer；清除 flag，避免同一函数随后
       // 正常结束（例如 throw 被同函数 catch 捕获）时重复执行。
@@ -6275,6 +6304,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   referencePointeeTypes_.clear();
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();
 
@@ -6319,6 +6349,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
         emitDeferCleanup(true);
         deferExpressions_.clear();
         deferFlags_.clear();
+  deferStatements_.clear();
         if (returnType->isVoidTy()) {
           builder()->CreateRetVoid();
         } else {
@@ -6331,6 +6362,7 @@ llvm::Value *LLVMCodeGenerator::generateExtensionMemberFunction(
   currentFunction_ = prevFunction;
   deferExpressions_.clear();
   deferFlags_.clear();
+  deferStatements_.clear();
   deferScopeMarkers_.clear();
   loopDeferMarkers_.clear();
   return function;

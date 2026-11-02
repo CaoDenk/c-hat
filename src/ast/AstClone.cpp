@@ -516,5 +516,10 @@ cloneStructWithSubst(const StructDecl *st, const TypeSubst &subst,
       std::move(members));
 }
 
+std::unique_ptr<Statement> cloneStmtWithSubst(const Statement *stmt,
+                                             const TypeSubst &subst) {
+  return cloneStmtImpl(stmt, subst);
+}
+
 } // namespace ast
 } // namespace c_hat

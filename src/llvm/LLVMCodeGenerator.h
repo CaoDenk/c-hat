@@ -235,6 +235,7 @@ private:
   std::unordered_map<std::string, llvm::Type *> referencePointeeTypes_;
   const c_hat::semantic::SemanticModel *semanticModel_ = nullptr;
   std::vector<std::unique_ptr<ast::Expression>> deferExpressions_;
+  std::vector<std::unique_ptr<ast::Statement>> deferStatements_;
   // 与 deferExpressions_ 平行：每个 defer 是否在运行时真正注册过。
   std::vector<llvm::AllocaInst *> deferFlags_;
   // 每个词法块在 deferExpressions_ 中的起始位置；块退出时只执行本层 defer。

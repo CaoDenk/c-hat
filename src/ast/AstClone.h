@@ -28,6 +28,8 @@ std::unique_ptr<Type> cloneTypeWithSubst(const Type *type,
                                          const TypeSubst &subst);
 std::unique_ptr<Expression> cloneExprWithSubst(const Expression *expr,
                                                const TypeSubst &subst);
+std::unique_ptr<Statement> cloneStmtWithSubst(const Statement *stmt,
+                                             const TypeSubst &subst);
 std::unique_ptr<Node> cloneNodeWithSubst(const Node *node,
                                          const TypeSubst &subst);
 
