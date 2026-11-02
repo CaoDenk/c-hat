@@ -3102,6 +3102,10 @@ SemanticAnalyzer::analyzeThrowStmt(ast::ThrowStmt *throwStmt) {
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeDeferStmt(ast::DeferStmt *deferStmt) {
   if (deferStmt->body) {
+    if (containsDeferControlFlow(deferStmt->body.get())) {
+      error("defer body cannot contain return/break/continue",
+            *deferStmt);
+    }
     symbolTable.enterScope();
     analyzeStatement(deferStmt->body.get());
     symbolTable.exitScope();
@@ -6217,6 +6221,67 @@ std::shared_ptr<types::Type> SemanticAnalyzer::instantiateTemplateType(
 
   // 对于其他类型，返回原始类型
   return templateType;
+}
+
+// 检测 defer 体内是否包含不允许的控制流。
+bool SemanticAnalyzer::containsDeferControlFlow(ast::Statement *stmt) {
+  if (!stmt) {
+    return false;
+  }
+  switch (stmt->getType()) {
+  case ast::NodeType::ReturnStmt:
+  case ast::NodeType::BreakStmt:
+  case ast::NodeType::ContinueStmt:
+    return true;
+  case ast::NodeType::CompoundStmt: {
+    auto *compound = static_cast<ast::CompoundStmt *>(stmt);
+    for (auto &node : compound->statements) {
+      if (auto *child = dynamic_cast<ast::Statement *>(node.get())) {
+        if (containsDeferControlFlow(child)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  case ast::NodeType::IfStmt: {
+    auto *ifStmt = static_cast<ast::IfStmt *>(stmt);
+    return containsDeferControlFlow(ifStmt->thenBranch.get()) ||
+           containsDeferControlFlow(ifStmt->elseBranch.get());
+  }
+  case ast::NodeType::WhileStmt:
+    return containsDeferControlFlow(
+        static_cast<ast::WhileStmt *>(stmt)->body.get());
+  case ast::NodeType::DoWhileStmt:
+    return containsDeferControlFlow(
+        static_cast<ast::DoWhileStmt *>(stmt)->body.get());
+  case ast::NodeType::ForStmt:
+    return containsDeferControlFlow(
+        static_cast<ast::ForStmt *>(stmt)->body.get());
+  case ast::NodeType::TryStmt: {
+    auto *tryStmt = static_cast<ast::TryStmt *>(stmt);
+    if (containsDeferControlFlow(tryStmt->tryBlock.get())) {
+      return true;
+    }
+    for (const auto &catchStmt : tryStmt->catchStmts) {
+      if (catchStmt && containsDeferControlFlow(catchStmt->body.get())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case ast::NodeType::MatchStmt: {
+    auto *matchStmt = static_cast<ast::MatchStmt *>(stmt);
+    for (const auto &arm : matchStmt->arms) {
+      if (arm && containsDeferControlFlow(arm->body.get())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
 }
 
 // 检测语句中是否包含 await 或 yield

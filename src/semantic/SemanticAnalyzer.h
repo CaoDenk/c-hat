@@ -445,6 +445,7 @@ private:
 
   // 检测语句中是否包含 await 或 yield
   bool containsAwaitOrYield(ast::Statement *stmt);
+  bool containsDeferControlFlow(ast::Statement *stmt);
   bool containsAwaitOrYield(ast::Expression *expr);
 
   // 检查类型是否符合 CoroutineHandle 接口

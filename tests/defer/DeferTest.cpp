@@ -39,6 +39,27 @@ TEST_CASE("Defer: Multiple defer", "[defer][multiple]") {
   }
 }
 
+TEST_CASE("Defer: block body control flow", "[defer][block]") {
+  SECTION("Multi-statement block is allowed") {
+    REQUIRE(analyzeSource(
+                "func test() { var x = 0; defer { x = x + 1; x = x + 2; } }") == true);
+  }
+
+  SECTION("return inside defer block is rejected") {
+    REQUIRE(analyzeSource("func test() { defer { return; } }") == false);
+  }
+
+  SECTION("nested return inside defer block is rejected") {
+    REQUIRE(analyzeSource(
+                "func test() { defer { if (true) { return; } } }") == false);
+  }
+
+  SECTION("break inside defer block is rejected") {
+    REQUIRE(analyzeSource(
+                "func test() { defer { while (true) { break; } } }") == false);
+  }
+}
+
 TEST_CASE("Defer: Defer in function", "[defer][function]") {
   SECTION("Defer with return") {
     REQUIRE(analyzeSource("func test() -> int { var x = 0; "
