@@ -155,7 +155,8 @@ void appendLoadedProgram(
     ModuleLoader &loader, const std::vector<std::string> &modulePath,
     std::unordered_set<std::string> &seen,
     std::unordered_map<std::string, std::vector<std::string>> &candidates,
-    std::unordered_map<std::string, std::vector<std::string>> &typeCandidates) {
+    std::unordered_map<std::string, std::vector<std::string>> &typeCandidates,
+    std::unordered_map<std::string, std::vector<std::string>> &varCandidates) {
   if (!loaded) {
     return;
   }
@@ -172,7 +173,7 @@ void appendLoadedProgram(
   }
   for (auto &[childPath, child] : nested) {
     appendLoadedProgram(target, std::move(child), loader, childPath, seen,
-                        candidates, typeCandidates);
+                        candidates, typeCandidates, varCandidates);
   }
 
   const std::string prefix = moduleFunctionPrefix(modulePath);
@@ -218,6 +219,17 @@ void appendLoadedProgram(
     }
   }
 
+  // 模块顶层变量加模块前缀。
+  for (auto &decl : loaded->declarations) {
+    if (auto *var = dynamic_cast<ast::VariableDecl *>(decl.get())) {
+      if (!prefix.empty()) {
+        std::string originalName = var->name;
+        var->name = prefix + originalName;
+        varCandidates[originalName].push_back(var->name);
+      }
+    }
+  }
+
   // import/module 声明不进入 codegen；其余声明追加到主程序。
   for (auto &decl : loaded->declarations) {
     if (dynamic_cast<ast::ImportDecl *>(decl.get()) ||
@@ -244,6 +256,14 @@ void ModuleLoader::addFunctionAlias(const std::string &name,
     return;
   }
   functionAliases_.push_back({name, linkName});
+}
+
+void ModuleLoader::addVariableAlias(const std::string &name,
+                                   const std::string &linkName) {
+  if (name.empty() || linkName.empty() || name == linkName) {
+    return;
+  }
+  variableAliases_.push_back({name, linkName});
 }
 
 void ModuleLoader::addTypeAlias(const std::string &name,
@@ -277,10 +297,11 @@ void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
 
   std::unordered_map<std::string, std::vector<std::string>> candidates;
   std::unordered_map<std::string, std::vector<std::string>> typeCandidates;
+  std::unordered_map<std::string, std::vector<std::string>> varCandidates;
   const size_t mainDeclarationCount = program.declarations.size();
   for (auto &[path, moduleProgram] : imported) {
     appendLoadedProgram(program, std::move(moduleProgram), loader, path, seen,
-                        candidates, typeCandidates);
+                        candidates, typeCandidates, varCandidates);
   }
 
   // 唯一且不与主程序冲突的短名生成别名，支持 import 后非限定调用。
@@ -292,6 +313,15 @@ void loadImportsInto(ast::Program &program, ModuleLoader &loader) {
   for (const auto &[name, links] : typeCandidates) {
     if (links.size() == 1 && !mainNames.count(name)) {
       loader.addTypeAlias(name, links.front());
+    }
+  }
+  for (const auto &[name, links] : varCandidates) {
+    if (links.size() > 1) {
+      throw std::runtime_error(
+          "Duplicate top-level variable across modules: " + name);
+    }
+    if (links.size() == 1 && !mainNames.count(name)) {
+      loader.addVariableAlias(name, links.front());
     }
   }
 

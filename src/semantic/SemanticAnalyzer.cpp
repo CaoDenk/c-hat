@@ -3528,6 +3528,18 @@ SemanticAnalyzer::analyzeBinaryExpr(ast::BinaryExpr *binaryExpr) {
             dynamic_cast<ast::Identifier *>(binaryExpr->left.get())) {
       auto symbol = symbolTable.lookupSymbol(identifier->name);
       if (!symbol) {
+        for (const auto &alias : moduleVariableAliases_) {
+          if (alias.name == identifier->name) {
+            auto target = symbolTable.lookupSymbol(alias.linkName);
+            if (target) {
+              identifier->name = alias.linkName;
+              symbol = target;
+            }
+            break;
+          }
+        }
+      }
+      if (!symbol) {
         error("Undeclared identifier: " + identifier->name, *identifier);
         return nullptr;
       }
@@ -3979,6 +3991,18 @@ std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeIdentifierExpr(ast::Identifier *identifier) {
   // 在符号表中查找标识符
   auto symbol = symbolTable.lookupSymbol(identifier->name);
+  if (!symbol) {
+    for (const auto &alias : moduleVariableAliases_) {
+      if (alias.name == identifier->name) {
+        auto target = symbolTable.lookupSymbol(alias.linkName);
+        if (target) {
+          identifier->name = alias.linkName;
+          symbol = target;
+        }
+        break;
+      }
+    }
+  }
   if (symbol) {
     // 检查符号类型
     if (auto variableSymbol =

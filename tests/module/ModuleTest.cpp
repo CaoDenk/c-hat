@@ -110,6 +110,7 @@ TEST_CASE("Module: duplicate top-level symbols are rejected", "[module][errors]"
                                       false);
   analyzer.setModuleFunctionAliases(loader.getFunctionAliases());
   analyzer.setModuleTypeAliases(loader.getTypeAliases());
+  analyzer.setModuleVariableAliases(loader.getVariableAliases());
   analyzer.analyze(*program);
   REQUIRE(!analyzer.hasError());
 
@@ -135,6 +136,8 @@ TEST_CASE("Module: duplicate top-level symbols are rejected", "[module][errors]"
   dupTypeAnalyzer.setModuleFunctionAliases(
       dupTypeLoader.getFunctionAliases());
   dupTypeAnalyzer.setModuleTypeAliases(dupTypeLoader.getTypeAliases());
+  dupTypeAnalyzer.setModuleVariableAliases(
+      dupTypeLoader.getVariableAliases());
   dupTypeAnalyzer.analyze(*dupTypeProgram);
   REQUIRE(!dupTypeAnalyzer.hasError());
 

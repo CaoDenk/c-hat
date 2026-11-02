@@ -48,6 +48,11 @@ public:
     moduleTypeAliases_ = aliases;
   }
 
+  void setModuleVariableAliases(
+      const std::vector<ModuleVariableAlias> &aliases) {
+    moduleVariableAliases_ = aliases;
+  }
+
   // 获取符号表
   SymbolTable &getSymbolTable() { return symbolTable; }
 
@@ -475,6 +480,7 @@ private:
   std::vector<std::string> currentOutParams_;
   std::vector<ModuleFunctionAlias> moduleFunctionAliases_;
   std::vector<ModuleTypeAlias> moduleTypeAliases_;
+  std::vector<ModuleVariableAlias> moduleVariableAliases_;
   void applyOutArguments(const std::shared_ptr<FunctionSymbol> &func,
                          ast::CallExpr *callExpr,
                          const std::vector<bool> &uninitializedRefArgs);
