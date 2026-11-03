@@ -314,6 +314,7 @@ extern "C" {
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
 - 显式 `delete` 调用析构函数；`virtual ~ClassName()` 通过 vtable 派发
 - 派生类析构函数在函数体结束后自动调用基类析构函数
+- 带析构函数的类会在析构时逆序析构 class 类型字段
 - 栈上 class 值在块退出、return、throw 时自动析构；`late` 对象整体赋值后也注册析构
 - 固定数组元素按逆序自动析构；`[C(x), ...]` 数组字面量与 lambda 捕获已区分
 - `new C[n]` 对带默认构造的 class 逐元素构造，`delete[]` 逐元素析构
@@ -400,7 +401,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 62 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 63 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 

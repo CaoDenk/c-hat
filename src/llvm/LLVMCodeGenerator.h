@@ -349,6 +349,12 @@ private:
       classDeclaredMethods_;
   std::unordered_map<std::string, std::unordered_set<std::string>>
       classImplementedInterfaces_;
+  struct ClassFieldDestructor {
+    unsigned fieldIndex = 0;
+    std::string destructorName;
+  };
+  std::unordered_map<std::string, std::vector<ClassFieldDestructor>>
+      classFieldDestructors_;
   std::unordered_map<std::string, std::vector<std::string>>
       interfaceBaseNames_;
 

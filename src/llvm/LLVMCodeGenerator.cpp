@@ -2146,8 +2146,30 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
           continue;
         }
         memberTypes.push_back(memberType);
-        memberIndices[varDecl->name] =
+        unsigned fieldIndex =
             static_cast<unsigned>(memberTypes.size() - 1);
+        memberIndices[varDecl->name] = fieldIndex;
+
+        std::string fieldClassName;
+        if (semanticModel_) {
+          auto fieldType = semanticModel_->getDeclarationType(varDecl);
+          if (auto fieldClass =
+                  std::dynamic_pointer_cast<types::ClassType>(fieldType)) {
+            if (fieldClass->hasDestructor()) {
+              fieldClassName = fieldClass->getName();
+            }
+          }
+        }
+        if (fieldClassName.empty()) {
+          if (auto *namedField =
+                  dynamic_cast<ast::NamedType *>(varDecl->type.get())) {
+            fieldClassName = namedField->name;
+          }
+        }
+        if (!fieldClassName.empty()) {
+          classFieldDestructors_[classDecl->name].push_back(
+              {fieldIndex, fieldClassName + "_~" + fieldClassName});
+        }
       }
     } else if (auto *funcDecl =
                    dynamic_cast<ast::FunctionDecl *>(member.get())) {
@@ -2543,6 +2565,24 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         }
 
         if (isDestructor) {
+          auto fieldsIt = classFieldDestructors_.find(className);
+          if (fieldsIt != classFieldDestructors_.end()) {
+            llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+            auto *dtorType = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(context()), {ptrType}, false);
+            for (auto it = fieldsIt->second.rbegin();
+                 it != fieldsIt->second.rend(); ++it) {
+              auto dtorIt = functions_.find(it->destructorName);
+              if (dtorIt == functions_.end()) {
+                continue;
+              }
+              llvm::Value *fieldPtr = builder()->CreateStructGEP(
+                  structTypes_[className], thisArg, it->fieldIndex,
+                  "field.dtor.ptr");
+              builder()->CreateCall(dtorIt->second, {fieldPtr});
+            }
+          }
+
           auto baseIt = classBaseNames_.find(className);
           if (baseIt != classBaseNames_.end() && !baseIt->second.empty() &&
               structTypes_.count(baseIt->second) > 0) {
