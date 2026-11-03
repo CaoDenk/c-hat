@@ -22,6 +22,7 @@ public:
     cloned->structName = structName;
     cloned->memberIndex = memberIndex;
     cloned->resolvedGlobalName = resolvedGlobalName;
+    cloned->virtualDispatch = virtualDispatch;
     return cloned;
   }
 
@@ -31,6 +32,7 @@ public:
   std::string structName;
   unsigned memberIndex = 0;
   std::string resolvedGlobalName;
+  bool virtualDispatch = false;
 };
 
 } // namespace ast

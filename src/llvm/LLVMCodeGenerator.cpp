@@ -339,6 +339,7 @@ void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
 
   // 类/结构体成员函数体：此时类型布局、全局变量和顶层函数原型都已就绪。
   generateDeferredMemberBodies();
+  finalizeVTables();
 
   // 生成函数体
   for (auto &funcDecl : funcDecls) {
@@ -431,6 +432,27 @@ void LLVMCodeGenerator::generateDeferredMemberBodies() {
           static_cast<ast::SetterDecl *>(node.release()));
       generateSetterDecl(std::move(owned), entry.ownerName);
     }
+  }
+}
+
+void LLVMCodeGenerator::finalizeVTables() {
+  llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+  for (auto &[className, vtable] : vtables_) {
+    auto *arrayType = llvm::cast<llvm::ArrayType>(vtable->getValueType());
+    std::vector<llvm::Constant *> entries;
+    const auto &funcs = vtableFunctions_[className];
+    entries.reserve(arrayType->getNumElements());
+    for (unsigned i = 0; i < arrayType->getNumElements(); ++i) {
+      llvm::Constant *entry = llvm::Constant::getNullValue(ptrType);
+      if (i < funcs.size() && !funcs[i].empty()) {
+        auto it = functions_.find(funcs[i]);
+        if (it != functions_.end()) {
+          entry = llvm::ConstantExpr::getBitCast(it->second, ptrType);
+        }
+      }
+      entries.push_back(entry);
+    }
+    vtable->setInitializer(llvm::ConstantArray::get(arrayType, entries));
   }
 }
 
@@ -1657,17 +1679,90 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   std::vector<std::unique_ptr<ast::Node>> functions;
 
   classBaseNames_[classDecl->name] = classDecl->baseClass;
-  if (!classDecl->baseClass.empty()) {
-    auto baseIt = structTypes_.find(classDecl->baseClass);
+
+  // 先收集虚方法并继承基类虚表槽位。
+  std::vector<std::string> methodNames;
+  std::unordered_set<std::string> virtualMethodNames;
+  bool declaresVirtual = false;
+  for (auto &member : classDecl->members) {
+    if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
+      if (funcDecl->name == classDecl->name ||
+          funcDecl->name == "~" + classDecl->name) {
+        continue;
+      }
+      methodNames.push_back(funcDecl->name);
+      if (funcDecl->specifiers.find("virtual") != std::string::npos ||
+          funcDecl->specifiers.find("override") != std::string::npos) {
+        declaresVirtual = true;
+        virtualMethodNames.insert(funcDecl->name);
+      }
+    }
+  }
+
+  const std::string &baseName = classDecl->baseClass;
+  bool baseHasVTable =
+      !baseName.empty() && classesWithVTable_.count(baseName) > 0;
+  auto baseSlotsIt = virtualSlots_.find(baseName);
+
+  // 只有根类引入虚表，或基类已有虚表时才使用 vptr。
+  // 非虚基类 + 派生新虚方法会改变基类字段偏移，当前不支持。
+  bool hasVirtual = baseHasVTable || (baseName.empty() && declaresVirtual);
+  auto &slots = virtualSlots_[classDecl->name];
+  auto &vtableFuncs = vtableFunctions_[classDecl->name];
+  if (baseHasVTable) {
+    slots = baseSlotsIt->second;
+    auto baseFuncsIt = vtableFunctions_.find(baseName);
+    if (baseFuncsIt != vtableFunctions_.end()) {
+      vtableFuncs = baseFuncsIt->second;
+    }
+  } else {
+    slots.clear();
+    vtableFuncs.clear();
+  }
+
+  if (hasVirtual) {
+    for (const auto &methodName : methodNames) {
+      bool isVirtualMethod =
+          virtualMethodNames.count(methodName) > 0 ||
+          (baseSlotsIt != virtualSlots_.end() &&
+           baseSlotsIt->second.count(methodName) > 0);
+      if (!isVirtualMethod) {
+        continue;
+      }
+      auto slotIt = slots.find(methodName);
+      unsigned slot = 0;
+      if (slotIt == slots.end()) {
+        slot = static_cast<unsigned>(slots.size());
+        slots[methodName] = slot;
+      } else {
+        slot = slotIt->second;
+      }
+      if (vtableFuncs.size() <= slot) {
+        vtableFuncs.resize(slot + 1);
+      }
+      vtableFuncs[slot] = classDecl->name + "_" + methodName;
+    }
+  }
+
+  hasVirtual = !slots.empty();
+  const bool prependVptr = hasVirtual && !baseHasVTable;
+  llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+  if (prependVptr) {
+    memberTypes.push_back(ptrType);
+  }
+
+  unsigned fieldOffset = prependVptr ? 1 : 0;
+  if (!baseName.empty()) {
+    auto baseIt = structTypes_.find(baseName);
     if (baseIt != structTypes_.end()) {
       llvm::StructType *baseType = baseIt->second;
       for (unsigned i = 0; i < baseType->getNumElements(); ++i) {
         memberTypes.push_back(baseType->getElementType(i));
       }
-      auto baseInfoIt = structInfo_.find(classDecl->baseClass);
+      auto baseInfoIt = structInfo_.find(baseName);
       if (baseInfoIt != structInfo_.end()) {
         for (const auto &[name, index] : baseInfoIt->second) {
-          memberIndices[name] = index;
+          memberIndices[name] = index + fieldOffset;
         }
       }
     }
@@ -1735,6 +1830,16 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
       llvm::StructType::create(context(), memberTypes, classDecl->name);
   structTypes_[classDecl->name] = classType;
   structInfo_[classDecl->name] = memberIndices;
+
+  if (hasVirtual) {
+    classesWithVTable_.insert(classDecl->name);
+    auto *vtableType = llvm::ArrayType::get(ptrType, slots.size());
+    auto *vtable = new llvm::GlobalVariable(
+        *module(), vtableType, true, llvm::GlobalValue::InternalLinkage,
+        llvm::Constant::getNullValue(vtableType),
+        classDecl->name + "__vtable");
+    vtables_[classDecl->name] = vtable;
+  }
 
   if (deferMemberBodies_) {
     for (auto &funcNode : functions) {
@@ -1951,6 +2056,19 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
           }
           builder()->CreateCall(baseCtorIt->second, baseArgs);
         }
+      }
+
+      // 构造函数在基类构造之后写入当前类虚表指针。
+      auto vtableIt = vtables_.find(className);
+      auto structIt = structTypes_.find(className);
+      if (vtableIt != vtables_.end() && structIt != structTypes_.end()) {
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *vptrField =
+            builder()->CreateStructGEP(structIt->second, thisArg, 0,
+                                       "vptr.field");
+        llvm::Value *vtablePtr =
+            builder()->CreateBitCast(vtableIt->second, ptrType, "vtable.ptr");
+        builder()->CreateStore(vtablePtr, vptrField);
       }
     }
 
@@ -2923,6 +3041,20 @@ LLVMCodeGenerator::generateNewExpr(std::unique_ptr<ast::NewExpr> newExpr) {
 
   // 类型转换
   ptr = builder()->CreatePointerCast(ptr, type->getPointerTo(), "cast.ptr");
+
+  // 新对象写入虚表指针（即使没有显式构造函数）。
+  if (type->isStructTy()) {
+    std::string structName = type->getStructName().str();
+    auto vtableIt = vtables_.find(structName);
+    if (vtableIt != vtables_.end()) {
+      llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+      llvm::Value *vptrField =
+          builder()->CreateStructGEP(type, ptr, 0, "new.vptr.field");
+      llvm::Value *vtablePtr =
+          builder()->CreateBitCast(vtableIt->second, ptrType, "new.vtable");
+      builder()->CreateStore(vtablePtr, vptrField);
+    }
+  }
 
   // 如果是类类型，调用构造函数
   if (type->isStructTy()) {
@@ -4273,6 +4405,52 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
         return nullptr;
       }
       args.push_back(argValue);
+    }
+
+    // 虚方法派发：对象首字段是 vptr，按静态类槽位取实际函数。
+    if (member->virtualDispatch) {
+      auto slotsIt = virtualSlots_.find(className);
+      auto structIt = structTypes_.find(className);
+      if (slotsIt != virtualSlots_.end() && structIt != structTypes_.end()) {
+        auto slotIt = slotsIt->second.find(member->member);
+        if (slotIt != slotsIt->second.end()) {
+          llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+          llvm::Value *vptrField = builder()->CreateStructGEP(
+              structIt->second, thisPtr, 0, "vptr.field");
+          llvm::Value *vptr =
+              builder()->CreateLoad(ptrType, vptrField, "vptr");
+          llvm::Value *slotPtr = builder()->CreateGEP(
+              ptrType, vptr,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                     slotIt->second),
+              "vslot.ptr");
+          llvm::Value *fnPtr =
+              builder()->CreateLoad(ptrType, slotPtr, "vfn");
+
+          llvm::Function *signature = nullptr;
+          auto sigIt = functions_.find(className + "_" + member->member);
+          if (sigIt != functions_.end()) {
+            signature = sigIt->second;
+          } else {
+            auto funcsIt = vtableFunctions_.find(className);
+            if (funcsIt != vtableFunctions_.end() &&
+                slotIt->second < funcsIt->second.size()) {
+              auto fnIt = functions_.find(funcsIt->second[slotIt->second]);
+              if (fnIt != functions_.end()) {
+                signature = fnIt->second;
+              }
+            }
+          }
+          if (signature) {
+            if (signature->getReturnType()->isVoidTy()) {
+              return builder()->CreateCall(signature->getFunctionType(), fnPtr,
+                                           args);
+            }
+            return builder()->CreateCall(signature->getFunctionType(), fnPtr,
+                                         args, "vcall");
+          }
+        }
+      }
     }
 
     std::string methodName = className + "_" + member->member;

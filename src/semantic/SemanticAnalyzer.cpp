@@ -4920,6 +4920,8 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
           return nullptr;
         }
         memberExpr->structName = classType->getName();
+        memberExpr->virtualDispatch =
+            !method->isStatic && (method->isVirtual || method->isOverride);
         return method->returnType;
       }
     }

@@ -228,6 +228,30 @@ TEST_CASE("Integration: class method and self field", "[integration][class]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: virtual dispatch", "[integration][class][virtual]") {
+  REQUIRE(compileAndRun(
+      "class Animal {\n"
+      "    public int x;\n"
+      "    public Animal() { x = 0; }\n"
+      "    public virtual func speak() -> int { return 1; }\n"
+      "    public virtual func eat() -> int { return 2; }\n"
+      "    public func describe() -> int { return self.speak(); }\n"
+      "}\n"
+      "class Dog : Animal {\n"
+      "    public Dog() : base() { }\n"
+      "    public override func speak() -> int { return x + 10; }\n"
+      "}\n"
+      "class Cow : Animal {\n"
+      "    public Cow() : base() { }\n"
+      "    public override func eat() -> int { return 29; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Animal^ d = new Dog();\n"
+      "    Animal^ c = new Cow();\n"
+      "    return d->describe() + d->eat() + c->speak() + c->eat();\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: struct field assignment", "[integration][struct]") {
   REQUIRE(compileAndRun(
       "struct P { int x; }\n"

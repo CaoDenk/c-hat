@@ -90,6 +90,7 @@ private:
   llvm::Value *generateClassDecl(std::unique_ptr<ast::ClassDecl> classDecl);
   llvm::Value *generateStructDecl(std::unique_ptr<ast::StructDecl> structDecl);
   void generateDeferredMemberBodies();
+  void finalizeVTables();
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,
@@ -313,6 +314,15 @@ private:
     std::string ownerName;
   };
   std::vector<DeferredMemberBody> deferredMemberBodies_;
+
+  // 单继承虚表：每个类的虚方法槽位和最终函数名。
+  std::unordered_map<std::string,
+                     std::unordered_map<std::string, unsigned>>
+      virtualSlots_;
+  std::unordered_map<std::string, std::vector<std::string>>
+      vtableFunctions_;
+  std::unordered_map<std::string, llvm::GlobalVariable *> vtables_;
+  std::unordered_set<std::string> classesWithVTable_;
 
   // 异常处理
   llvm::FunctionCallee personalityFunc_;

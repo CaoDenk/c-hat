@@ -310,7 +310,7 @@ extern "C" {
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
-- 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用（本次修复；静态派发）
+- 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用；`virtual` / `override` 方法通过 vptr + vtable 动态派发
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
 - 显式 `delete` 调用析构函数
 - 栈上 class 值在块退出、return、throw 时自动析构；`late` 对象整体赋值后也注册析构
@@ -370,7 +370,11 @@ extern "C" {
 
 ### OOP 当前边界
 
-- 继承目前是**静态派发**：`Animal^ a = new Dog(...); a->speak()` 调用 `Animal_speak`，不会走 `Dog_speak`；虚表/接口动态派发尚未实现。
+- 单继承的 `virtual` / `override` 方法已实现 vptr + vtable 动态派发：`Animal^ a = new Dog(...); a->speak()` 会调用 `Dog_speak`。
+- 虚表由根类引入；基类已有虚表时派生类继承并扩展槽位。
+- 未标记 `virtual` / `override` 的方法仍按静态类型直接调用。
+- 暂不支持从非虚基类在派生类新增虚方法（会改变基类字段偏移）；`override` 单独写在非虚基类方法上仍按静态派发。
+- 接口 fat pointer、接口方法动态派发、虚析构尚未实现。
 - 派生类构造函数支持 `: base(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
 - `static` 字段初始化目前只支持字面量；静态方法不能访问实例成员（语义层会检查）。
 - 栈上 class 值、`late` 对象、固定数组元素已支持自动析构；defer/析构统一 LIFO；`new T[n]` 元素析构仍未实现。
