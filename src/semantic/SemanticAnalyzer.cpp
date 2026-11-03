@@ -1616,6 +1616,7 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
 }
 
 void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, interfaceDecl->modulePrefix);
   auto interfaceType =
       std::make_shared<types::InterfaceType>(interfaceDecl->name);
 

@@ -177,6 +177,15 @@ void appendLoadedProgram(
   }
 
   const std::string prefix = moduleFunctionPrefix(modulePath);
+
+  // 收集本模块接口名，供类/接口引用重写。
+  std::unordered_set<std::string> localInterfaceNames;
+  for (auto &decl : loaded->declarations) {
+    if (auto *interfaceDecl = dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
+      localInterfaceNames.insert(interfaceDecl->name);
+    }
+  }
+
   // 模块自由函数加模块前缀；类/结构体成员函数不改名。
   for (auto &decl : loaded->declarations) {
     if (auto *func = dynamic_cast<ast::FunctionDecl *>(decl.get())) {
@@ -185,6 +194,40 @@ void appendLoadedProgram(
         func->name = prefix + originalName;
         func->modulePrefix = prefix;
         candidates[originalName].push_back(func->name);
+      }
+    }
+  }
+
+  // 模块接口加模块前缀；同时重写本模块内的接口引用。
+  if (!prefix.empty()) {
+    for (auto &decl : loaded->declarations) {
+      if (auto *interfaceDecl =
+              dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
+        std::string originalName = interfaceDecl->name;
+        interfaceDecl->name = prefix + originalName;
+        interfaceDecl->modulePrefix = prefix;
+        typeCandidates[originalName].push_back(interfaceDecl->name);
+        for (auto &baseName : interfaceDecl->baseInterfaces) {
+          if (localInterfaceNames.count(baseName)) {
+            baseName = prefix + baseName;
+          }
+        }
+      }
+    }
+    auto rewriteInterfaceRef = [&](std::string &name) {
+      if (localInterfaceNames.count(name)) {
+        name = prefix + name;
+      }
+    };
+    for (auto &decl : loaded->declarations) {
+      if (auto *cls = dynamic_cast<ast::ClassDecl *>(decl.get())) {
+        rewriteInterfaceRef(cls->baseClass);
+        for (auto &name : cls->baseClasses) {
+          rewriteInterfaceRef(name);
+        }
+        for (auto &name : cls->interfaces) {
+          rewriteInterfaceRef(name);
+        }
       }
     }
   }

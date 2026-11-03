@@ -1545,6 +1545,18 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
          "}\n"
          "public func make() -> C { C c = C(); c.x = 0; return c; }\n";
   }
+  {
+    std::ofstream i(dir / "I.ch");
+    i << "module I;\n"
+         "public interface Drawable { func draw() -> int; }\n"
+         "public class Circle : Drawable {\n"
+         "    public func draw() -> int { return 40; }\n"
+         "}\n"
+         "public func test() -> int {\n"
+         "    Drawable^ d = new Circle();\n"
+         "    return d->draw() + 2;\n"
+         "}\n";
+  }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
   REQUIRE(result == 42);
@@ -1608,6 +1620,21 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
       "    c.bump();\n"
       "    return V.g + X.g + V.add(0, 0) + X.add(0, 0);\n"
       "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import I;\n"
+      "func main() -> int {\n"
+      "    I.Drawable^ d = new I.Circle();\n"
+      "    return d->draw() + 2;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import I;\n"
+      "func main() -> int { return test(); }\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);

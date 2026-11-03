@@ -1770,8 +1770,17 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   auto &declaredMethods = classDeclaredMethods_[classDecl->name];
   declaredMethods.insert(methodNames.begin(), methodNames.end());
 
+  auto normalizeTypeName = [](std::string name) {
+    for (char &c : name) {
+      if (c == '.') {
+        c = '_';
+      }
+    }
+    return name;
+  };
   std::vector<std::string> implementedInterfaces;
-  auto addInterfaceName = [&](const std::string &name) {
+  auto addInterfaceName = [&](const std::string &rawName) {
+    std::string name = normalizeTypeName(rawName);
     if (!name.empty() && interfaceNames_.count(name) > 0) {
       implementedInterfaces.push_back(name);
     }
@@ -1785,7 +1794,10 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   }
   const bool implementsInterface = !implementedInterfaces.empty();
 
-  const std::string &baseName = classDecl->baseClass;
+  std::string baseName = normalizeTypeName(classDecl->baseClass);
+  if (!baseName.empty()) {
+    classBaseNames_[classDecl->name] = baseName;
+  }
   const bool hasClassBase =
       !baseName.empty() && interfaceNames_.count(baseName) == 0;
   bool baseHasVTable =
