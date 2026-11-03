@@ -1567,6 +1567,14 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
           needsDestructor = true;
           break;
         }
+      } else if (auto fieldArray =
+                     std::dynamic_pointer_cast<types::ArrayType>(field.type)) {
+        auto elementClass = std::dynamic_pointer_cast<types::ClassType>(
+            fieldArray->getElementType());
+        if (elementClass && elementClass->hasDestructor()) {
+          needsDestructor = true;
+          break;
+        }
       }
     }
     if (!needsDestructor) {

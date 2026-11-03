@@ -1091,6 +1091,21 @@ TEST_CASE("Integration: class field destructors", "[integration][class][raii]") 
       "    { B b = B(); }\n"
       "    return value;\n"
       "}\n") == 1);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part {\n"
+      "    public Part() { }\n"
+      "    public ~Part() { value = value + 1; }\n"
+      "}\n"
+      "class Holder {\n"
+      "    public Part[3] p;\n"
+      "    public Holder() { }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    { Holder h = Holder(); }\n"
+      "    return value;\n"
+      "}\n") == 3);
 }
 
 TEST_CASE("Integration: interface default methods",

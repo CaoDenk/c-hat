@@ -2151,6 +2151,7 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
         memberIndices[varDecl->name] = fieldIndex;
 
         std::string fieldClassName;
+        unsigned fieldArrayCount = 0;
         if (semanticModel_) {
           auto fieldType = semanticModel_->getDeclarationType(varDecl);
           if (auto fieldClass =
@@ -2158,17 +2159,43 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
             if (fieldClass->hasDestructor()) {
               fieldClassName = fieldClass->getName();
             }
+          } else if (auto fieldArray =
+                         std::dynamic_pointer_cast<types::ArrayType>(
+                             fieldType)) {
+            auto elementClass = std::dynamic_pointer_cast<types::ClassType>(
+                fieldArray->getElementType());
+            if (elementClass && elementClass->hasDestructor()) {
+              fieldClassName = elementClass->getName();
+              fieldArrayCount = fieldArray->getSize();
+            }
           }
         }
         if (fieldClassName.empty()) {
           if (auto *namedField =
                   dynamic_cast<ast::NamedType *>(varDecl->type.get())) {
             fieldClassName = namedField->name;
+          } else if (auto *arrayField =
+                         dynamic_cast<ast::ArrayType *>(
+                             varDecl->type.get())) {
+            if (auto *elementType =
+                    dynamic_cast<ast::NamedType *>(
+                        arrayField->baseType.get())) {
+              fieldClassName = elementType->name;
+              if (auto *sizeLiteral =
+                      dynamic_cast<ast::Literal *>(
+                          arrayField->size.get())) {
+                if (sizeLiteral->type == ast::Literal::Type::Integer) {
+                  fieldArrayCount =
+                      static_cast<unsigned>(std::stoul(sizeLiteral->value));
+                }
+              }
+            }
           }
         }
         if (!fieldClassName.empty()) {
           classFieldDestructors_[classDecl->name].push_back(
-              {fieldIndex, fieldClassName + "_~" + fieldClassName});
+              {fieldIndex, fieldArrayCount,
+               fieldClassName + "_~" + fieldClassName});
         }
       }
     } else if (auto *funcDecl =
@@ -2579,7 +2606,23 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
               llvm::Value *fieldPtr = builder()->CreateStructGEP(
                   structTypes_[className], thisArg, it->fieldIndex,
                   "field.dtor.ptr");
-              builder()->CreateCall(dtorIt->second, {fieldPtr});
+              if (it->arrayCount > 0) {
+                llvm::Type *fieldType =
+                    structTypes_[className]->getElementType(it->fieldIndex);
+                auto *arrayType = llvm::dyn_cast<llvm::ArrayType>(fieldType);
+                for (unsigned i = 0; i < it->arrayCount; ++i) {
+                  llvm::Value *elementPtr = builder()->CreateGEP(
+                      arrayType, fieldPtr,
+                      {llvm::ConstantInt::get(
+                           llvm::Type::getInt32Ty(context()), 0),
+                       llvm::ConstantInt::get(
+                           llvm::Type::getInt32Ty(context()), i)},
+                      "field.dtor.elem");
+                  builder()->CreateCall(dtorIt->second, {elementPtr});
+                }
+              } else {
+                builder()->CreateCall(dtorIt->second, {fieldPtr});
+              }
             }
           }
 
