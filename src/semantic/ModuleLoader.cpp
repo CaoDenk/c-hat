@@ -232,6 +232,18 @@ void appendLoadedProgram(
     }
   }
 
+  // 模块枚举加模块前缀；成员常量随枚举名一起加前缀。
+  if (!prefix.empty()) {
+    for (auto &decl : loaded->declarations) {
+      if (auto *enumDecl = dynamic_cast<ast::EnumDecl *>(decl.get())) {
+        std::string originalName = enumDecl->name;
+        enumDecl->name = prefix + originalName;
+        enumDecl->modulePrefix = prefix;
+        typeCandidates[originalName].push_back(enumDecl->name);
+      }
+    }
+  }
+
   // 模块类型加模块前缀；同时修正模块内构造函数/析构函数名。
   for (auto &decl : loaded->declarations) {
     std::string oldName;

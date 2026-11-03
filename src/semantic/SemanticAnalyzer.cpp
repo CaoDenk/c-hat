@@ -2421,6 +2421,7 @@ void SemanticAnalyzer::analyzeStructDecl(ast::StructDecl *structDecl) {
 }
 
 void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, enumDecl->modulePrefix);
   // 枚举底层使用 int 类型
   auto intType = types::TypeFactory::getPrimitiveType(types::PrimitiveType::Kind::Int);
   auto enumType = std::make_shared<types::ClassType>(enumDecl->name);
@@ -2438,7 +2439,8 @@ void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
         }
       }
       auto constSymbol = std::make_shared<VariableSymbol>(
-          enumMember->name, intType, ast::VariableKind::Let, true);
+          enumDecl->name + "_" + enumMember->name, intType,
+          ast::VariableKind::Let, true);
       symbolTable.addSymbol(constSymbol);
       currentValue++;
     }
@@ -3124,10 +3126,12 @@ SemanticAnalyzer::analyzeMatchStmt(ast::MatchStmt *matchStmt) {
               dynamic_cast<ast::MemberExpr *>(arm->pattern->value.get())) {
         if (auto *object =
                 dynamic_cast<ast::Identifier *>(member->object.get())) {
+          std::string patternEnumName = object->name;
           const TypeMetadata *patternMetadata =
-              MetadataRegistry::instance().getType(object->name);
+              resolveEnumMetadata(patternEnumName);
           if (patternMetadata && patternMetadata->isEnum) {
-            enumName = object->name;
+            object->name = patternMetadata->name;
+            enumName = patternMetadata->name;
             break;
           }
         }
@@ -4862,15 +4866,47 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
     }
   }
 
+  // 模块限定枚举成员：M.Color.Member -> M__Color.Member
+  if (auto *objectMember =
+          dynamic_cast<ast::MemberExpr *>(memberExpr->object.get())) {
+    if (auto *moduleIdent =
+            dynamic_cast<ast::Identifier *>(objectMember->object.get())) {
+      auto moduleSymbol = symbolTable.lookupSymbol(moduleIdent->name);
+      if (std::dynamic_pointer_cast<ModuleSymbol>(moduleSymbol)) {
+        std::string prefix = moduleIdent->name;
+        for (char &ch : prefix) {
+          if (ch == '.') {
+            ch = '_';
+          }
+        }
+        if (!prefix.empty()) {
+          prefix += "__";
+        }
+        std::string enumName = prefix + objectMember->member;
+        std::string resolvedName = enumName;
+        if (resolveEnumMetadata(resolvedName)) {
+          memberExpr->object =
+              std::make_unique<ast::Identifier>(resolvedName);
+        }
+      }
+    }
+  }
+
   // 枚举成员访问：Color.Green
   if (auto *objectIdent =
           dynamic_cast<ast::Identifier *>(memberExpr->object.get())) {
-    const TypeMetadata *metadata =
-        MetadataRegistry::instance().getType(objectIdent->name);
+    std::string enumName = objectIdent->name;
+    const TypeMetadata *metadata = resolveEnumMetadata(enumName);
     if (metadata && metadata->isEnum) {
-      auto memberSymbol = symbolTable.lookupSymbol(memberExpr->member);
-      if (memberSymbol &&
-          memberSymbol->getType() == SymbolType::Variable) {
+      objectIdent->name = metadata->name;
+      bool foundMember = false;
+      for (const auto &field : metadata->fields) {
+        if (field.name == memberExpr->member) {
+          foundMember = true;
+          break;
+        }
+      }
+      if (foundMember) {
         return std::make_shared<types::EnumType>(
             metadata->name, types::TypeFactory::getPrimitiveType(
                                 types::PrimitiveType::Kind::Int));
@@ -5959,6 +5995,35 @@ SemanticAnalyzer::analyzeGenericType(const ast::GenericType *genericType) {
   return baseType;
 }
 
+const TypeMetadata *
+SemanticAnalyzer::resolveEnumMetadata(std::string &typeName) const {
+  const TypeMetadata *metadata = nullptr;
+  // 模块内部优先解析本模块的同名枚举，避免命中其他模块的元数据。
+  if (!currentModulePrefix_.empty()) {
+    std::string candidate = currentModulePrefix_ + typeName;
+    metadata = MetadataRegistry::instance().getType(candidate);
+    if (metadata && metadata->isEnum) {
+      typeName = candidate;
+      return metadata;
+    }
+  }
+  metadata = MetadataRegistry::instance().getType(typeName);
+  if (metadata && metadata->isEnum) {
+    typeName = metadata->name;
+    return metadata;
+  }
+  for (const auto &alias : moduleTypeAliases_) {
+    if (alias.name == typeName) {
+      metadata = MetadataRegistry::instance().getType(alias.linkName);
+      if (metadata && metadata->isEnum) {
+        typeName = alias.linkName;
+        return metadata;
+      }
+    }
+  }
+  return nullptr;
+}
+
 std::shared_ptr<types::Type>
 SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
   // 首先检查是否是基本类型
@@ -5977,12 +6042,12 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
   }
 
   // 枚举是名义类型，底层表示仍为 int。
-  const TypeMetadata *metadata =
-      MetadataRegistry::instance().getType(typeName);
+  std::string enumTypeName = typeName;
+  const TypeMetadata *metadata = resolveEnumMetadata(enumTypeName);
   if (metadata && metadata->isEnum) {
     return std::make_shared<types::EnumType>(
-        typeName, types::TypeFactory::getPrimitiveType(
-                     types::PrimitiveType::Kind::Int));
+        metadata->name, types::TypeFactory::getPrimitiveType(
+                            types::PrimitiveType::Kind::Int));
   }
 
   // 模块限定类型：A.P -> A__P
@@ -6002,6 +6067,13 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
     }
     std::string last = typeName.substr(start);
     std::string linkName = prefix + "__" + last;
+    const TypeMetadata *dottedMetadata =
+        MetadataRegistry::instance().getType(linkName);
+    if (dottedMetadata && dottedMetadata->isEnum) {
+      return std::make_shared<types::EnumType>(
+          linkName, types::TypeFactory::getPrimitiveType(
+                        types::PrimitiveType::Kind::Int));
+    }
     auto target = symbolTable.lookupSymbol(linkName);
     if (auto classSymbol = std::dynamic_pointer_cast<ClassSymbol>(target)) {
       return classSymbol->getType();

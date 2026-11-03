@@ -8,6 +8,7 @@
 #include "SemanticModel.h"
 #include "ModuleLoader.h"
 #include "SymbolTable.h"
+#include "TypeMetadata.h"
 #include <memory>
 #include <set>
 #include <string>
@@ -333,6 +334,7 @@ private:
 
   // 根据类型名称分析类型
   std::shared_ptr<types::Type> analyzeTypeByName(const std::string &typeName);
+  const TypeMetadata *resolveEnumMetadata(std::string &typeName) const;
 
   // 分析基本类型
   std::shared_ptr<types::Type>

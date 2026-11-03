@@ -1661,6 +1661,22 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
          "    return d->draw() + 2;\n"
          "}\n";
   }
+  {
+    std::ofstream e(dir / "E.ch");
+    e << "module E;\n"
+         "public enum Color { Red, Green }\n"
+         "public func pick() -> int {\n"
+         "    Color c = Color.Green;\n"
+         "    if (c == Color.Green) { return 20; }\n"
+         "    return 0;\n"
+         "}\n";
+  }
+  {
+    std::ofstream f(dir / "F.ch");
+    f << "module F;\n"
+         "public enum Color { Blue, Red }\n"
+         "public func other() -> int { return 22; }\n";
+  }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
   REQUIRE(result == 42);
@@ -1747,6 +1763,19 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
       "func main() -> int {\n"
       "    I.Drawable^ d = new I.Circle();\n"
       "    return d->twice() + 2;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import E;\nimport F;\n"
+      "func main() -> int {\n"
+      "    E.Color c = E.Color.Green;\n"
+      "    F.Color f = F.Color.Red;\n"
+      "    if (c == E.Color.Green && f == F.Color.Red) {\n"
+      "        return pick() + other();\n"
+      "    }\n"
+      "    return 1;\n"
       "}\n",
       dir.string());
   fs::remove_all(dir);
