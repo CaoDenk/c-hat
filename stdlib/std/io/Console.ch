@@ -29,3 +29,18 @@ public func println_bool(bool value) {
     print_bool(value);
     printf("\n");
 }
+public func print_long(long value) {
+    printf("%lld", value);
+}
+
+public func println_long(long value) {
+    printf("%lld\n", value);
+}
+
+public func print_double(double value) {
+    printf("%g", value);
+}
+
+public func println_double(double value) {
+    printf("%g\n", value);
+}

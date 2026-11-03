@@ -1663,9 +1663,39 @@ TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
       stdlibDir) == 42);
 
   REQUIRE(compileAndRunWithModules(
+      "import std.string;\n"
+      "func main() -> int {\n"
+      "    if (find(\"hello\", \"ll\") != 2) { return 1; }\n"
+      "    if (find(\"hello\", \"x\") != -1) { return 2; }\n"
+      "    if (!starts_with(\"hello\", \"he\")) { return 3; }\n"
+      "    if (!ends_with(\"hello\", \"lo\")) { return 4; }\n"
+      "    return 42;\n"
+      "}\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.mem;\n"
+      "func main() -> int {\n"
+      "    int[3] src = [1, 2, 3];\n"
+      "    int[3] dst = [0; 3];\n"
+      "    copy(dst, src);\n"
+      "    return dst[0] + dst[2] + 38;\n"
+      "}\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
       "import std.io.Console;\n"
       "func main() -> int {\n"
       "    print_int(42);\n"
+      "    return 42;\n"
+      "}\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
+      "import std.io.Console;\n"
+      "func main() -> int {\n"
+      "    print_long(42);\n"
+      "    println_double(2.5);\n"
       "    return 42;\n"
       "}\n",
       stdlibDir) == 42);
@@ -1859,6 +1889,15 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   REQUIRE(result == 42);
 
   result = compileAndRunWithModules(
+      "import I;\n"
+      "func main() -> int {\n"
+      "    I.Drawable d = new I.Circle();\n"
+      "    return d.draw() + 2;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
       "import E;\nimport F;\n"
       "func main() -> int {\n"
       "    E.Color c = E.Color.Green;\n"
@@ -1867,6 +1906,18 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
       "        return pick() + other();\n"
       "    }\n"
       "    return 1;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import E;\n"
+      "func main() -> int {\n"
+      "    E.Color c = E.Color.Green;\n"
+      "    match (c) {\n"
+      "        E.Color.Red => { return 1; }\n"
+      "        E.Color.Green => { return 42; }\n"
+      "    }\n"
       "}\n",
       dir.string());
   REQUIRE(result == 42);

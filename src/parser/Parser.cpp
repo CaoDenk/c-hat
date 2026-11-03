@@ -4078,16 +4078,20 @@ std::unique_ptr<ast::Pattern> Parser::parsePattern() {
       return pattern;
     }
     advance();
-    if (match(lexer::TokenType::Dot)) {
+    std::unique_ptr<ast::Expression> patternExpr =
+        std::make_unique<ast::Identifier>(val);
+    while (match(lexer::TokenType::Dot)) {
       if (!check(lexer::TokenType::Identifier)) {
         error("Expected enum member after '.' in pattern");
         return nullptr;
       }
       std::string member = currentToken->getValue();
       advance();
-      return std::make_unique<ast::Pattern>(
-          std::make_unique<ast::MemberExpr>(
-              std::make_unique<ast::Identifier>(val), member, false));
+      patternExpr = std::make_unique<ast::MemberExpr>(
+          std::move(patternExpr), member, false);
+    }
+    if (dynamic_cast<ast::MemberExpr *>(patternExpr.get())) {
+      return std::make_unique<ast::Pattern>(std::move(patternExpr));
     }
     return std::make_unique<ast::Pattern>(
         std::make_unique<ast::Identifier>(val));

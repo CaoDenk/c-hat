@@ -306,7 +306,7 @@ extern "C" {
 - `+=` / `-=` / `*=` / `++` / `--`（本次修复）
 - `extern "C"` 调用 libc（如 `puts`）
 - `import` 模块递归加载并合并到主程序；支持限定函数/变量访问 `A.foo()` / `A.g` 和别名 `X.foo()`（基础 whole-program 模式，无独立模块 ABI）
-- 标准库模块已可导入并测试：`std.core`（min/max/abs/clamp）、`std.core.Types`、`std.math.basic`、`std.mem`、`std.string`（length/equal）、`std.io.Console`（println/print_int/println_int/print_bool）
+- 标准库模块已可导入并测试：`std.core`（min/max/abs/clamp）、`std.core.Types`、`std.math.basic`、`std.mem`（zero/copy）、`std.string`（length/equal/find/starts_with/ends_with）、`std.io.Console`（println/print_int/println_int/print_bool/print_long/println_long/print_double/println_double）
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
@@ -367,7 +367,7 @@ extern "C" {
 - 分析顺序为：先注册 import 模块符号，再分析导入模块声明，最后分析主程序其余声明。
 - `A.foo()` 与 `import A as X; X.foo()` 已支持；唯一短名也支持非限定调用。
 - 类/结构体唯一短名会生成类型别名，支持 `P p = D.make();`。
-- 不同模块同名类型/接口/枚举/类型别名可用限定形式 `D.P` / `D.I` / `D.Color` / `D.Alias` / `new D.P()` 使用；模块内部非限定类型优先解析为本模块类型。
+- 不同模块同名类型/接口/枚举/类型别名可用限定形式 `D.P` / `D.I` / `D.Color` / `D.Alias` / `new D.P()` 使用；限定枚举模式 `D.Color.Member` 支持 `match`；模块内部非限定类型优先解析为本模块类型。
 - 模块顶层变量唯一短名支持非限定访问；不同模块同名变量可用限定形式 `A.g` / `B.g` 共存。
 - 同名变量不会生成短名别名；模块内部优先解析为本模块变量，主程序需要使用限定名。
 - 还没有独立编译对象、完整稳定 ABI 或增量编译。
