@@ -351,7 +351,7 @@ private:
       classImplementedInterfaces_;
   struct ClassFieldDestructor {
     unsigned fieldIndex = 0;
-    unsigned arrayCount = 0;
+    std::vector<unsigned> arrayDims;
     std::string destructorName;
   };
   std::unordered_map<std::string, std::vector<ClassFieldDestructor>>

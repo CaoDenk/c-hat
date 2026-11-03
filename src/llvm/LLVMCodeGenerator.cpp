@@ -2151,50 +2151,45 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
         memberIndices[varDecl->name] = fieldIndex;
 
         std::string fieldClassName;
-        unsigned fieldArrayCount = 0;
+        std::vector<unsigned> fieldArrayDims;
         if (semanticModel_) {
           auto fieldType = semanticModel_->getDeclarationType(varDecl);
+          while (auto fieldArray =
+                     std::dynamic_pointer_cast<types::ArrayType>(fieldType)) {
+            fieldArrayDims.push_back(
+                static_cast<unsigned>(fieldArray->getSize()));
+            fieldType = fieldArray->getElementType();
+          }
           if (auto fieldClass =
                   std::dynamic_pointer_cast<types::ClassType>(fieldType)) {
             if (fieldClass->hasDestructor()) {
               fieldClassName = fieldClass->getName();
             }
-          } else if (auto fieldArray =
-                         std::dynamic_pointer_cast<types::ArrayType>(
-                             fieldType)) {
-            auto elementClass = std::dynamic_pointer_cast<types::ClassType>(
-                fieldArray->getElementType());
-            if (elementClass && elementClass->hasDestructor()) {
-              fieldClassName = elementClass->getName();
-              fieldArrayCount = fieldArray->getSize();
-            }
           }
         }
         if (fieldClassName.empty()) {
-          if (auto *namedField =
-                  dynamic_cast<ast::NamedType *>(varDecl->type.get())) {
-            fieldClassName = namedField->name;
-          } else if (auto *arrayField =
-                         dynamic_cast<ast::ArrayType *>(
-                             varDecl->type.get())) {
-            if (auto *elementType =
-                    dynamic_cast<ast::NamedType *>(
-                        arrayField->baseType.get())) {
-              fieldClassName = elementType->name;
-              if (auto *sizeLiteral =
-                      dynamic_cast<ast::Literal *>(
-                          arrayField->size.get())) {
-                if (sizeLiteral->type == ast::Literal::Type::Integer) {
-                  fieldArrayCount =
-                      static_cast<unsigned>(std::stoul(sizeLiteral->value));
-                }
+          ast::Type *currentType =
+              dynamic_cast<ast::Type *>(varDecl->type.get());
+          while (auto *arrayField =
+                     dynamic_cast<ast::ArrayType *>(currentType)) {
+            unsigned arraySize = 0;
+            if (auto *sizeLiteral =
+                    dynamic_cast<ast::Literal *>(arrayField->size.get())) {
+              if (sizeLiteral->type == ast::Literal::Type::Integer) {
+                arraySize =
+                    static_cast<unsigned>(std::stoul(sizeLiteral->value));
               }
             }
+            fieldArrayDims.push_back(arraySize);
+            currentType = arrayField->baseType.get();
+          }
+          if (auto *namedField = dynamic_cast<ast::NamedType *>(currentType)) {
+            fieldClassName = namedField->name;
           }
         }
         if (!fieldClassName.empty()) {
           classFieldDestructors_[classDecl->name].push_back(
-              {fieldIndex, fieldArrayCount,
+              {fieldIndex, fieldArrayDims,
                fieldClassName + "_~" + fieldClassName});
         }
       }
@@ -2606,19 +2601,31 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
               llvm::Value *fieldPtr = builder()->CreateStructGEP(
                   structTypes_[className], thisArg, it->fieldIndex,
                   "field.dtor.ptr");
-              if (it->arrayCount > 0) {
+              if (!it->arrayDims.empty()) {
                 llvm::Type *fieldType =
                     structTypes_[className]->getElementType(it->fieldIndex);
-                auto *arrayType = llvm::dyn_cast<llvm::ArrayType>(fieldType);
-                for (unsigned i = 0; i < it->arrayCount; ++i) {
+                std::vector<unsigned> indices(it->arrayDims.size(), 0);
+                bool done = false;
+                while (!done) {
+                  std::vector<llvm::Value *> gepIndices;
+                  gepIndices.push_back(llvm::ConstantInt::get(
+                      llvm::Type::getInt32Ty(context()), 0));
+                  for (unsigned index : indices) {
+                    gepIndices.push_back(llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(context()), index));
+                  }
                   llvm::Value *elementPtr = builder()->CreateGEP(
-                      arrayType, fieldPtr,
-                      {llvm::ConstantInt::get(
-                           llvm::Type::getInt32Ty(context()), 0),
-                       llvm::ConstantInt::get(
-                           llvm::Type::getInt32Ty(context()), i)},
-                      "field.dtor.elem");
+                      fieldType, fieldPtr, gepIndices, "field.dtor.elem");
                   builder()->CreateCall(dtorIt->second, {elementPtr});
+
+                  done = true;
+                  for (size_t dim = indices.size(); dim > 0; --dim) {
+                    if (++indices[dim - 1] < it->arrayDims[dim - 1]) {
+                      done = false;
+                      break;
+                    }
+                    indices[dim - 1] = 0;
+                  }
                 }
               } else {
                 builder()->CreateCall(dtorIt->second, {fieldPtr});
