@@ -1555,6 +1555,46 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     }
   }
 
+  // 字段或基类需要析构但类没有显式析构函数时，合成一个空析构函数，
+  // 让 codegen 的字段/基类析构链有入口。
+  if (!classType->hasMethod("~" + classDecl->name)) {
+    bool needsDestructor = false;
+    for (const auto &[fieldName, field] : classType->getFields()) {
+      (void)fieldName;
+      if (auto fieldClass =
+              std::dynamic_pointer_cast<types::ClassType>(field.type)) {
+        if (fieldClass->hasDestructor()) {
+          needsDestructor = true;
+          break;
+        }
+      }
+    }
+    if (!needsDestructor) {
+      for (const auto &base : classType->getBaseClasses()) {
+        if (base && base->hasDestructor()) {
+          needsDestructor = true;
+          break;
+        }
+      }
+    }
+    if (needsDestructor) {
+      auto destructorDecl = std::make_unique<ast::FunctionDecl>(
+          "public", "~" + classDecl->name,
+          std::vector<std::unique_ptr<ast::Node>>(),
+          std::vector<std::unique_ptr<ast::Node>>(), nullptr, nullptr, nullptr,
+          std::make_unique<ast::CompoundStmt>());
+      destructorDecl->modulePrefix = classDecl->modulePrefix;
+      auto *destructorPtr = destructorDecl.get();
+      classDecl->members.push_back(std::move(destructorDecl));
+      analyzeFunctionDecl(destructorPtr, classType);
+      classType->addMethod(types::ClassMethod(
+          "~" + classDecl->name,
+          types::TypeFactory::getPrimitiveType(
+              types::PrimitiveType::Kind::Void),
+          {}, false, false, types::AccessModifier::Public, false));
+    }
+  }
+
   // 未实现的接口方法若有默认实现，生成类内具体方法。
   // 先注册所有默认方法签名，再分析方法体，允许默认方法互相调用。
   std::vector<ast::FunctionDecl *> defaultMethodClones;
