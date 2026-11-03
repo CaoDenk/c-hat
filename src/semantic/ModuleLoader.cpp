@@ -232,6 +232,18 @@ void appendLoadedProgram(
     }
   }
 
+  // 模块类型别名加模块前缀。
+  if (!prefix.empty()) {
+    for (auto &decl : loaded->declarations) {
+      if (auto *aliasDecl = dynamic_cast<ast::TypeAliasDecl *>(decl.get())) {
+        std::string originalName = aliasDecl->name;
+        aliasDecl->name = prefix + originalName;
+        aliasDecl->modulePrefix = prefix;
+        typeCandidates[originalName].push_back(aliasDecl->name);
+      }
+    }
+  }
+
   // 模块枚举加模块前缀；成员常量随枚举名一起加前缀。
   if (!prefix.empty()) {
     for (auto &decl : loaded->declarations) {

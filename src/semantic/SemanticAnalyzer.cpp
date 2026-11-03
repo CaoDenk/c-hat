@@ -2471,6 +2471,7 @@ void SemanticAnalyzer::analyzeEnumDecl(ast::EnumDecl *enumDecl) {
   MetadataRegistry::instance().registerType(enumDecl->name, std::move(metadata));
 }
 void SemanticAnalyzer::analyzeTypeAliasDecl(ast::TypeAliasDecl *typeAliasDecl) {
+  ModulePrefixGuard moduleGuard(currentModulePrefix_, typeAliasDecl->modulePrefix);
   if (typeAliasDecl->types.empty()) return;
 
   if (typeAliasDecl->isTypeSet) {
@@ -5902,6 +5903,12 @@ SemanticAnalyzer::analyzeNamedType(const ast::NamedType *namedType) {
           currentModulePrefix_ + namedType->name;
       return ownStruct->getType();
     }
+    if (auto ownAlias =
+            std::dynamic_pointer_cast<TypeAliasSymbol>(ownTarget)) {
+      const_cast<ast::NamedType *>(namedType)->name =
+          currentModulePrefix_ + namedType->name;
+      return ownAlias->getType();
+    }
   }
   auto type = analyzeTypeByName(namedType->name);
   if (type && namedType->name.find('.') != std::string::npos) {
@@ -6082,6 +6089,10 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
             std::dynamic_pointer_cast<StructSymbol>(target)) {
       return structSymbol->getType();
     }
+    if (auto aliasSymbol =
+            std::dynamic_pointer_cast<TypeAliasSymbol>(target)) {
+      return aliasSymbol->getType();
+    }
   }
 
   // 模块内非限定类型解析：优先当前模块自己的前缀类型。
@@ -6095,6 +6106,10 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
     if (auto structSymbol =
             std::dynamic_pointer_cast<StructSymbol>(ownTarget)) {
       return structSymbol->getType();
+    }
+    if (auto aliasSymbol =
+            std::dynamic_pointer_cast<TypeAliasSymbol>(ownTarget)) {
+      return aliasSymbol->getType();
     }
   }
 
@@ -6121,6 +6136,10 @@ SemanticAnalyzer::analyzeTypeByName(const std::string &typeName) {
       if (auto structSymbol =
               std::dynamic_pointer_cast<StructSymbol>(target)) {
         return structSymbol->getType();
+      }
+      if (auto aliasSymbol =
+              std::dynamic_pointer_cast<TypeAliasSymbol>(target)) {
+        return aliasSymbol->getType();
       }
     }
   }

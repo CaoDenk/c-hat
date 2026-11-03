@@ -1677,6 +1677,20 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
          "public enum Color { Blue, Red }\n"
          "public func other() -> int { return 22; }\n";
   }
+  {
+    std::ofstream m(dir / "M.ch");
+    m << "module M;\n"
+         "public class C { public int x; public C(int v) { x = v; } }\n"
+         "public using Alias = C;\n"
+         "public func make() -> Alias { return C(40); }\n";
+  }
+  {
+    std::ofstream n(dir / "N.ch");
+    n << "module N;\n"
+         "public class C { public int x; public C(int v) { x = v; } }\n"
+         "public using Alias = C;\n"
+         "public func make() -> Alias { return C(2); }\n";
+  }
   int result = compileAndRunWithModules(
       "import B;\nfunc main() -> int { return bar(); }\n", dir.string());
   REQUIRE(result == 42);
@@ -1776,6 +1790,16 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
       "        return pick() + other();\n"
       "    }\n"
       "    return 1;\n"
+      "}\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import M;\nimport N;\n"
+      "func main() -> int {\n"
+      "    M.Alias a = M.make();\n"
+      "    N.Alias b = N.make();\n"
+      "    return a.x + b.x;\n"
       "}\n",
       dir.string());
   fs::remove_all(dir);
