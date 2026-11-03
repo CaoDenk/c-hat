@@ -92,6 +92,16 @@ private:
   void generateDeferredMemberBodies();
   void finalizeVTables();
   void collectInterfaceInfo(ast::Program &program);
+  int exceptionClassTag(const std::string &name) const;
+  int exceptionPointerTag(const std::string &name) const;
+  bool classIsSubclass(const std::string &derived,
+                       const std::string &base) const;
+  bool interfaceExtends(const std::string &derived,
+                        const std::string &base) const;
+  bool classHasInterface(const std::string &className,
+                         const std::string &interfaceName) const;
+  std::vector<int>
+  exceptionTagsForCatch(const ast::CatchStmt &catchStmt) const;
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,
@@ -335,6 +345,10 @@ private:
   unsigned interfaceBaseSlot_ = 0;
   std::unordered_map<std::string, std::unordered_set<std::string>>
       classDeclaredMethods_;
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      classImplementedInterfaces_;
+  std::unordered_map<std::string, std::vector<std::string>>
+      interfaceBaseNames_;
 
   // 异常处理
   llvm::FunctionCallee personalityFunc_;

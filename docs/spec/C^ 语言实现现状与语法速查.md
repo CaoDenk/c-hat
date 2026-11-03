@@ -388,7 +388,8 @@ extern "C" {
 ### 异常实现限制（v1）
 
 - 当前用 `setjmp` / `longjmp` 传播异常，不是文档里描述的零开销表驱动模型。
-- `catch (T e)` 已按类型标签精确匹配：按书写顺序尝试 catch，未匹配的异常继续向外传播；`catch (...)` 接受所有异常。当前不做基类/隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
+- `catch (T e)` 按书写顺序匹配：数值类型精确匹配；类指针支持派生类到基类匹配；接口指针支持实现类/子接口匹配；`catch (...)` 接受所有异常。
+- 仍不做隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
 - 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
 - `defer` 已按块级作用域执行：正常块退出、return、throw 会执行本层 defer；循环体内 defer 每轮执行。
 - `throw` 只清理到最近 try 的清理起点；catch 之外的 defer/析构会等到真正离开作用域时执行。
@@ -398,7 +399,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 61 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 62 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 

@@ -3207,6 +3207,42 @@ SemanticAnalyzer::analyzeTryStmt(ast::TryStmt *tryStmt) {
         error("Invalid catch parameter type", *catchStmt);
       } else {
         catchStmt->catchTag = exceptionTagForType(catchType);
+
+        auto matchType = catchType;
+        while (auto readonlyType =
+                   std::dynamic_pointer_cast<types::ReadonlyType>(matchType)) {
+          matchType = readonlyType->getBaseType();
+        }
+        while (auto nullableType =
+                   std::dynamic_pointer_cast<types::NullableType>(matchType)) {
+          matchType = nullableType->getBaseType();
+        }
+        if (matchType && matchType->isPointer()) {
+          catchStmt->exceptionTypeIsPointer = true;
+          auto pointer =
+              std::dynamic_pointer_cast<types::PointerType>(matchType);
+          matchType = pointer ? pointer->getPointeeType() : nullptr;
+          while (auto readonlyType =
+                     std::dynamic_pointer_cast<types::ReadonlyType>(
+                         matchType)) {
+            matchType = readonlyType->getBaseType();
+          }
+        }
+        if (matchType && matchType->isClass()) {
+          auto classType =
+              std::dynamic_pointer_cast<types::ClassType>(matchType);
+          if (classType) {
+            catchStmt->exceptionTypeName = classType->getName();
+          }
+        } else if (matchType && matchType->isInterface()) {
+          auto interfaceType =
+              std::dynamic_pointer_cast<types::InterfaceType>(matchType);
+          if (interfaceType) {
+            catchStmt->exceptionTypeName = interfaceType->getName();
+            catchStmt->exceptionTypeIsInterface = true;
+          }
+        }
+
         auto catchSymbol =
             std::make_shared<VariableSymbol>(catchStmt->param->name, catchType);
         symbolTable.addSymbol(catchSymbol);

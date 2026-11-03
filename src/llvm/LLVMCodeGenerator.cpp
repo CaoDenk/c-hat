@@ -269,6 +269,8 @@ void LLVMCodeGenerator::collectInterfaceInfo(ast::Program &program) {
             dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
       interfaceDecls[interfaceDecl->name] = interfaceDecl;
       interfaceNames_.insert(interfaceDecl->name);
+      interfaceBaseNames_[interfaceDecl->name] =
+          interfaceDecl->baseInterfaces;
     }
   }
 
@@ -317,6 +319,114 @@ void LLVMCodeGenerator::collectInterfaceInfo(ast::Program &program) {
       addInterfaceMethods(interfaceDecl->name, visiting);
     }
   }
+}
+
+int LLVMCodeGenerator::exceptionClassTag(const std::string &name) const {
+  uint32_t hash = 2166136261u;
+  for (unsigned char ch : name) {
+    hash ^= ch;
+    hash *= 16777619u;
+  }
+  return static_cast<int>((hash & 0x3fffffffu) | 0x40000000u);
+}
+
+int LLVMCodeGenerator::exceptionPointerTag(const std::string &name) const {
+  uint32_t hash = 2166136261u;
+  hash ^= 20u;
+  hash *= 16777619u;
+  hash ^= static_cast<uint32_t>(exceptionClassTag(name));
+  hash *= 16777619u;
+  return static_cast<int>((hash & 0x3fffffffu) | 0x40000000u);
+}
+
+bool LLVMCodeGenerator::classIsSubclass(const std::string &derived,
+                                        const std::string &base) const {
+  if (derived == base) {
+    return true;
+  }
+  auto it = classBaseNames_.find(derived);
+  if (it == classBaseNames_.end() || it->second.empty() ||
+      interfaceNames_.count(it->second) > 0) {
+    return false;
+  }
+  return classIsSubclass(it->second, base);
+}
+
+bool LLVMCodeGenerator::interfaceExtends(const std::string &derived,
+                                         const std::string &base) const {
+  if (derived == base) {
+    return true;
+  }
+  auto it = interfaceBaseNames_.find(derived);
+  if (it == interfaceBaseNames_.end()) {
+    return false;
+  }
+  for (const auto &parent : it->second) {
+    if (interfaceExtends(parent, base)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool LLVMCodeGenerator::classHasInterface(
+    const std::string &className, const std::string &interfaceName) const {
+  auto it = classImplementedInterfaces_.find(className);
+  if (it != classImplementedInterfaces_.end()) {
+    for (const auto &iface : it->second) {
+      if (interfaceExtends(iface, interfaceName)) {
+        return true;
+      }
+    }
+  }
+  auto baseIt = classBaseNames_.find(className);
+  if (baseIt != classBaseNames_.end() && !baseIt->second.empty() &&
+      interfaceNames_.count(baseIt->second) == 0) {
+    return classHasInterface(baseIt->second, interfaceName);
+  }
+  return false;
+}
+
+std::vector<int> LLVMCodeGenerator::exceptionTagsForCatch(
+    const ast::CatchStmt &catchStmt) const {
+  std::vector<int> tags;
+  if (catchStmt.catchTag == 0) {
+    return tags;
+  }
+  tags.push_back(catchStmt.catchTag);
+  if (catchStmt.exceptionTypeName.empty()) {
+    return tags;
+  }
+
+  auto tagFor = [&](const std::string &name) {
+    return catchStmt.exceptionTypeIsPointer ? exceptionPointerTag(name)
+                                            : exceptionClassTag(name);
+  };
+  auto addTag = [&](int tag) {
+    if (std::find(tags.begin(), tags.end(), tag) == tags.end()) {
+      tags.push_back(tag);
+    }
+  };
+
+  if (catchStmt.exceptionTypeIsInterface) {
+    for (const auto &[className, _] : classBaseNames_) {
+      if (classHasInterface(className, catchStmt.exceptionTypeName)) {
+        addTag(tagFor(className));
+      }
+    }
+    for (const auto &interfaceName : interfaceNames_) {
+      if (interfaceExtends(interfaceName, catchStmt.exceptionTypeName)) {
+        addTag(tagFor(interfaceName));
+      }
+    }
+  } else {
+    for (const auto &[className, _] : classBaseNames_) {
+      if (classIsSubclass(className, catchStmt.exceptionTypeName)) {
+        addTag(tagFor(className));
+      }
+    }
+  }
+  return tags;
 }
 
 void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
@@ -1814,6 +1924,9 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
     addInterfaceName(name);
   }
   const bool implementsInterface = !implementedInterfaces.empty();
+  classImplementedInterfaces_[classDecl->name] =
+      std::unordered_set<std::string>(implementedInterfaces.begin(),
+                                      implementedInterfaces.end());
 
   std::string baseName = normalizeTypeName(classDecl->baseClass);
   if (!baseName.empty()) {
@@ -7104,10 +7217,17 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
       } else {
         llvm::Value *throwTag =
             builder()->CreateLoad(i64Ty, excType, "exc.tag");
-        llvm::Value *matches = builder()->CreateICmpEQ(
-            throwTag,
-            llvm::ConstantInt::get(i64Ty, catchStmt.catchTag),
-            "catch.match");
+        auto catchTags = exceptionTagsForCatch(catchStmt);
+        if (catchTags.empty()) {
+          catchTags.push_back(catchStmt.catchTag);
+        }
+        llvm::Value *matches = nullptr;
+        for (int tag : catchTags) {
+          llvm::Value *cmp = builder()->CreateICmpEQ(
+              throwTag, llvm::ConstantInt::get(i64Ty, tag), "catch.tag.match");
+          matches = matches ? builder()->CreateOr(matches, cmp, "catch.match")
+                            : cmp;
+        }
         builder()->CreateCondBr(matches, bodyBB, nextBB);
       }
 

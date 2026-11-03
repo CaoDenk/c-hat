@@ -301,6 +301,11 @@ std::unique_ptr<Statement> cloneStmtImpl(const Statement *stmt,
       auto clonedCatch = std::make_unique<CatchStmt>(
           std::move(param), cloneStmtImpl(catchStmt->body.get(), subst));
       clonedCatch->catchTag = catchStmt->catchTag;
+      clonedCatch->exceptionTypeName = catchStmt->exceptionTypeName;
+      clonedCatch->exceptionTypeIsPointer =
+          catchStmt->exceptionTypeIsPointer;
+      clonedCatch->exceptionTypeIsInterface =
+          catchStmt->exceptionTypeIsInterface;
       catches.push_back(std::move(clonedCatch));
     }
     return std::make_unique<TryStmt>(

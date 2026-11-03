@@ -1184,6 +1184,31 @@ TEST_CASE("Integration: catch type matching", "[integration][exception]") {
       "}\n") == 7);
 }
 
+TEST_CASE("Integration: catch base class and interface",
+          "[integration][exception][oop]") {
+  REQUIRE(compileAndRun(
+      "class A { }\n"
+      "class B : A { }\n"
+      "func main() -> int {\n"
+      "    try { throw new B(); }\n"
+      "    catch (A^ e) { return 42; }\n"
+      "    catch (...) { return 1; }\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "interface I { func value() -> int; }\n"
+      "interface J : I { func other() -> int; }\n"
+      "class C : J {\n"
+      "    public func value() -> int { return 1; }\n"
+      "    public func other() -> int { return 2; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    try { throw new C(); }\n"
+      "    catch (I^ e) { return 42; }\n"
+      "    catch (...) { return 1; }\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: catch fallthrough and rethrow", "[integration][exception]") {
   REQUIRE(compileAndRun(
       "func main() -> int {\n"
