@@ -1555,6 +1555,62 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     }
   }
 
+  // 未实现的接口方法若有默认实现，生成类内具体方法。
+  // 先注册所有默认方法签名，再分析方法体，允许默认方法互相调用。
+  std::vector<ast::FunctionDecl *> defaultMethodClones;
+  for (const auto &interface : classType->getInterfaces()) {
+    for (const auto &[methodName, interfaceMethod] :
+         interface->getMethods()) {
+      if (!interfaceMethod.hasDefaultImplementation ||
+          classType->hasMethod(methodName)) {
+        continue;
+      }
+      auto defaultsIt = interfaceDefaultMethods_.find(interface->getName());
+      if (defaultsIt == interfaceDefaultMethods_.end()) {
+        continue;
+      }
+      auto defaultIt = defaultsIt->second.find(methodName);
+      if (defaultIt == defaultsIt->second.end()) {
+        continue;
+      }
+      auto clone = ast::cloneFunctionWithSubst(defaultIt->second, {},
+                                               methodName);
+      if (!clone) {
+        continue;
+      }
+      clone->specifiers = "public";
+      auto *clonePtr = clone.get();
+      classDecl->members.push_back(std::move(clone));
+      defaultMethodClones.push_back(clonePtr);
+
+      std::vector<std::shared_ptr<types::Type>> paramTypes;
+      for (const auto &param : clonePtr->params) {
+        if (auto *paramNode = dynamic_cast<ast::Parameter *>(param.get())) {
+          if (auto *typeNode =
+                  dynamic_cast<ast::Type *>(paramNode->type.get())) {
+            paramTypes.push_back(analyzeType(typeNode));
+          }
+        }
+      }
+      std::shared_ptr<types::Type> returnType;
+      if (clonePtr->returnType) {
+        if (auto *typeNode =
+                dynamic_cast<ast::Type *>(clonePtr->returnType.get())) {
+          returnType = analyzeType(typeNode);
+        }
+      } else {
+        returnType = types::TypeFactory::getPrimitiveType(
+            types::PrimitiveType::Kind::Void);
+      }
+      classType->addMethod(types::ClassMethod(
+          methodName, returnType, paramTypes, false, false,
+          types::AccessModifier::Public, false));
+    }
+  }
+  for (auto *clone : defaultMethodClones) {
+    analyzeFunctionDecl(clone, classType);
+  }
+
   // 检查类是否实现了所有接口方法
   checkInterfaceImplementation(classDecl, classType.get());
 
@@ -1651,8 +1707,8 @@ void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
   // 分析接口成员
   for (auto &member : interfaceDecl->members) {
     if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
-      // 分析方法声明
-      analyzeFunctionDecl(funcDecl);
+      // 接口方法只分析签名；默认实现的方法体在实现类中展开。
+      analyzeFunctionDecl(funcDecl, nullptr, false);
 
       // 将方法添加到接口类型
       std::vector<std::shared_ptr<types::Type>> paramTypes;
@@ -1687,6 +1743,10 @@ void SemanticAnalyzer::analyzeInterfaceDecl(ast::InterfaceDecl *interfaceDecl) {
       types::InterfaceMethod method(funcDecl->name, returnType, paramTypes,
                                     hasDefaultImpl, access);
       interfaceType->addMethod(method);
+      if (hasDefaultImpl) {
+        interfaceDefaultMethods_[interfaceDecl->name][funcDecl->name] =
+            funcDecl;
+      }
     } else if (auto *decl = dynamic_cast<ast::Declaration *>(member.get())) {
       analyzeDeclaration(decl);
     } else if (auto *stmt = dynamic_cast<ast::Statement *>(member.get())) {

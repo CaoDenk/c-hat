@@ -1024,6 +1024,38 @@ TEST_CASE("Integration: static members", "[integration][class]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: interface default methods",
+          "[integration][class][interface]") {
+  REQUIRE(compileAndRun(
+      "interface I {\n"
+      "    func value() -> int;\n"
+      "    func twice() -> int { return self.value() * 2; }\n"
+      "}\n"
+      "class C : I {\n"
+      "    public func value() -> int { return 21; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    I^ c = new C();\n"
+      "    return c->twice();\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "interface I {\n"
+      "    func value() -> int { return 1; }\n"
+      "    func twice() -> int { return self.value() * 2; }\n"
+      "}\n"
+      "class C : I { }\n"
+      "class D : I {\n"
+      "    public func value() -> int { return 10; }\n"
+      "    public func twice() -> int { return 5; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    I^ c = new C();\n"
+      "    I^ d = new D();\n"
+      "    return c->twice() + d->twice() + c->value();\n"
+      "}\n") == 8);
+}
+
 TEST_CASE("Integration: destructor chains", "[integration][class][raii]") {
   REQUIRE(compileAndRun(
       "var value = 0;\n"
@@ -1548,7 +1580,10 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   {
     std::ofstream i(dir / "I.ch");
     i << "module I;\n"
-         "public interface Drawable { func draw() -> int; }\n"
+         "public interface Drawable {\n"
+         "    func draw() -> int;\n"
+         "    func twice() -> int { return self.draw(); }\n"
+         "}\n"
          "public class Circle : Drawable {\n"
          "    public func draw() -> int { return 40; }\n"
          "}\n"
@@ -1635,6 +1670,15 @@ TEST_CASE("Integration: module imports", "[integration][module]") {
   result = compileAndRunWithModules(
       "import I;\n"
       "func main() -> int { return test(); }\n",
+      dir.string());
+  REQUIRE(result == 42);
+
+  result = compileAndRunWithModules(
+      "import I;\n"
+      "func main() -> int {\n"
+      "    I.Drawable^ d = new I.Circle();\n"
+      "    return d->twice() + 2;\n"
+      "}\n",
       dir.string());
   fs::remove_all(dir);
   REQUIRE(result == 42);

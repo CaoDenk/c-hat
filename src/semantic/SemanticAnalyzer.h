@@ -80,6 +80,11 @@ private:
 
   // 泛型单态化
   std::unordered_map<std::string, ast::FunctionDecl *> genericFunctions_;
+
+  // 接口默认实现：接口名 -> 方法名 -> 默认方法声明。
+  std::unordered_map<std::string,
+                     std::unordered_map<std::string, ast::FunctionDecl *>>
+      interfaceDefaultMethods_;
   std::unordered_map<std::string, ast::ClassDecl *> genericClasses_;
   std::unordered_map<std::string, ast::StructDecl *> genericStructs_;
   std::unordered_set<std::string> structTypeNames_;

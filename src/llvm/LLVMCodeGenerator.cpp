@@ -2143,8 +2143,15 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
       llvm::FunctionType::get(returnType, paramTypes, false);
 
   std::string mangledName = className + "_" + funcDecl->name;
-  llvm::Function *function = llvm::Function::Create(
-      funcType, llvm::Function::ExternalLinkage, mangledName, module());
+  llvm::Function *function = module()->getFunction(mangledName);
+  if (function && !function->empty()) {
+    functions_[mangledName] = function;
+    return function;
+  }
+  if (!function) {
+    function = llvm::Function::Create(
+        funcType, llvm::Function::ExternalLinkage, mangledName, module());
+  }
 
   if (funcDecl->body) {
     llvm::BasicBlock *entryBlock =
@@ -4723,6 +4730,27 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
         return builder()->CreateCall(it->second, args);
       }
       return builder()->CreateCall(it->second, args, "mcall");
+    }
+
+    // 方法可能尚未生成函数体：按语义类型创建前向声明。
+    if (semanticModel_) {
+      auto exprType = semanticModel_->getExpressionType(callExpr.get());
+      if (exprType) {
+        llvm::Type *returnType = lowerSemanticType(exprType);
+        if (returnType) {
+          std::vector<llvm::Type *> paramTypes;
+          for (auto *arg : args) {
+            paramTypes.push_back(arg->getType());
+          }
+          auto *fnType = llvm::FunctionType::get(returnType, paramTypes, false);
+          llvm::FunctionCallee callee =
+              module()->getOrInsertFunction(methodName, fnType);
+          if (returnType->isVoidTy()) {
+            return builder()->CreateCall(callee, args);
+          }
+          return builder()->CreateCall(callee, args, "mcall");
+        }
+      }
     }
 
     error("Unknown method: " + methodName);
