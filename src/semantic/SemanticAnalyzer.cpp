@@ -4815,6 +4815,21 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
     return nullptr;
   }
 
+  // 接口方法访问：接口指针指向实现类对象，调用按接口槽位动态派发。
+  if (objectType->isInterface()) {
+    auto interfaceType =
+        std::dynamic_pointer_cast<types::InterfaceType>(objectType);
+    if (interfaceType && interfaceType->hasMethod(memberExpr->member)) {
+      const auto *method = interfaceType->getMethod(memberExpr->member);
+      memberExpr->structName = interfaceType->getName();
+      memberExpr->virtualDispatch = true;
+      return method->returnType;
+    }
+    error("Method not found in interface: " + memberExpr->member,
+          *memberExpr);
+    return nullptr;
+  }
+
   // 检查是否是类类型
   if (objectType->isClass()) {
     auto classType = std::dynamic_pointer_cast<types::ClassType>(objectType);
@@ -6091,6 +6106,21 @@ bool SemanticAnalyzer::isTypeCompatible(
   // 精确匹配
   if (expected->toString() == actual->toString()) {
     return true;
+  }
+
+  // 指针子类型：允许实现类指针赋给接口指针，但不能去掉底层只读。
+  if (expected->isPointer() && actual->isPointer()) {
+    auto expectedPtr = std::dynamic_pointer_cast<types::PointerType>(expected);
+    auto actualPtr = std::dynamic_pointer_cast<types::PointerType>(actual);
+    if (expectedPtr && actualPtr) {
+      auto expectedPointee = expectedPtr->getPointeeType();
+      auto actualPointee = actualPtr->getPointeeType();
+      if (expectedPointee && actualPointee &&
+          !expectedPointee->isReadonly() && actualPointee->isReadonly()) {
+        return false;
+      }
+      return actual->isSubtypeOf(*expected);
+    }
   }
 
   // 检查数组类型的大小匹配

@@ -252,6 +252,41 @@ TEST_CASE("Integration: virtual dispatch", "[integration][class][virtual]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: interface dispatch", "[integration][class][interface]") {
+  REQUIRE(compileAndRun(
+      "interface Drawable { func draw() -> int; }\n"
+      "interface Named { func name() -> int; }\n"
+      "class A : Drawable, Named {\n"
+      "    public func draw() -> int { return 10; }\n"
+      "    public func name() -> int { return 1; }\n"
+      "}\n"
+      "class B : Drawable {\n"
+      "    public func draw() -> int { return 31; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Drawable^ a = new A();\n"
+      "    Drawable^ b = new B();\n"
+      "    Named^ n = new A();\n"
+      "    return a->draw() + b->draw() + n->name();\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "interface I { func ia() -> int; }\n"
+      "class A : I {\n"
+      "    public virtual func va() -> int { return 1; }\n"
+      "    public func ia() -> int { return 20; }\n"
+      "}\n"
+      "class B : A {\n"
+      "    public override func va() -> int { return 2; }\n"
+      "    public override func ia() -> int { return 40; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    I^ x = new B();\n"
+      "    A^ y = new B();\n"
+      "    return x->ia() + y->va();\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: struct field assignment", "[integration][struct]") {
   REQUIRE(compileAndRun(
       "struct P { int x; }\n"

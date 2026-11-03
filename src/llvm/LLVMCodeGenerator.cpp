@@ -262,7 +262,66 @@ llvm::Value *fromExceptionWord(llvm::IRBuilder<> *builder,
 LLVMCodeGenerator::LLVMCodeGenerator(const std::string &moduleName)
     : generator_(moduleName) {}
 
+void LLVMCodeGenerator::collectInterfaceInfo(ast::Program &program) {
+  std::unordered_map<std::string, ast::InterfaceDecl *> interfaceDecls;
+  for (auto &decl : program.declarations) {
+    if (auto *interfaceDecl =
+            dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
+      interfaceDecls[interfaceDecl->name] = interfaceDecl;
+      interfaceNames_.insert(interfaceDecl->name);
+    }
+  }
+
+  // 所有类方法数作为类虚方法槽位的保守上界，接口槽位从其后开始，
+  // 使不同实现类的同一接口方法拥有相同槽位。
+  unsigned classMethodUpperBound = 0;
+  for (auto &decl : program.declarations) {
+    if (auto *classDecl = dynamic_cast<ast::ClassDecl *>(decl.get())) {
+      for (auto &member : classDecl->members) {
+        if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
+          if (!funcDecl->isStatic) {
+            ++classMethodUpperBound;
+          }
+        }
+      }
+    }
+  }
+  interfaceBaseSlot_ = classMethodUpperBound;
+
+  std::function<void(const std::string &, std::unordered_set<std::string> &)>
+      addInterfaceMethods = [&](const std::string &interfaceName,
+                                std::unordered_set<std::string> &visiting) {
+        auto it = interfaceDecls.find(interfaceName);
+        if (it == interfaceDecls.end() || !visiting.insert(interfaceName).second) {
+          return;
+        }
+        for (const auto &baseName : it->second->baseInterfaces) {
+          addInterfaceMethods(baseName, visiting);
+        }
+        for (auto &member : it->second->members) {
+          if (auto *funcDecl =
+                  dynamic_cast<ast::FunctionDecl *>(member.get())) {
+            if (interfaceMethodSlots_.count(funcDecl->name) == 0) {
+              interfaceMethodSlots_[funcDecl->name] =
+                  static_cast<unsigned>(interfaceMethods_.size());
+              interfaceMethods_.push_back(funcDecl->name);
+            }
+          }
+        }
+      };
+
+  for (auto &decl : program.declarations) {
+    if (auto *interfaceDecl =
+            dynamic_cast<ast::InterfaceDecl *>(decl.get())) {
+      std::unordered_set<std::string> visiting;
+      addInterfaceMethods(interfaceDecl->name, visiting);
+    }
+  }
+}
+
 void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
+  collectInterfaceInfo(*program);
+
   // 先添加内置类型 literalview 到 structTypes_
   structTypes_["literalview"] =
       static_cast<llvm::StructType *>(getLiteralViewType());
@@ -1699,14 +1758,36 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
     }
   }
 
+  auto &declaredMethods = classDeclaredMethods_[classDecl->name];
+  declaredMethods.insert(methodNames.begin(), methodNames.end());
+
+  std::vector<std::string> implementedInterfaces;
+  auto addInterfaceName = [&](const std::string &name) {
+    if (!name.empty() && interfaceNames_.count(name) > 0) {
+      implementedInterfaces.push_back(name);
+    }
+  };
+  addInterfaceName(classDecl->baseClass);
+  for (const auto &name : classDecl->baseClasses) {
+    addInterfaceName(name);
+  }
+  for (const auto &name : classDecl->interfaces) {
+    addInterfaceName(name);
+  }
+  const bool implementsInterface = !implementedInterfaces.empty();
+
   const std::string &baseName = classDecl->baseClass;
+  const bool hasClassBase =
+      !baseName.empty() && interfaceNames_.count(baseName) == 0;
   bool baseHasVTable =
-      !baseName.empty() && classesWithVTable_.count(baseName) > 0;
+      hasClassBase && classesWithVTable_.count(baseName) > 0;
   auto baseSlotsIt = virtualSlots_.find(baseName);
 
   // 只有根类引入虚表，或基类已有虚表时才使用 vptr。
-  // 非虚基类 + 派生新虚方法会改变基类字段偏移，当前不支持。
-  bool hasVirtual = baseHasVTable || (baseName.empty() && declaresVirtual);
+  // 非虚基类 + 派生新虚方法/接口会改变基类字段偏移，当前不支持。
+  bool hasVirtual =
+      baseHasVTable ||
+      (!hasClassBase && (declaresVirtual || implementsInterface));
   auto &slots = virtualSlots_[classDecl->name];
   auto &vtableFuncs = vtableFunctions_[classDecl->name];
   if (baseHasVTable) {
@@ -1744,7 +1825,58 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
     }
   }
 
-  hasVirtual = !slots.empty();
+  unsigned vtableSize = static_cast<unsigned>(vtableFuncs.size());
+  if (implementsInterface) {
+    unsigned interfaceEnd =
+        interfaceBaseSlot_ + static_cast<unsigned>(interfaceMethods_.size());
+    if (vtableSize < interfaceEnd) {
+      vtableSize = interfaceEnd;
+      vtableFuncs.resize(vtableSize);
+    }
+
+    std::function<std::string(const std::string &, const std::string &)>
+        findMethodOwner = [&](const std::string &owner,
+                              const std::string &method) -> std::string {
+      auto declaredIt = classDeclaredMethods_.find(owner);
+      if (declaredIt != classDeclaredMethods_.end() &&
+          declaredIt->second.count(method)) {
+        return owner;
+      }
+      auto basesIt = classBaseNames_.find(owner);
+      if (basesIt != classBaseNames_.end() && !basesIt->second.empty()) {
+        return findMethodOwner(basesIt->second, method);
+      }
+      return {};
+    };
+
+    for (const auto &methodName : interfaceMethods_) {
+      auto slotIt = interfaceMethodSlots_.find(methodName);
+      if (slotIt == interfaceMethodSlots_.end()) {
+        continue;
+      }
+      std::string owner = findMethodOwner(classDecl->name, methodName);
+      if (!owner.empty()) {
+        vtableFuncs[interfaceBaseSlot_ + slotIt->second] =
+            owner + "_" + methodName;
+      }
+    }
+  }
+
+  // 派生类重写接口方法时，更新继承来的接口槽位。
+  if (vtableSize > interfaceBaseSlot_) {
+    for (const auto &methodName : methodNames) {
+      auto slotIt = interfaceMethodSlots_.find(methodName);
+      if (slotIt == interfaceMethodSlots_.end()) {
+        continue;
+      }
+      unsigned slot = interfaceBaseSlot_ + slotIt->second;
+      if (slot < vtableFuncs.size()) {
+        vtableFuncs[slot] = classDecl->name + "_" + methodName;
+      }
+    }
+  }
+
+  hasVirtual = hasVirtual || vtableSize > 0;
   const bool prependVptr = hasVirtual && !baseHasVTable;
   llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
   if (prependVptr) {
@@ -1833,7 +1965,7 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
 
   if (hasVirtual) {
     classesWithVTable_.insert(classDecl->name);
-    auto *vtableType = llvm::ArrayType::get(ptrType, slots.size());
+    auto *vtableType = llvm::ArrayType::get(ptrType, vtableSize);
     auto *vtable = new llvm::GlobalVariable(
         *module(), vtableType, true, llvm::GlobalValue::InternalLinkage,
         llvm::Constant::getNullValue(vtableType),
@@ -4405,6 +4537,42 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
         return nullptr;
       }
       args.push_back(argValue);
+    }
+
+    // 接口方法派发：接口指针直接指向实现类对象，按固定接口槽位调用。
+    if (member->virtualDispatch && interfaceNames_.count(className) > 0) {
+      auto methodIt = interfaceMethodSlots_.find(member->member);
+      if (methodIt != interfaceMethodSlots_.end()) {
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *vptr =
+            builder()->CreateLoad(ptrType, thisPtr, "iface.vptr");
+        llvm::Value *slotPtr = builder()->CreateGEP(
+            ptrType, vptr,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                   interfaceBaseSlot_ + methodIt->second),
+            "iface.slot.ptr");
+        llvm::Value *fnPtr =
+            builder()->CreateLoad(ptrType, slotPtr, "iface.fn");
+
+        llvm::Type *returnType = llvm::Type::getVoidTy(context());
+        if (semanticModel_) {
+          auto exprType = semanticModel_->getExpressionType(callExpr.get());
+          if (exprType) {
+            if (llvm::Type *lowered = lowerSemanticType(exprType)) {
+              returnType = lowered;
+            }
+          }
+        }
+        std::vector<llvm::Type *> paramTypes;
+        for (auto *arg : args) {
+          paramTypes.push_back(arg->getType());
+        }
+        auto *fnType = llvm::FunctionType::get(returnType, paramTypes, false);
+        if (returnType->isVoidTy()) {
+          return builder()->CreateCall(fnType, fnPtr, args);
+        }
+        return builder()->CreateCall(fnType, fnPtr, args, "iface.call");
+      }
     }
 
     // 虚方法派发：对象首字段是 vptr，按静态类槽位取实际函数。

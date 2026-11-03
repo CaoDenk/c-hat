@@ -91,6 +91,7 @@ private:
   llvm::Value *generateStructDecl(std::unique_ptr<ast::StructDecl> structDecl);
   void generateDeferredMemberBodies();
   void finalizeVTables();
+  void collectInterfaceInfo(ast::Program &program);
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,
@@ -323,6 +324,14 @@ private:
       vtableFunctions_;
   std::unordered_map<std::string, llvm::GlobalVariable *> vtables_;
   std::unordered_set<std::string> classesWithVTable_;
+
+  // 接口动态派发：接口方法使用固定的全局槽位区域。
+  std::unordered_set<std::string> interfaceNames_;
+  std::unordered_map<std::string, unsigned> interfaceMethodSlots_;
+  std::vector<std::string> interfaceMethods_;
+  unsigned interfaceBaseSlot_ = 0;
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      classDeclaredMethods_;
 
   // 异常处理
   llvm::FunctionCallee personalityFunc_;
