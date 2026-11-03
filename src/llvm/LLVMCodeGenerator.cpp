@@ -1743,10 +1743,19 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   std::vector<std::string> methodNames;
   std::unordered_set<std::string> virtualMethodNames;
   bool declaresVirtual = false;
+  bool hasDestructorDecl = false;
+  bool declaresVirtualDestructor = false;
   for (auto &member : classDecl->members) {
     if (auto *funcDecl = dynamic_cast<ast::FunctionDecl *>(member.get())) {
-      if (funcDecl->name == classDecl->name ||
-          funcDecl->name == "~" + classDecl->name) {
+      if (funcDecl->name == classDecl->name) {
+        continue;
+      }
+      if (funcDecl->name == "~" + classDecl->name) {
+        hasDestructorDecl = true;
+        if (funcDecl->specifiers.find("virtual") != std::string::npos ||
+            funcDecl->specifiers.find("override") != std::string::npos) {
+          declaresVirtualDestructor = true;
+        }
         continue;
       }
       methodNames.push_back(funcDecl->name);
@@ -1787,7 +1796,8 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
   // 非虚基类 + 派生新虚方法/接口会改变基类字段偏移，当前不支持。
   bool hasVirtual =
       baseHasVTable ||
-      (!hasClassBase && (declaresVirtual || implementsInterface));
+      (!hasClassBase &&
+       (declaresVirtual || declaresVirtualDestructor || implementsInterface));
   auto &slots = virtualSlots_[classDecl->name];
   auto &vtableFuncs = vtableFunctions_[classDecl->name];
   if (baseHasVTable) {
@@ -1822,6 +1832,24 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
         vtableFuncs.resize(slot + 1);
       }
       vtableFuncs[slot] = classDecl->name + "_" + methodName;
+    }
+  }
+
+  if (hasVirtual && (declaresVirtualDestructor || slots.count("~") > 0)) {
+    unsigned slot = 0;
+    auto slotIt = slots.find("~");
+    if (slotIt == slots.end()) {
+      slot = static_cast<unsigned>(slots.size());
+      slots["~"] = slot;
+    } else {
+      slot = slotIt->second;
+    }
+    if (vtableFuncs.size() <= slot) {
+      vtableFuncs.resize(slot + 1);
+    }
+    if (hasDestructorDecl) {
+      vtableFuncs[slot] =
+          classDecl->name + "_~" + classDecl->name;
     }
   }
 
@@ -2329,6 +2357,19 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         if (hasDefer) {
           auto *excHandler = getExceptionHandlerGlobal(module());
           builder()->CreateStore(functionPrevHandler, excHandler);
+        }
+
+        if (isDestructor) {
+          auto baseIt = classBaseNames_.find(className);
+          if (baseIt != classBaseNames_.end() && !baseIt->second.empty() &&
+              structTypes_.count(baseIt->second) > 0) {
+            std::string baseDtor =
+                baseIt->second + "_~" + baseIt->second;
+            auto dtorIt = functions_.find(baseDtor);
+            if (dtorIt != functions_.end()) {
+              builder()->CreateCall(dtorIt->second, {thisArg});
+            }
+          }
         }
 
         if (returnType->isVoidTy()) {
@@ -3310,13 +3351,36 @@ llvm::Value *LLVMCodeGenerator::generateDeleteExpr(
     }
   }
 
-  // 类指针：调用 ClassName_~ClassName(this)。
+  // 类指针：虚析构按 vtable 槽位派发，否则调用静态类型析构函数。
   if (!deleteExpr->typeName.empty() && !sliceLen) {
-    std::string dtorName =
-        deleteExpr->typeName + "_~" + deleteExpr->typeName;
-    auto it = functions_.find(dtorName);
-    if (it != functions_.end()) {
-      builder()->CreateCall(it->second, {ptrValue});
+    bool virtualDtor = false;
+    auto slotsIt = virtualSlots_.find(deleteExpr->typeName);
+    if (slotsIt != virtualSlots_.end()) {
+      auto slotIt = slotsIt->second.find("~");
+      if (slotIt != slotsIt->second.end()) {
+        virtualDtor = true;
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *vptr =
+            builder()->CreateLoad(ptrType, ptrValue, "delete.vptr");
+        llvm::Value *slotPtr = builder()->CreateGEP(
+            ptrType, vptr,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
+                                   slotIt->second),
+            "delete.vslot.ptr");
+        llvm::Value *fnPtr =
+            builder()->CreateLoad(ptrType, slotPtr, "delete.vdtor");
+        auto *dtorType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(context()), {ptrType}, false);
+        builder()->CreateCall(dtorType, fnPtr, {ptrValue});
+      }
+    }
+    if (!virtualDtor) {
+      std::string dtorName =
+          deleteExpr->typeName + "_~" + deleteExpr->typeName;
+      auto it = functions_.find(dtorName);
+      if (it != functions_.end()) {
+        builder()->CreateCall(it->second, {ptrValue});
+      }
     }
   }
 

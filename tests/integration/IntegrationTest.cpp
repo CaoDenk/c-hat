@@ -1024,6 +1024,34 @@ TEST_CASE("Integration: static members", "[integration][class]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: destructor chains", "[integration][class][raii]") {
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class A { public virtual ~A() { value = value + 1; } }\n"
+      "class B : A { public ~B() { value = value + 10; } }\n"
+      "class C : B { public ~C() { value = value + 100; } }\n"
+      "func main() -> int {\n"
+      "    A^ a = new C();\n"
+      "    delete a;\n"
+      "    return value;\n"
+      "}\n") == 111);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class A {\n"
+      "    public A() { }\n"
+      "    public ~A() { value = value + 1; }\n"
+      "}\n"
+      "class B : A {\n"
+      "    public B() : base() { }\n"
+      "    public ~B() { value = value + 10; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    { B b = B(); }\n"
+      "    return value;\n"
+      "}\n") == 11);
+}
+
 TEST_CASE("Integration: explicit delete calls destructor", "[integration][class]") {
   REQUIRE(compileAndRun(
       "class Box { int value; Box(int v) { value = v; } }\n"

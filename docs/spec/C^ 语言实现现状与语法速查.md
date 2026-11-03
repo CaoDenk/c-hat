@@ -312,7 +312,8 @@ extern "C" {
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
 - 单继承：基类字段布局、`: base(...)`、`override`、继承方法调用；`virtual` / `override` 方法通过 vptr + vtable 动态派发；接口指针按固定接口槽位动态派发
 - `static` 成员变量与静态方法：`Counter.count` / `Counter.method()`（本次修复）
-- 显式 `delete` 调用析构函数
+- 显式 `delete` 调用析构函数；`virtual ~ClassName()` 通过 vtable 派发
+- 派生类析构函数在函数体结束后自动调用基类析构函数
 - 栈上 class 值在块退出、return、throw 时自动析构；`late` 对象整体赋值后也注册析构
 - 固定数组元素按逆序自动析构；`[C(x), ...]` 数组字面量与 lambda 捕获已区分
 - `new C[n]` 对带默认构造的 class 逐元素构造，`delete[]` 逐元素析构
@@ -376,7 +377,7 @@ extern "C" {
 - 暂不支持从非虚基类在派生类新增虚方法（会改变基类字段偏移）；`override` 单独写在非虚基类方法上仍按静态派发。
 - 接口方法已支持动态派发：`Drawable^ d = new Circle(); d->draw()` 按接口槽位调用实现类方法。
 - 接口变量当前需使用指针形式 `I^`；暂不支持接口 fat pointer / 非指针接口值。
-- 虚析构、接口默认实现和跨模块接口 ABI 尚未完善。
+- 虚析构已支持；接口默认实现和跨模块接口 ABI 尚未完善。
 - 派生类构造函数支持 `: base(...)`（当前支持 0 或 1 个参数）；基类字段会展开到派生类布局中。
 - `static` 字段初始化目前只支持字面量；静态方法不能访问实例成员（语义层会检查）。
 - 栈上 class 值、`late` 对象、固定数组元素已支持自动析构；defer/析构统一 LIFO；`new T[n]` 元素析构仍未实现。
@@ -395,7 +396,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 31 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 59 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 
