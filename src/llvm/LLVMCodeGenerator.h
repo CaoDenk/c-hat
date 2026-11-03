@@ -102,6 +102,8 @@ private:
                          const std::string &interfaceName) const;
   std::vector<int>
   exceptionTagsForCatch(const ast::CatchStmt &catchStmt) const;
+  std::vector<std::string>
+  exceptionClassNamesForCatch(const ast::CatchStmt &catchStmt) const;
   llvm::Value *
   generateClassMemberFunction(std::unique_ptr<ast::FunctionDecl> funcDecl,
                               const std::string &className, bool isConstructor,

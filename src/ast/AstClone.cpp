@@ -283,6 +283,8 @@ std::unique_ptr<Statement> cloneStmtImpl(const Statement *stmt,
     }
     auto cloned = std::make_unique<ThrowStmt>(std::move(expr));
     cloned->exceptionTag = s->exceptionTag;
+    cloned->exceptionTypeName = s->exceptionTypeName;
+    cloned->exceptionTypeIsPointer = s->exceptionTypeIsPointer;
     return cloned;
   }
   case NodeType::DeferStmt: {

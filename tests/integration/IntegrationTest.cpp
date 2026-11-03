@@ -1207,6 +1207,28 @@ TEST_CASE("Integration: catch base class and interface",
       "    catch (I^ e) { return 42; }\n"
       "    catch (...) { return 1; }\n"
       "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class A { public virtual func value() -> int { return 1; } }\n"
+      "class B : A {\n"
+      "    public override func value() -> int { return 2; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    A^ a = new B();\n"
+      "    try { throw a; }\n"
+      "    catch (B^ e) { return 42; }\n"
+      "    catch (...) { return 1; }\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "interface I { func value() -> int; }\n"
+      "class C : I { public func value() -> int { return 42; } }\n"
+      "func main() -> int {\n"
+      "    I^ i = new C();\n"
+      "    try { throw i; }\n"
+      "    catch (C^ e) { return 42; }\n"
+      "    catch (...) { return 1; }\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: catch fallthrough and rethrow", "[integration][exception]") {

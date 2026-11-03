@@ -389,6 +389,7 @@ extern "C" {
 
 - 当前用 `setjmp` / `longjmp` 传播异常，不是文档里描述的零开销表驱动模型。
 - `catch (T e)` 按书写顺序匹配：数值类型精确匹配；类指针支持派生类到基类匹配；接口指针支持实现类/子接口匹配；`catch (...)` 接受所有异常。
+- 类/接口指针抛出时记录对象 vtable；带 vtable 的对象按动态类型匹配，不再局限于 throw 的静态指针类型。无 vtable 的类仍退化为静态类型标签。
 - 仍不做隐式数值转换匹配（例如 `throw 1` 不会命中 `catch (long e)`）。
 - 含 `defer` 的函数会安装函数级清理帧。throw 所在函数以及异常穿过的、含 defer 的中间函数会执行已注册的 defer（LIFO）；运行时 flag 避免执行未进入分支的 defer。
 - `defer` 已按块级作用域执行：正常块退出、return、throw 会执行本层 defer；循环体内 defer 每轮执行。

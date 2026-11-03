@@ -104,6 +104,14 @@ llvm::GlobalVariable *getExceptionTypeGlobal(llvm::Module *module) {
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(module->getContext()), 0));
 }
 
+llvm::GlobalVariable *getExceptionVTableGlobal(llvm::Module *module) {
+  return getOrCreateGlobal(module, "ch_exception_vtable",
+                           llvm::PointerType::getUnqual(module->getContext()),
+                           llvm::ConstantPointerNull::get(
+                               llvm::PointerType::getUnqual(
+                                   module->getContext())));
+}
+
 llvm::GlobalVariable *getExceptionHandlerGlobal(llvm::Module *module) {
   return getOrCreateGlobal(
       module, "c_hat_exception_handler",
@@ -427,6 +435,28 @@ std::vector<int> LLVMCodeGenerator::exceptionTagsForCatch(
     }
   }
   return tags;
+}
+
+std::vector<std::string> LLVMCodeGenerator::exceptionClassNamesForCatch(
+    const ast::CatchStmt &catchStmt) const {
+  std::vector<std::string> names;
+  if (catchStmt.exceptionTypeName.empty()) {
+    return names;
+  }
+  if (catchStmt.exceptionTypeIsInterface) {
+    for (const auto &[className, _] : classBaseNames_) {
+      if (classHasInterface(className, catchStmt.exceptionTypeName)) {
+        names.push_back(className);
+      }
+    }
+  } else {
+    for (const auto &[className, _] : classBaseNames_) {
+      if (classIsSubclass(className, catchStmt.exceptionTypeName)) {
+        names.push_back(className);
+      }
+    }
+  }
+  return names;
 }
 
 void LLVMCodeGenerator::generate(std::unique_ptr<ast::Program> program) {
@@ -7091,6 +7121,7 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
   llvm::Function *func = builder()->GetInsertBlock()->getParent();
   auto *excValue = getExceptionValueGlobal(module());
   auto *excType = getExceptionTypeGlobal(module());
+  auto *excVTable = getExceptionVTableGlobal(module());
   auto *excHandler = getExceptionHandlerGlobal(module());
   llvm::PointerType *ptrTy = llvm::PointerType::getUnqual(context());
   llvm::Type *i64Ty = llvm::Type::getInt64Ty(context());
@@ -7228,6 +7259,34 @@ LLVMCodeGenerator::generateTryStmt(std::unique_ptr<ast::TryStmt> tryStmt) {
           matches = matches ? builder()->CreateOr(matches, cmp, "catch.match")
                             : cmp;
         }
+
+        // 类/接口指针异常带有对象 vtable，用动态类型匹配基类/派生类。
+        auto catchClasses = exceptionClassNamesForCatch(catchStmt);
+        bool hasVTableCandidates = false;
+        for (const auto &className : catchClasses) {
+          if (vtables_.count(className) > 0) {
+            hasVTableCandidates = true;
+            break;
+          }
+        }
+        if (hasVTableCandidates) {
+          llvm::Value *throwVTable =
+              builder()->CreateLoad(ptrTy, excVTable, "catch.vtable");
+          for (const auto &className : catchClasses) {
+            auto vtableIt = vtables_.find(className);
+            if (vtableIt == vtables_.end()) {
+              continue;
+            }
+            llvm::Value *vtablePtr = llvm::ConstantExpr::getBitCast(
+                vtableIt->second, ptrTy);
+            llvm::Value *cmp = builder()->CreateICmpEQ(
+                throwVTable, vtablePtr, "catch.vtable.match");
+            matches = matches
+                          ? builder()->CreateOr(matches, cmp,
+                                                "catch.vtable.or")
+                          : cmp;
+          }
+        }
         builder()->CreateCondBr(matches, bodyBB, nextBB);
       }
 
@@ -7307,6 +7366,27 @@ llvm::Value *LLVMCodeGenerator::generateThrowStmt(
         llvm::ConstantInt::get(llvm::Type::getInt64Ty(context()),
                                throwStmt->exceptionTag),
         excType);
+
+    // 类/接口指针异常记录对象 vtable，用于 catch 的动态类型匹配。
+    llvm::Value *dynamicVTable =
+        llvm::ConstantPointerNull::get(ptrTy);
+    if (throwStmt->exceptionTypeIsPointer &&
+        !throwStmt->exceptionTypeName.empty() &&
+        (interfaceNames_.count(throwStmt->exceptionTypeName) > 0 ||
+         classesWithVTable_.count(throwStmt->exceptionTypeName) > 0)) {
+      llvm::Value *dataPtr = value;
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(value)) {
+        if (alloca->getAllocatedType()->isPointerTy()) {
+          dataPtr = builder()->CreateLoad(ptrTy, alloca, "throw.iface.data");
+        }
+      }
+      if (dataPtr->getType()->isPointerTy()) {
+        dynamicVTable =
+            builder()->CreateLoad(ptrTy, dataPtr, "throw.vtable");
+      }
+    }
+    auto *excVTable = getExceptionVTableGlobal(module());
+    builder()->CreateStore(dynamicVTable, excVTable);
   }
 
   // throw 只清理到最近 try 的清理起点；catch 之外的 defer/析构
