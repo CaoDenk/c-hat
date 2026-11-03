@@ -840,6 +840,27 @@ normal_var_path:
         }
       }
 
+      // 实现类指针初始化接口值：构造 {data, vtable}。
+      if (semanticType && semanticType->isInterface() &&
+          initValue->getType()->isPointerTy() && varType->isStructTy()) {
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *dataPtr = initValue;
+        auto *allocaValue = llvm::dyn_cast<llvm::AllocaInst>(initValue);
+        if (allocaValue && allocaValue->getAllocatedType()->isPointerTy()) {
+          dataPtr = builder()->CreateLoad(ptrType, allocaValue,
+                                          "iface.value.data");
+        }
+        llvm::Value *vptr =
+            builder()->CreateLoad(ptrType, dataPtr, "iface.value.vptr");
+        llvm::Value *fatValue =
+            llvm::UndefValue::get(varType);
+        fatValue = builder()->CreateInsertValue(fatValue, dataPtr, 0,
+                                                "iface.value");
+        fatValue = builder()->CreateInsertValue(fatValue, vptr, 1,
+                                                "iface.value.table");
+        initValue = fatValue;
+      }
+
       // 如果初始化值的类型与变量类型不匹配，进行类型转换
       if (initValue->getType() != varType) {
         if (varType->isFloatingPointTy() &&
@@ -2433,6 +2454,19 @@ LLVMCodeGenerator::createEntryAlloca(llvm::Type *type,
   return entryBuilder.CreateAlloca(type, nullptr, name);
 }
 
+llvm::StructType *LLVMCodeGenerator::getOrCreateInterfaceFatType(
+    const std::string &interfaceName) {
+  auto it = interfaceFatTypes_.find(interfaceName);
+  if (it != interfaceFatTypes_.end()) {
+    return it->second;
+  }
+  llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+  auto *fatType = llvm::StructType::create(
+      context(), {ptrType, ptrType}, interfaceName + "__fat");
+  interfaceFatTypes_[interfaceName] = fatType;
+  return fatType;
+}
+
 llvm::StructType *
 LLVMCodeGenerator::getOrCreateSliceType(llvm::Type *elementType) {
   if (!elementType) {
@@ -2635,11 +2669,7 @@ llvm::Type *LLVMCodeGenerator::lowerSemanticType(
   }
   if (auto *interfaceType =
           dynamic_cast<types::InterfaceType *>(type.get())) {
-    auto it = structTypes_.find(interfaceType->getName());
-    if (it != structTypes_.end()) {
-      return it->second;
-    }
-    return nullptr;
+    return getOrCreateInterfaceFatType(interfaceType->getName());
   }
   if (auto *functionType = dynamic_cast<types::FunctionType *>(type.get())) {
     llvm::Type *returnType = lowerSemanticType(functionType->getReturnType());
@@ -3490,6 +3520,8 @@ llvm::Type *LLVMCodeGenerator::generateType(ast::Type *type) {
     auto structIt = structTypes_.find(namedType->name);
     if (structIt != structTypes_.end()) {
       llvmType = structIt->second;
+    } else if (interfaceNames_.count(namedType->name) > 0) {
+      llvmType = getOrCreateInterfaceFatType(namedType->name);
     } else {
       // 如果不是结构体类型，暂时使用 int 作为默认类型
       llvmType = llvm::Type::getInt32Ty(context());
@@ -4012,6 +4044,34 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
       }
     }
 
+    // 实现类指针赋给接口值：构造 {data, vtable}。
+    if (semanticModel_ && targetType->isStructTy() &&
+        rhs->getType()->isPointerTy()) {
+      auto semanticLeft = semanticModel_->getExpressionType(leftExpr);
+      if (semanticLeft && semanticLeft->isReference()) {
+        auto ref = std::dynamic_pointer_cast<types::ReferenceType>(semanticLeft);
+        semanticLeft = ref ? ref->getBaseType() : nullptr;
+      }
+      if (semanticLeft && semanticLeft->isInterface()) {
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *dataPtr = rhs;
+        if (auto *rhsAlloca = llvm::dyn_cast<llvm::AllocaInst>(rhs)) {
+          if (rhsAlloca->getAllocatedType()->isPointerTy()) {
+            dataPtr = builder()->CreateLoad(ptrType, rhsAlloca,
+                                            "iface.assign.data");
+          }
+        }
+        llvm::Value *vptr =
+            builder()->CreateLoad(ptrType, dataPtr, "iface.assign.vptr");
+        llvm::Value *fatValue = llvm::UndefValue::get(targetType);
+        fatValue = builder()->CreateInsertValue(fatValue, dataPtr, 0,
+                                                "iface.assign");
+        fatValue = builder()->CreateInsertValue(fatValue, vptr, 1,
+                                                "iface.assign.table");
+        rhs = fatValue;
+      }
+    }
+
     if (rhs->getType() != targetType) {
       if (targetType->isFloatingPointTy() && rhs->getType()->isIntegerTy()) {
         rhs = builder()->CreateSIToFP(rhs, targetType, "assign.cast");
@@ -4387,6 +4447,25 @@ llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
     valueType = alloca->getAllocatedType();
   }
 
+  // 实现类指针 -> 接口值 {data, vtable}。
+  if (paramType->isStructTy() && valueType->isPointerTy()) {
+    auto *paramStruct = llvm::dyn_cast<llvm::StructType>(paramType);
+    if (paramStruct && paramStruct->getName().ends_with("__fat")) {
+      llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+      llvm::Value *dataPtr = arg;
+      if (alloca && alloca->getAllocatedType()->isPointerTy()) {
+        dataPtr = builder()->CreateLoad(ptrType, alloca, "call.iface.data");
+      }
+      llvm::Value *vptr =
+          builder()->CreateLoad(ptrType, dataPtr, "call.iface.vptr");
+      llvm::Value *fatValue = llvm::UndefValue::get(paramType);
+      fatValue = builder()->CreateInsertValue(fatValue, dataPtr, 0,
+                                              "call.iface");
+      return builder()->CreateInsertValue(fatValue, vptr, 1,
+                                          "call.iface.table");
+    }
+  }
+
   // 按值传固定数组：从 alloca 加载完整数组值。
   if (alloca && paramType->isArrayTy() && valueType == paramType) {
     return builder()->CreateLoad(paramType, alloca, "call.array.load");
@@ -4627,8 +4706,25 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
       auto methodIt = interfaceMethodSlots_.find(member->member);
       if (methodIt != interfaceMethodSlots_.end()) {
         llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
-        llvm::Value *vptr =
-            builder()->CreateLoad(ptrType, thisPtr, "iface.vptr");
+        llvm::Value *vptr = nullptr;
+        if (member->interfaceValueDispatch) {
+          auto fatIt = interfaceFatTypes_.find(className);
+          if (fatIt == interfaceFatTypes_.end()) {
+            error("Interface fat type not found: " + className);
+            return nullptr;
+          }
+          llvm::StructType *fatType = fatIt->second;
+          llvm::Value *dataField =
+              builder()->CreateStructGEP(fatType, thisPtr, 0, "iface.data.ptr");
+          llvm::Value *tableField =
+              builder()->CreateStructGEP(fatType, thisPtr, 1, "iface.table.ptr");
+          llvm::Value *data =
+              builder()->CreateLoad(ptrType, dataField, "iface.data");
+          vptr = builder()->CreateLoad(ptrType, tableField, "iface.vptr");
+          args[0] = data;
+        } else {
+          vptr = builder()->CreateLoad(ptrType, thisPtr, "iface.vptr");
+        }
         llvm::Value *slotPtr = builder()->CreateGEP(
             ptrType, vptr,
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context()),
@@ -6237,6 +6333,30 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
         if (alloca->getAllocatedType() == returnType) {
           retVal = builder()->CreateLoad(returnType, alloca, "ret.struct");
         }
+      }
+    }
+
+    // 实现类指针返回接口值：构造 {data, vtable}。
+    if (returnType->isStructTy() && retVal->getType()->isPointerTy()) {
+      auto *structType = llvm::dyn_cast<llvm::StructType>(returnType);
+      if (structType &&
+          structType->getName().ends_with("__fat")) {
+        llvm::Type *ptrType = llvm::PointerType::get(context(), 0);
+        llvm::Value *dataPtr = retVal;
+        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(retVal)) {
+          if (alloca->getAllocatedType()->isPointerTy()) {
+            dataPtr = builder()->CreateLoad(ptrType, alloca,
+                                            "ret.iface.data");
+          }
+        }
+        llvm::Value *vptr =
+            builder()->CreateLoad(ptrType, dataPtr, "ret.iface.vptr");
+        llvm::Value *fatValue = llvm::UndefValue::get(returnType);
+        fatValue = builder()->CreateInsertValue(fatValue, dataPtr, 0,
+                                                "ret.iface");
+        fatValue = builder()->CreateInsertValue(fatValue, vptr, 1,
+                                                "ret.iface.table");
+        retVal = fatValue;
       }
     }
 

@@ -23,6 +23,7 @@ public:
     cloned->memberIndex = memberIndex;
     cloned->resolvedGlobalName = resolvedGlobalName;
     cloned->virtualDispatch = virtualDispatch;
+    cloned->interfaceValueDispatch = interfaceValueDispatch;
     return cloned;
   }
 
@@ -33,6 +34,7 @@ public:
   unsigned memberIndex = 0;
   std::string resolvedGlobalName;
   bool virtualDispatch = false;
+  bool interfaceValueDispatch = false;
 };
 
 } // namespace ast

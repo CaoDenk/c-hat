@@ -1024,6 +1024,28 @@ TEST_CASE("Integration: static members", "[integration][class]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: interface values", "[integration][class][interface]") {
+  REQUIRE(compileAndRun(
+      "interface I { func value() -> int; }\n"
+      "class C : I { public func value() -> int { return 1; } }\n"
+      "class D : I { public func value() -> int { return 42; } }\n"
+      "func main() -> int {\n"
+      "    I c = new C();\n"
+      "    c = new D();\n"
+      "    return c.value();\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "interface I { func value() -> int; }\n"
+      "class C : I { public func value() -> int { return 42; } }\n"
+      "func take(I i) -> int { return i.value(); }\n"
+      "func make() -> I { return new C(); }\n"
+      "func main() -> int {\n"
+      "    I c = make();\n"
+      "    return take(c) + take(new C()) - 42;\n"
+      "}\n") == 42);
+}
+
 TEST_CASE("Integration: interface default methods",
           "[integration][class][interface]") {
   REQUIRE(compileAndRun(

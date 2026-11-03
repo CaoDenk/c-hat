@@ -243,6 +243,8 @@ private:
   // 数组/切片辅助：同一种 LLVM 元素类型复用同一个切片结构体，
   // 并记录元素类型，避免从名字猜类型。
   llvm::StructType *getOrCreateSliceType(llvm::Type *elementType);
+  llvm::StructType *
+  getOrCreateInterfaceFatType(const std::string &interfaceName);
   llvm::Type *getSliceElementType(llvm::StructType *sliceType);
   bool isSliceStructType(llvm::Type *type);
   llvm::Type *getLiteralViewType();
@@ -328,6 +330,7 @@ private:
   // 接口动态派发：接口方法使用固定的全局槽位区域。
   std::unordered_set<std::string> interfaceNames_;
   std::unordered_map<std::string, unsigned> interfaceMethodSlots_;
+  std::unordered_map<std::string, llvm::StructType *> interfaceFatTypes_;
   std::vector<std::string> interfaceMethods_;
   unsigned interfaceBaseSlot_ = 0;
   std::unordered_map<std::string, std::unordered_set<std::string>>

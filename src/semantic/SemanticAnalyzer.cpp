@@ -4829,6 +4829,7 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
   }
 
   // 如果对象是指针类型，自动解引用
+  bool wasPointer = objectType->isPointer();
   if (objectType->isPointer()) {
     auto ptrType = std::dynamic_pointer_cast<types::PointerType>(objectType);
     if (ptrType) {
@@ -4884,6 +4885,7 @@ SemanticAnalyzer::analyzeMemberExpr(ast::MemberExpr *memberExpr) {
       const auto *method = interfaceType->getMethod(memberExpr->member);
       memberExpr->structName = interfaceType->getName();
       memberExpr->virtualDispatch = true;
+      memberExpr->interfaceValueDispatch = !wasPointer;
       return method->returnType;
     }
     error("Method not found in interface: " + memberExpr->member,
@@ -6167,6 +6169,20 @@ bool SemanticAnalyzer::isTypeCompatible(
   // 精确匹配
   if (expected->toString() == actual->toString()) {
     return true;
+  }
+
+  // 实现类指针可隐式转换为接口值。
+  if (expected->isInterface() && actual->isPointer()) {
+    auto actualPtr = std::dynamic_pointer_cast<types::PointerType>(actual);
+    auto pointee = actualPtr ? actualPtr->getPointeeType() : nullptr;
+    if (pointee && pointee->isClass()) {
+      auto expectedInterface =
+          std::dynamic_pointer_cast<types::InterfaceType>(expected);
+      auto classType = std::dynamic_pointer_cast<types::ClassType>(pointee);
+      if (expectedInterface && classType) {
+        return classType->implements(*expectedInterface);
+      }
+    }
   }
 
   // 指针子类型：允许实现类指针赋给接口指针，但不能去掉底层只读。
