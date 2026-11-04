@@ -1122,6 +1122,40 @@ TEST_CASE("Integration: prvalue construction elision",
       "    h = f.make();\n"
       "    return value;\n"
       "}\n") == 11);
+
+  REQUIRE(compileAndRun(
+      "class Holder { public int x; public Holder() { x = 0; } }\n"
+      "class A {\n"
+      "    public A() { }\n"
+      "    public virtual func make() -> Holder {\n"
+      "        Holder h = Holder(); h.x = 1; return h;\n"
+      "    }\n"
+      "}\n"
+      "class B : A {\n"
+      "    public B() : base() { }\n"
+      "    public override func make() -> Holder {\n"
+      "        Holder h = Holder(); h.x = 42; return h;\n"
+      "    }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    A^ a = new B();\n"
+      "    Holder h = a->make();\n"
+      "    return h.x;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "class Holder { public int x; public Holder() { x = 0; } }\n"
+      "interface I { func make() -> Holder; }\n"
+      "class C : I {\n"
+      "    public func make() -> Holder {\n"
+      "        Holder h = Holder(); h.x = 42; return h;\n"
+      "    }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    I^ i = new C();\n"
+      "    Holder h = i->make();\n"
+      "    return h.x;\n"
+      "}\n") == 42);
 }
 
 TEST_CASE("Integration: class field initializers", "[integration][class]") {

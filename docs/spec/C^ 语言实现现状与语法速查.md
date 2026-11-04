@@ -296,6 +296,7 @@ extern "C" {
 - `T x = T(...)` 直接构造到 `x`；`late T t; t = T(...)` 首次赋值直接构造到预留存储
 - 顶层函数和非虚 class 方法返回 class 时使用隐藏 sret 返回槽；`T x = factory()`、`late T t; t = factory()` 可直接构造到目标存储
 - 非虚 class 方法的 sret 返回也支持直接传入变量或 late 存储
+- virtual/override 方法和接口方法返回 class 时也使用 sret 间接调用
 - `return T(...)` 在 sret 函数中直接构造到返回槽
 - `sizeof(Type)`：编译期返回 `long` 类型大小（含固定数组/POD struct）
 - 数组字面量 `[...]`：固定数组上下文生成真正的数组值；切片上下文生成视图
@@ -359,7 +360,7 @@ extern "C" {
 - 元组比较、命名元组字段访问、元组整体赋值仍未完整实现。
 - `new T[n]` 对带默认构造的 class 逐元素构造，`delete[]` 逐元素析构；POD 元素仍只分配原始内存。
 - `late int[N] a;` 必须通过整体赋值或 `out T&` 初始化；逐元素写入不视为整体初始化。
-- class 返回 sret ABI 覆盖顶层函数和非虚 class 方法；virtual/override 方法仍走聚合返回。
+- class 返回 sret ABI 覆盖顶层函数、class 方法和接口/virtual 派发；方法返回值赋给变量时 virtual/interface 路径仍可能使用临时槽。
 - 拷贝/移动构造函数尚未实现；左值 class 复制目前仍是逐值/按位复制。
 - `[value; N]` 的 N 目前只支持整数字面量；`const int N` 作为长度后续支持。
 - 引用参数/局部引用/`out T&` 已端到端可用（标量、固定数组）。

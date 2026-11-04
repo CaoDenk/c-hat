@@ -722,10 +722,6 @@ bool LLVMCodeGenerator::functionUsesSret(
   if (funcDecl->specifiers.find("extern") != std::string::npos) {
     return false;
   }
-  if (funcDecl->specifiers.find("virtual") != std::string::npos ||
-      funcDecl->specifiers.find("override") != std::string::npos) {
-    return false;
-  }
   if (!funcDecl->returnType) {
     return false;
   }
@@ -768,6 +764,9 @@ bool LLVMCodeGenerator::emitSretCallInto(ast::CallExpr *call,
   std::string functionName;
 
   if (auto *member = dynamic_cast<ast::MemberExpr *>(call->callee.get())) {
+    if (member->virtualDispatch) {
+      return false;
+    }
     std::string className = member->structName;
     if (className.empty()) {
       className = currentClassName_;
@@ -5348,19 +5347,35 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             builder()->CreateLoad(ptrType, slotPtr, "iface.fn");
 
         llvm::Type *returnType = llvm::Type::getVoidTy(context());
+        bool interfaceSret = false;
         if (semanticModel_) {
           auto exprType = semanticModel_->getExpressionType(callExpr.get());
           if (exprType) {
+            interfaceSret = exprType->isClass();
             if (llvm::Type *lowered = lowerSemanticType(exprType)) {
               returnType = lowered;
             }
           }
         }
         std::vector<llvm::Type *> paramTypes;
+        if (interfaceSret) {
+          paramTypes.push_back(llvm::PointerType::getUnqual(context()));
+        }
         for (auto *arg : args) {
           paramTypes.push_back(arg->getType());
         }
-        auto *fnType = llvm::FunctionType::get(returnType, paramTypes, false);
+        auto *fnType = llvm::FunctionType::get(
+            interfaceSret ? llvm::Type::getVoidTy(context()) : returnType,
+            paramTypes, false);
+        if (interfaceSret) {
+          llvm::Value *slot =
+              createEntryAlloca(returnType, "iface.sret");
+          std::vector<llvm::Value *> sretArgs;
+          sretArgs.push_back(slot);
+          sretArgs.insert(sretArgs.end(), args.begin(), args.end());
+          builder()->CreateCall(fnType, fnPtr, sretArgs);
+          return builder()->CreateLoad(returnType, slot, "iface.sret.value");
+        }
         if (returnType->isVoidTy()) {
           return builder()->CreateCall(fnType, fnPtr, args);
         }
@@ -5403,6 +5418,20 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             }
           }
           if (signature) {
+            std::string signatureName = signature->getName().str();
+            auto sretTypeIt = sretReturnTypes_.find(signatureName);
+            if (sretFunctions_.count(signatureName) > 0 &&
+                sretTypeIt != sretReturnTypes_.end()) {
+              llvm::Value *slot =
+                  createEntryAlloca(sretTypeIt->second, "vcall.sret");
+              std::vector<llvm::Value *> sretArgs;
+              sretArgs.push_back(slot);
+              sretArgs.insert(sretArgs.end(), args.begin(), args.end());
+              builder()->CreateCall(signature->getFunctionType(), fnPtr,
+                                    sretArgs);
+              return builder()->CreateLoad(sretTypeIt->second, slot,
+                                           "vcall.sret.value");
+            }
             if (signature->getReturnType()->isVoidTy()) {
               return builder()->CreateCall(signature->getFunctionType(), fnPtr,
                                            args);
