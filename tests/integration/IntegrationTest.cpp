@@ -1104,6 +1104,24 @@ TEST_CASE("Integration: prvalue construction elision",
       "    Holder h = f.make();\n"
       "    return value;\n"
       "}\n") == 11);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder {\n"
+      "    public Part p;\n"
+      "    public Holder() { value = value + 10; }\n"
+      "}\n"
+      "class Factory {\n"
+      "    public Factory() { }\n"
+      "    public func make() -> Holder { return Holder(); }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Factory f = Factory();\n"
+      "    late Holder h;\n"
+      "    h = f.make();\n"
+      "    return value;\n"
+      "}\n") == 11);
 }
 
 TEST_CASE("Integration: class field initializers", "[integration][class]") {

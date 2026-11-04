@@ -84,6 +84,8 @@ private:
                             const std::string &functionName,
                             std::vector<llvm::Value *> args,
                             llvm::Value *destination = nullptr);
+  bool emitSretCallInto(ast::CallExpr *call, llvm::Value *destination,
+                        llvm::Type *destinationType);
   llvm::Value *
   generateGlobalVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   llvm::Value *generateTupleDestructuringDecl(

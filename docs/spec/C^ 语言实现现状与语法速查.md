@@ -294,7 +294,8 @@ extern "C" {
 - 顶层 `var` 全局变量支持字面量初始化、读取和赋值
 - `late`：仅限局部变量、必须有显式类型、不能带初始化器；`late let int x;` 通过 out 首次初始化；初始化检查是变量级
 - `T x = T(...)` 直接构造到 `x`；`late T t; t = T(...)` 首次赋值直接构造到预留存储
-- 顶层函数和非虚 class 方法返回 class 时使用隐藏 sret 返回槽；`late T t; t = factory()` 可直接构造到 `t`
+- 顶层函数和非虚 class 方法返回 class 时使用隐藏 sret 返回槽；`T x = factory()`、`late T t; t = factory()` 可直接构造到目标存储
+- 非虚 class 方法的 sret 返回也支持直接传入变量或 late 存储
 - `return T(...)` 在 sret 函数中直接构造到返回槽
 - `sizeof(Type)`：编译期返回 `long` 类型大小（含固定数组/POD struct）
 - 数组字面量 `[...]`：固定数组上下文生成真正的数组值；切片上下文生成视图

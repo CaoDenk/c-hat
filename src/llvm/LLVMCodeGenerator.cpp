@@ -756,6 +756,94 @@ llvm::Value *LLVMCodeGenerator::emitSretCall(
   return builder()->CreateLoad(returnType, slot, "sret.value");
 }
 
+bool LLVMCodeGenerator::emitSretCallInto(ast::CallExpr *call,
+                                          llvm::Value *destination,
+                                          llvm::Type *destinationType) {
+  if (!call || !destination || !destinationType ||
+      !destinationType->isStructTy()) {
+    return false;
+  }
+
+  llvm::Function *function = nullptr;
+  std::string functionName;
+
+  if (auto *member = dynamic_cast<ast::MemberExpr *>(call->callee.get())) {
+    std::string className = member->structName;
+    if (className.empty()) {
+      className = currentClassName_;
+    }
+    if (className.empty()) {
+      return false;
+    }
+    std::string methodName = className + "_" + member->member;
+    auto it = functions_.find(methodName);
+    std::string ownerClass = className;
+    while (it == functions_.end()) {
+      auto baseIt = classBaseNames_.find(ownerClass);
+      if (baseIt == classBaseNames_.end() || baseIt->second.empty()) {
+        break;
+      }
+      ownerClass = baseIt->second;
+      methodName = ownerClass + "_" + member->member;
+      it = functions_.find(methodName);
+    }
+    if (it == functions_.end() || sretFunctions_.count(it->first) == 0) {
+      return false;
+    }
+    function = it->second;
+    functionName = it->first;
+
+    llvm::Value *object = generateExpression(std::move(member->object));
+    if (!object) {
+      return false;
+    }
+    llvm::Value *thisPtr = object;
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(object)) {
+      if (alloca->getAllocatedType()->isStructTy()) {
+        thisPtr = alloca;
+      } else if (alloca->getAllocatedType()->isPointerTy()) {
+        thisPtr = builder()->CreateLoad(alloca->getAllocatedType(), alloca,
+                                        "sret.this.load");
+      }
+    } else if (object->getType()->isStructTy()) {
+      llvm::AllocaInst *tmp =
+          createEntryAlloca(object->getType(), "sret.this");
+      builder()->CreateStore(object, tmp);
+      thisPtr = tmp;
+    }
+
+    std::vector<llvm::Value *> args;
+    args.push_back(thisPtr);
+    for (auto &arg : call->args) {
+      llvm::Value *value = generateExpression(std::move(arg));
+      if (!value) {
+        return false;
+      }
+      args.push_back(value);
+    }
+    args = coerceCallArguments(function, args, 1);
+    return emitSretCall(function, functionName, args, destination) != nullptr;
+  }
+
+  functionName = call->resolvedMangledName;
+  auto it = functions_.find(functionName);
+  if (it == functions_.end() || sretFunctions_.count(functionName) == 0) {
+    return false;
+  }
+  function = it->second;
+
+  std::vector<llvm::Value *> args;
+  for (auto &arg : call->args) {
+    llvm::Value *value = generateExpression(std::move(arg));
+    if (!value) {
+      return false;
+    }
+    args.push_back(value);
+  }
+  args = coerceCallArguments(function, args, 1);
+  return emitSretCall(function, functionName, args, destination) != nullptr;
+}
+
 bool LLVMCodeGenerator::emitConstructorInto(ast::CallExpr *call,
                                              llvm::Value *dest,
                                              llvm::Type *destType) {
@@ -973,20 +1061,10 @@ normal_var_path:
   // 返回值使用 sret 的工厂调用：直接构造到目标存储。
   if (varDecl->initializer && varType->isStructTy()) {
     if (auto *call = dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
-      std::string targetName = call->resolvedMangledName;
-      auto fnIt = functions_.find(targetName);
-      if (fnIt != functions_.end() &&
-          sretFunctions_.count(targetName) > 0) {
-        std::vector<llvm::Value *> callArgs;
-        for (auto &arg : call->args) {
-          callArgs.push_back(generateExpression(std::move(arg)));
-        }
-        callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
-        if (emitSretCall(fnIt->second, targetName, callArgs, alloca)) {
-          namedValues_[varDecl->name] = alloca;
-          maybeRegisterDestructor(varDecl.get(), alloca);
-          return alloca;
-        }
+      if (emitSretCallInto(call, alloca, varType)) {
+        namedValues_[varDecl->name] = alloca;
+        maybeRegisterDestructor(varDecl.get(), alloca);
+        return alloca;
       }
     }
   }
@@ -4500,21 +4578,10 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
             lateUninitialized_.erase(lateIt);
             return lhsPtr;
           }
-          if (targetType && targetType->isStructTy()) {
-            std::string targetName = call->resolvedMangledName;
-            auto fnIt = functions_.find(targetName);
-            if (fnIt != functions_.end() &&
-                sretFunctions_.count(targetName) > 0) {
-              std::vector<llvm::Value *> callArgs;
-              for (auto &arg : call->args) {
-                callArgs.push_back(generateExpression(std::move(arg)));
-              }
-              callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
-              if (emitSretCall(fnIt->second, targetName, callArgs, lhsPtr)) {
-                lateUninitialized_.erase(lateIt);
-                return lhsPtr;
-              }
-            }
+          if (targetType && targetType->isStructTy() &&
+              emitSretCallInto(call, lhsPtr, targetType)) {
+            lateUninitialized_.erase(lateIt);
+            return lhsPtr;
           }
         }
       }
@@ -6902,21 +6969,9 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
       bool emitted = false;
       if (emitConstructorInto(call, currentSretPtr_, currentSretType_)) {
         emitted = true;
-      } else {
-        std::string targetName = call->resolvedMangledName;
-        auto fnIt = functions_.find(targetName);
-        if (fnIt != functions_.end() &&
-            sretFunctions_.count(targetName) > 0) {
-          std::vector<llvm::Value *> callArgs;
-          for (auto &arg : call->args) {
-            callArgs.push_back(generateExpression(std::move(arg)));
-          }
-          callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
-          if (emitSretCall(fnIt->second, targetName, callArgs,
-                           currentSretPtr_)) {
-            emitted = true;
-          }
-        }
+      } else if (emitSretCallInto(call, currentSretPtr_,
+                                   currentSretType_)) {
+        emitted = true;
       }
       if (emitted) {
         emitCombinedCleanup(0, 0, false);
