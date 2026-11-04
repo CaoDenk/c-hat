@@ -1150,8 +1150,27 @@ normal_var_path:
   } else {
     // 对于非切片类型，正常处理
     if (varDecl->initializer) {
+      ast::CallExpr *pendingCall = nullptr;
+      if (varType->isStructTy()) {
+        if (auto *call =
+                dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
+          pendingSretDestinations_[call] = alloca;
+          pendingCall = call;
+        }
+      }
       llvm::Value *initValue =
           generateExpression(std::move(varDecl->initializer));
+      bool constructedInPlace =
+          pendingCall &&
+          pendingSretDestinations_.count(pendingCall) == 0;
+      if (pendingCall) {
+        pendingSretDestinations_.erase(pendingCall);
+      }
+      if (constructedInPlace) {
+        namedValues_[varDecl->name] = alloca;
+        maybeRegisterDestructor(varDecl.get(), alloca);
+        return alloca;
+      }
 
       // 检查是否是数组初始化表达式返回的切片结构体指针
       if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(initValue)) {
@@ -1385,6 +1404,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   deferStatements_.clear();
   lateVariables_.clear();
   lateUninitialized_.clear();
+  pendingSretDestinations_.clear();
 
   size_t paramIndex = 0;
   auto argIt = function->args().begin();
@@ -1845,6 +1865,8 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   deferStatements_.clear();
     lateVariables_.clear();
     lateUninitialized_.clear();
+  pendingSretDestinations_.clear();
+    pendingSretDestinations_.clear();
 
     size_t paramIndex = 0;
     auto argIt = function->args().begin();
@@ -2649,6 +2671,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   deferStatements_.clear();
     lateVariables_.clear();
   lateUninitialized_.clear();
+  pendingSretDestinations_.clear();
 
     auto prevClassName = currentClassName_;
     currentClassName_ = className;
@@ -4586,9 +4609,26 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
       }
     }
 
+    ast::CallExpr *pendingCall = nullptr;
+    if (targetType && targetType->isStructTy()) {
+      if (auto *call =
+              dynamic_cast<ast::CallExpr *>(binaryExpr->right.get())) {
+        pendingSretDestinations_[call] = lhsPtr;
+        pendingCall = call;
+      }
+    }
+
     llvm::Value *rhs = generateExpression(std::move(binaryExpr->right));
     if (!rhs) {
       return nullptr;
+    }
+    bool assignedInPlace =
+        pendingCall && pendingSretDestinations_.count(pendingCall) == 0;
+    if (pendingCall) {
+      pendingSretDestinations_.erase(pendingCall);
+    }
+    if (assignedInPlace) {
+      return lhsPtr;
     }
 
     if (!targetType && lhsPtr->getType()->isPointerTy()) {
@@ -5368,8 +5408,14 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             interfaceSret ? llvm::Type::getVoidTy(context()) : returnType,
             paramTypes, false);
         if (interfaceSret) {
-          llvm::Value *slot =
-              createEntryAlloca(returnType, "iface.sret");
+          llvm::Value *slot = nullptr;
+          auto pendingIt = pendingSretDestinations_.find(callExpr.get());
+          if (pendingIt != pendingSretDestinations_.end()) {
+            slot = pendingIt->second;
+            pendingSretDestinations_.erase(pendingIt);
+          } else {
+            slot = createEntryAlloca(returnType, "iface.sret");
+          }
           std::vector<llvm::Value *> sretArgs;
           sretArgs.push_back(slot);
           sretArgs.insert(sretArgs.end(), args.begin(), args.end());
@@ -5422,8 +5468,15 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
             auto sretTypeIt = sretReturnTypes_.find(signatureName);
             if (sretFunctions_.count(signatureName) > 0 &&
                 sretTypeIt != sretReturnTypes_.end()) {
-              llvm::Value *slot =
-                  createEntryAlloca(sretTypeIt->second, "vcall.sret");
+              llvm::Value *slot = nullptr;
+              auto pendingIt =
+                  pendingSretDestinations_.find(callExpr.get());
+              if (pendingIt != pendingSretDestinations_.end()) {
+                slot = pendingIt->second;
+                pendingSretDestinations_.erase(pendingIt);
+              } else {
+                slot = createEntryAlloca(sretTypeIt->second, "vcall.sret");
+              }
               std::vector<llvm::Value *> sretArgs;
               sretArgs.push_back(slot);
               sretArgs.insert(sretArgs.end(), args.begin(), args.end());
@@ -7012,6 +7065,12 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
   }
 
   if (returnStmt->expr) {
+    if (currentSretPtr_) {
+      if (auto *call =
+              dynamic_cast<ast::CallExpr *>(returnStmt->expr.get())) {
+        pendingSretDestinations_[call] = currentSretPtr_;
+      }
+    }
     llvm::Value *retVal = generateExpression(std::move(returnStmt->expr));
     if (!retVal) {
       return nullptr;

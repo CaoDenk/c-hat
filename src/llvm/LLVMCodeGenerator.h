@@ -407,6 +407,8 @@ private:
   std::unordered_map<std::string, llvm::Type *> sretReturnTypes_;
   llvm::Value *currentSretPtr_ = nullptr;
   llvm::Type *currentSretType_ = nullptr;
+  std::unordered_map<const ast::CallExpr *, llvm::Value *>
+      pendingSretDestinations_;
   std::unordered_set<std::string> lateUninitialized_;
 
   // 协程状态
