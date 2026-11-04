@@ -2192,6 +2192,30 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
               {fieldIndex, fieldArrayDims,
                fieldClassName + "_~" + fieldClassName});
         }
+
+        // 字段默认构造：AST/语义能确定 class 类型时记录，生成时再确认
+        // 构造函数确实存在，避免把无默认构造的类型当作可构造。
+        if (!fieldClassName.empty()) {
+          bool hasDefaultCtor = false;
+          if (semanticModel_) {
+            auto fieldType = semanticModel_->getDeclarationType(varDecl);
+            while (auto fieldArray =
+                       std::dynamic_pointer_cast<types::ArrayType>(fieldType)) {
+              fieldType = fieldArray->getElementType();
+            }
+            if (auto fieldClass =
+                    std::dynamic_pointer_cast<types::ClassType>(fieldType)) {
+              const auto *constructor =
+                  fieldClass->getMethod(fieldClass->getName());
+              hasDefaultCtor =
+                  constructor && constructor->paramTypes.empty();
+            }
+          }
+          (void)hasDefaultCtor;
+          classFieldConstructors_[classDecl->name].push_back(
+              {fieldIndex, fieldArrayDims,
+               fieldClassName + "_" + fieldClassName});
+        }
       }
     } else if (auto *funcDecl =
                    dynamic_cast<ast::FunctionDecl *>(member.get())) {
@@ -2456,6 +2480,49 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         llvm::Value *vtablePtr =
             builder()->CreateBitCast(vtableIt->second, ptrType, "vtable.ptr");
         builder()->CreateStore(vtablePtr, vptrField);
+      }
+
+      auto fieldsIt = classFieldConstructors_.find(className);
+      if (fieldsIt != classFieldConstructors_.end()) {
+        for (const auto &field : fieldsIt->second) {
+          auto ctorIt = functions_.find(field.destructorName);
+          if (ctorIt == functions_.end() ||
+              ctorIt->second->arg_size() != 1) {
+            continue;
+          }
+          llvm::Value *fieldPtr = builder()->CreateStructGEP(
+              structTypes_[className], thisArg, field.fieldIndex,
+              "field.ctor.ptr");
+          if (!field.arrayDims.empty()) {
+            llvm::Type *fieldType =
+                structTypes_[className]->getElementType(field.fieldIndex);
+            std::vector<unsigned> indices(field.arrayDims.size(), 0);
+            bool done = false;
+            while (!done) {
+              std::vector<llvm::Value *> gepIndices;
+              gepIndices.push_back(llvm::ConstantInt::get(
+                  llvm::Type::getInt32Ty(context()), 0));
+              for (unsigned index : indices) {
+                gepIndices.push_back(llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(context()), index));
+              }
+              llvm::Value *elementPtr = builder()->CreateGEP(
+                  fieldType, fieldPtr, gepIndices, "field.ctor.elem");
+              builder()->CreateCall(ctorIt->second, {elementPtr});
+
+              done = true;
+              for (size_t dim = indices.size(); dim > 0; --dim) {
+                if (++indices[dim - 1] < field.arrayDims[dim - 1]) {
+                  done = false;
+                  break;
+                }
+                indices[dim - 1] = 0;
+              }
+            }
+          } else {
+            builder()->CreateCall(ctorIt->second, {fieldPtr});
+          }
+        }
       }
     }
 

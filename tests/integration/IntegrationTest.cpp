@@ -1046,6 +1046,44 @@ TEST_CASE("Integration: interface values", "[integration][class][interface]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: class field constructors", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder {\n"
+      "    public Part p;\n"
+      "    public Holder() { value = value + 10; }\n"
+      "}\n"
+      "func main() -> int { Holder h = Holder(); return value; }\n") == 11);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder { public Part p; }\n"
+      "func main() -> int {\n"
+      "    { Holder h = Holder(); }\n"
+      "    return value;\n"
+      "}\n") == 1);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder { public Part[2][3] p; }\n"
+      "func main() -> int {\n"
+      "    { Holder h = Holder(); }\n"
+      "    return value;\n"
+      "}\n") == 6);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class A { public A() { value = value + 1; } }\n"
+      "class B : A { }\n"
+      "func main() -> int {\n"
+      "    { B b = B(); }\n"
+      "    return value;\n"
+      "}\n") == 1);
+}
+
 TEST_CASE("Integration: class field destructors", "[integration][class][raii]") {
   REQUIRE(compileAndRun(
       "var value = 0;\n"

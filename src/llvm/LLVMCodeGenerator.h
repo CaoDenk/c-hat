@@ -356,6 +356,8 @@ private:
   };
   std::unordered_map<std::string, std::vector<ClassFieldDestructor>>
       classFieldDestructors_;
+  std::unordered_map<std::string, std::vector<ClassFieldDestructor>>
+      classFieldConstructors_;
   std::unordered_map<std::string, std::vector<std::string>>
       interfaceBaseNames_;
 

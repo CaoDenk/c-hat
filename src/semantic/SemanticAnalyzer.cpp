@@ -1555,6 +1555,66 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     }
   }
 
+  // 字段或基类需要默认构造但类没有显式构造函数时，合成一个空构造函数。
+  if (!classType->hasMethod(classDecl->name)) {
+    auto hasDefaultConstructor = [](const std::shared_ptr<types::ClassType> &type) {
+      if (!type) {
+        return false;
+      }
+      const auto *constructor = type->getMethod(type->getName());
+      return constructor && constructor->paramTypes.empty();
+    };
+
+    bool needsConstructor = false;
+    for (const auto &[fieldName, field] : classType->getFields()) {
+      (void)fieldName;
+      auto fieldType = field.type;
+      if (auto fieldClass =
+              std::dynamic_pointer_cast<types::ClassType>(fieldType)) {
+        if (hasDefaultConstructor(fieldClass)) {
+          needsConstructor = true;
+          break;
+        }
+      } else if (std::dynamic_pointer_cast<types::ArrayType>(fieldType)) {
+        while (auto fieldArray =
+                   std::dynamic_pointer_cast<types::ArrayType>(fieldType)) {
+          fieldType = fieldArray->getElementType();
+        }
+        auto elementClass =
+            std::dynamic_pointer_cast<types::ClassType>(fieldType);
+        if (hasDefaultConstructor(elementClass)) {
+          needsConstructor = true;
+          break;
+        }
+      }
+    }
+    if (!needsConstructor) {
+      for (const auto &base : classType->getBaseClasses()) {
+        if (hasDefaultConstructor(base)) {
+          needsConstructor = true;
+          break;
+        }
+      }
+    }
+
+    if (needsConstructor) {
+      auto constructorDecl = std::make_unique<ast::FunctionDecl>(
+          "public", classDecl->name,
+          std::vector<std::unique_ptr<ast::Node>>(),
+          std::vector<std::unique_ptr<ast::Node>>(), nullptr, nullptr, nullptr,
+          std::make_unique<ast::CompoundStmt>());
+      constructorDecl->modulePrefix = classDecl->modulePrefix;
+      auto *constructorPtr = constructorDecl.get();
+      classDecl->members.push_back(std::move(constructorDecl));
+      analyzeFunctionDecl(constructorPtr, classType);
+      classType->addMethod(types::ClassMethod(
+          classDecl->name,
+          types::TypeFactory::getPrimitiveType(
+              types::PrimitiveType::Kind::Void),
+          {}, false, false, types::AccessModifier::Public, false));
+    }
+  }
+
   // 字段或基类需要析构但类没有显式析构函数时，合成一个空析构函数，
   // 让 codegen 的字段/基类析构链有入口。
   if (!classType->hasMethod("~" + classDecl->name)) {
