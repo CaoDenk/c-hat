@@ -75,6 +75,7 @@ public:
 - 构造函数可以重载（参数列表不同）。
 - `new Person("Alice", 30)` 会查找 `Person` 的构造函数。
 - class 字段会在构造函数体之前按声明顺序调用默认构造函数，支持多维数组字段。
+- class 字段支持显式初始化器 `int x = 40;`，在构造函数体之前执行。
 - 字段或基类需要默认构造而类没有显式构造函数时，会自动合成构造函数。
 
 ### 2.2 析构函数是 `~ClassName()`
@@ -405,7 +406,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 64 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 65 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 

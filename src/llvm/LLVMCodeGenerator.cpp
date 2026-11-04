@@ -2212,9 +2212,18 @@ llvm::Value *LLVMCodeGenerator::generateClassDecl(
             }
           }
           (void)hasDefaultCtor;
-          classFieldConstructors_[classDecl->name].push_back(
-              {fieldIndex, fieldArrayDims,
-               fieldClassName + "_" + fieldClassName});
+          if (!varDecl->initializer) {
+            classFieldConstructors_[classDecl->name].push_back(
+                {fieldIndex, fieldArrayDims,
+                 fieldClassName + "_" + fieldClassName});
+          }
+        }
+
+        if (varDecl->initializer) {
+          if (auto cloned = varDecl->initializer->clone()) {
+            classFieldInitializers_[classDecl->name].push_back(
+                {fieldIndex, std::move(cloned)});
+          }
         }
       }
     } else if (auto *funcDecl =
@@ -2480,6 +2489,43 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
         llvm::Value *vtablePtr =
             builder()->CreateBitCast(vtableIt->second, ptrType, "vtable.ptr");
         builder()->CreateStore(vtablePtr, vptrField);
+      }
+
+      auto initializersIt = classFieldInitializers_.find(className);
+      if (initializersIt != classFieldInitializers_.end()) {
+        for (const auto &field : initializersIt->second) {
+          llvm::Value *fieldPtr = builder()->CreateStructGEP(
+              structTypes_[className], thisArg, field.fieldIndex,
+              "field.init.ptr");
+          llvm::Type *fieldType =
+              structTypes_[className]->getElementType(field.fieldIndex);
+          if (auto *arrayInit =
+                  dynamic_cast<ast::ArrayInitExpr *>(field.expression.get())) {
+            if (fieldType->isArrayTy()) {
+              emitArrayLiteralInitialization(
+                  llvm::cast<llvm::ArrayType>(fieldType), fieldPtr, arrayInit);
+              continue;
+            }
+          }
+          if (auto value = generateExpression(field.expression->clone())) {
+            if (value->getType() != fieldType) {
+              if (fieldType->isIntegerTy() &&
+                  value->getType()->isIntegerTy()) {
+                value = builder()->CreateIntCast(value, fieldType, true,
+                                                 "field.init.cast");
+              } else if (fieldType->isFloatingPointTy() &&
+                         value->getType()->isIntegerTy()) {
+                value = builder()->CreateSIToFP(value, fieldType,
+                                                "field.init.cast");
+              } else if (fieldType->isIntegerTy() &&
+                         value->getType()->isFloatingPointTy()) {
+                value = builder()->CreateFPToSI(value, fieldType,
+                                                "field.init.cast");
+              }
+            }
+            builder()->CreateStore(value, fieldPtr);
+          }
+        }
       }
 
       auto fieldsIt = classFieldConstructors_.find(className);

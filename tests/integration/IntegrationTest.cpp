@@ -1046,6 +1046,26 @@ TEST_CASE("Integration: interface values", "[integration][class][interface]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: class field initializers", "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "class C {\n"
+      "    public int x = 40;\n"
+      "    public int y = 2;\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    C c = C();\n"
+      "    return c.x + c.y;\n"
+      "}\n") == 42);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class C {\n"
+      "    public int x = 40;\n"
+      "    public C() { value = x; }\n"
+      "}\n"
+      "func main() -> int { C c = C(); return value + c.x - 38; }\n") == 42);
+}
+
 TEST_CASE("Integration: class field constructors", "[integration][class]") {
   REQUIRE(compileAndRun(
       "var value = 0;\n"

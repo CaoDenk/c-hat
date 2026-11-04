@@ -358,6 +358,12 @@ private:
       classFieldDestructors_;
   std::unordered_map<std::string, std::vector<ClassFieldDestructor>>
       classFieldConstructors_;
+  struct ClassFieldInitializer {
+    unsigned fieldIndex = 0;
+    std::unique_ptr<ast::Expression> expression;
+  };
+  std::unordered_map<std::string, std::vector<ClassFieldInitializer>>
+      classFieldInitializers_;
   std::unordered_map<std::string, std::vector<std::string>>
       interfaceBaseNames_;
 

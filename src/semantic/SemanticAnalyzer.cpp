@@ -1566,7 +1566,19 @@ void SemanticAnalyzer::analyzeClassDecl(ast::ClassDecl *classDecl) {
     };
 
     bool needsConstructor = false;
+    for (auto &member : classDecl->members) {
+      if (auto *fieldDecl = dynamic_cast<ast::VariableDecl *>(member.get())) {
+        if (fieldDecl->initializer &&
+            fieldDecl->specifiers.find("static") == std::string::npos) {
+          needsConstructor = true;
+          break;
+        }
+      }
+    }
     for (const auto &[fieldName, field] : classType->getFields()) {
+      if (needsConstructor) {
+        break;
+      }
       (void)fieldName;
       auto fieldType = field.type;
       if (auto fieldClass =
