@@ -714,6 +714,44 @@ llvm::Value *LLVMCodeGenerator::generateGlobalVariableDecl(
   return global;
 }
 
+bool LLVMCodeGenerator::functionUsesSret(
+    ast::FunctionDecl *funcDecl) const {
+  if (!semanticModel_ || !funcDecl || !funcDecl->body) {
+    return false;
+  }
+  if (funcDecl->specifiers.find("extern") != std::string::npos) {
+    return false;
+  }
+  if (!funcDecl->returnType) {
+    return false;
+  }
+  auto returnType = semanticModel_->getTypeNodeType(
+      dynamic_cast<ast::Type *>(funcDecl->returnType.get()));
+  return returnType && returnType->isClass();
+}
+
+llvm::Value *LLVMCodeGenerator::emitSretCall(
+    llvm::Function *function, const std::string &functionName,
+    std::vector<llvm::Value *> args, llvm::Value *destination) {
+  auto typeIt = sretReturnTypes_.find(functionName);
+  if (!function || typeIt == sretReturnTypes_.end()) {
+    return nullptr;
+  }
+  llvm::Type *returnType = typeIt->second;
+  llvm::Value *slot = destination;
+  if (!slot) {
+    slot = createEntryAlloca(returnType, "sret.tmp");
+  }
+  std::vector<llvm::Value *> callArgs;
+  callArgs.push_back(slot);
+  callArgs.insert(callArgs.end(), args.begin(), args.end());
+  builder()->CreateCall(function, callArgs);
+  if (destination) {
+    return slot;
+  }
+  return builder()->CreateLoad(returnType, slot, "sret.value");
+}
+
 bool LLVMCodeGenerator::emitConstructorInto(ast::CallExpr *call,
                                              llvm::Value *dest,
                                              llvm::Type *destType) {
@@ -920,6 +958,27 @@ normal_var_path:
       if (callee && structTypes_.count(callee->name) > 0 &&
           functions_.count(callee->name + "_" + callee->name) > 0) {
         if (emitConstructorInto(call, alloca, varType)) {
+          namedValues_[varDecl->name] = alloca;
+          maybeRegisterDestructor(varDecl.get(), alloca);
+          return alloca;
+        }
+      }
+    }
+  }
+
+  // 返回值使用 sret 的工厂调用：直接构造到目标存储。
+  if (varDecl->initializer && varType->isStructTy()) {
+    if (auto *call = dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
+      std::string targetName = call->resolvedMangledName;
+      auto fnIt = functions_.find(targetName);
+      if (fnIt != functions_.end() &&
+          sretFunctions_.count(targetName) > 0) {
+        std::vector<llvm::Value *> callArgs;
+        for (auto &arg : call->args) {
+          callArgs.push_back(generateExpression(std::move(arg)));
+        }
+        callArgs = coerceCallArguments(fnIt->second, callArgs);
+        if (emitSretCall(fnIt->second, targetName, callArgs, alloca)) {
           namedValues_[varDecl->name] = alloca;
           maybeRegisterDestructor(varDecl.get(), alloca);
           return alloca;
@@ -1490,8 +1549,16 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
     }
   }
 
+  bool usesSret = functionUsesSret(funcDecl);
+  llvm::Type *llvmReturnType =
+      usesSret ? llvm::Type::getVoidTy(context()) : returnType;
+  std::vector<llvm::Type *> llvmParamTypes = paramTypes;
+  if (usesSret) {
+    llvmParamTypes.insert(llvmParamTypes.begin(),
+                          llvm::PointerType::getUnqual(context()));
+  }
   llvm::FunctionType *funcType =
-      llvm::FunctionType::get(returnType, paramTypes, isVariadic);
+      llvm::FunctionType::get(llvmReturnType, llvmParamTypes, isVariadic);
 
   // 为了支持重载，生成带参数类型的函数名
   std::string uniqueFuncName;
@@ -1560,6 +1627,11 @@ void LLVMCodeGenerator::createFunctionPrototype(ast::FunctionDecl *funcDecl) {
     if (!semanticName.empty()) {
       uniqueFuncName = semanticName;
     }
+  }
+
+  if (usesSret) {
+    sretFunctions_.insert(uniqueFuncName);
+    sretReturnTypes_[uniqueFuncName] = returnType;
   }
 
   llvm::Function *function = llvm::Function::Create(
@@ -1691,11 +1763,21 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   tryCleanupMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
-  lateUninitialized_.clear();
     lateUninitialized_.clear();
 
     size_t paramIndex = 0;
     auto argIt = function->args().begin();
+    currentSretPtr_ = nullptr;
+    currentSretType_ = nullptr;
+    bool usesSret = sretFunctions_.count(uniqueFuncName) > 0;
+    if (usesSret && argIt != function->args().end()) {
+      currentSretPtr_ = &(*argIt++);
+      currentSretPtr_->setName("sret");
+      auto typeIt = sretReturnTypes_.find(uniqueFuncName);
+      if (typeIt != sretReturnTypes_.end()) {
+        currentSretType_ = typeIt->second;
+      }
+    }
     for (auto &paramNode : funcDecl->params) {
       if (auto *param = dynamic_cast<ast::Parameter *>(
               funcDecl->params[paramIndex].get())) {
@@ -2823,6 +2905,8 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     currentFunction_ = prevFunction;
     currentClassName_ = prevClassName;
+    currentSretPtr_ = nullptr;
+    currentSretType_ = nullptr;
     deferExpressions_.clear();
     deferFlags_.clear();
   deferSequence_.clear();
@@ -4389,6 +4473,22 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
             lateUninitialized_.erase(lateIt);
             return lhsPtr;
           }
+          if (targetType && targetType->isStructTy()) {
+            std::string targetName = call->resolvedMangledName;
+            auto fnIt = functions_.find(targetName);
+            if (fnIt != functions_.end() &&
+                sretFunctions_.count(targetName) > 0) {
+              std::vector<llvm::Value *> callArgs;
+              for (auto &arg : call->args) {
+                callArgs.push_back(generateExpression(std::move(arg)));
+              }
+              callArgs = coerceCallArguments(fnIt->second, callArgs);
+              if (emitSretCall(fnIt->second, targetName, callArgs, lhsPtr)) {
+                lateUninitialized_.erase(lateIt);
+                return lhsPtr;
+              }
+            }
+          }
         }
       }
     }
@@ -5338,6 +5438,12 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     auto it = functions_.find(callExpr->resolvedMangledName);
     if (it != functions_.end()) {
       auto callArgs = coerceCallArguments(it->second, args);
+      if (sretFunctions_.count(callExpr->resolvedMangledName) > 0) {
+        auto *value = emitSretCall(it->second,
+                                   callExpr->resolvedMangledName, callArgs);
+        registerOutDestructors(it->second, outArgNames);
+        return value;
+      }
       auto *call = builder()->CreateCall(it->second, callArgs);
       registerOutDestructors(it->second, outArgNames);
       return call;
@@ -5382,6 +5488,11 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
     auto callArgs = coerceCallArguments(it->second, args);
+    if (sretFunctions_.count(mangledName) > 0) {
+      auto *value = emitSretCall(it->second, mangledName, callArgs);
+      registerOutDestructors(it->second, outArgNames);
+      return value;
+    }
     auto *call = builder()->CreateCall(it->second, callArgs);
     registerOutDestructors(it->second, outArgNames);
     return call;
@@ -5391,6 +5502,11 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   it = functions_.find(funcName);
   if (it != functions_.end()) {
     auto callArgs = coerceCallArguments(it->second, args);
+    if (sretFunctions_.count(funcName) > 0) {
+      auto *value = emitSretCall(it->second, funcName, callArgs);
+      registerOutDestructors(it->second, outArgNames);
+      return value;
+    }
     auto *call = builder()->CreateCall(it->second, callArgs);
     registerOutDestructors(it->second, outArgNames);
     return call;
@@ -6738,6 +6854,38 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
     }
   };
 
+  // sret 返回：若返回表达式本身是构造或 sret 工厂调用，直接构造到返回槽。
+  if (returnStmt->expr && currentSretPtr_ && currentSretType_) {
+    if (auto *call =
+            dynamic_cast<ast::CallExpr *>(returnStmt->expr.get())) {
+      bool emitted = false;
+      if (emitConstructorInto(call, currentSretPtr_, currentSretType_)) {
+        emitted = true;
+      } else {
+        std::string targetName = call->resolvedMangledName;
+        auto fnIt = functions_.find(targetName);
+        if (fnIt != functions_.end() &&
+            sretFunctions_.count(targetName) > 0) {
+          std::vector<llvm::Value *> callArgs;
+          for (auto &arg : call->args) {
+            callArgs.push_back(generateExpression(std::move(arg)));
+          }
+          callArgs = coerceCallArguments(fnIt->second, callArgs);
+          if (emitSretCall(fnIt->second, targetName, callArgs,
+                           currentSretPtr_)) {
+            emitted = true;
+          }
+        }
+      }
+      if (emitted) {
+        emitCombinedCleanup(0, 0, false);
+        restoreExceptionHandlers();
+        builder()->CreateRetVoid();
+        return nullptr;
+      }
+    }
+  }
+
   if (returnStmt->expr) {
     llvm::Value *retVal = generateExpression(std::move(returnStmt->expr));
     if (!retVal) {
@@ -6775,6 +6923,26 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
                                                 "ret.iface.table");
         retVal = fatValue;
       }
+    }
+
+    // sret 返回：把返回值写入隐藏返回槽，函数本身返回 void。
+    if (currentSretPtr_ && currentSretType_) {
+      llvm::Value *storeValue = retVal;
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(retVal)) {
+        if (alloca->getAllocatedType() == currentSretType_) {
+          storeValue = builder()->CreateLoad(currentSretType_, alloca,
+                                             "ret.sret.value");
+        }
+      }
+      if (storeValue->getType() == currentSretType_) {
+        builder()->CreateStore(storeValue, currentSretPtr_);
+      } else {
+        error("Return value type does not match sret type");
+      }
+      emitCombinedCleanup(0, 0, false);
+      restoreExceptionHandlers();
+      builder()->CreateRetVoid();
+      return nullptr;
     }
 
     if (returnType->isVoidTy()) {

@@ -79,6 +79,11 @@ private:
   llvm::Value *generateVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   bool emitConstructorInto(ast::CallExpr *call, llvm::Value *dest,
                            llvm::Type *destType);
+  bool functionUsesSret(ast::FunctionDecl *funcDecl) const;
+  llvm::Value *emitSretCall(llvm::Function *function,
+                            const std::string &functionName,
+                            std::vector<llvm::Value *> args,
+                            llvm::Value *destination = nullptr);
   llvm::Value *
   generateGlobalVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   llvm::Value *generateTupleDestructuringDecl(
@@ -395,6 +400,10 @@ private:
     ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableInfo> lateVariables_;
+  std::unordered_set<std::string> sretFunctions_;
+  std::unordered_map<std::string, llvm::Type *> sretReturnTypes_;
+  llvm::Value *currentSretPtr_ = nullptr;
+  llvm::Type *currentSretType_ = nullptr;
   std::unordered_set<std::string> lateUninitialized_;
 
   // 协程状态
