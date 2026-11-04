@@ -722,6 +722,10 @@ bool LLVMCodeGenerator::functionUsesSret(
   if (funcDecl->specifiers.find("extern") != std::string::npos) {
     return false;
   }
+  if (funcDecl->specifiers.find("virtual") != std::string::npos ||
+      funcDecl->specifiers.find("override") != std::string::npos) {
+    return false;
+  }
   if (!funcDecl->returnType) {
     return false;
   }
@@ -977,7 +981,7 @@ normal_var_path:
         for (auto &arg : call->args) {
           callArgs.push_back(generateExpression(std::move(arg)));
         }
-        callArgs = coerceCallArguments(fnIt->second, callArgs);
+        callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
         if (emitSretCall(fnIt->second, targetName, callArgs, alloca)) {
           namedValues_[varDecl->name] = alloca;
           maybeRegisterDestructor(varDecl.get(), alloca);
@@ -2516,8 +2520,17 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
     }
   }
 
+  bool usesSret =
+      !isConstructor && !isDestructor && functionUsesSret(funcDecl.get());
+  llvm::Type *llvmReturnType =
+      usesSret ? llvm::Type::getVoidTy(context()) : returnType;
+  std::vector<llvm::Type *> llvmParamTypes = paramTypes;
+  if (usesSret) {
+    llvmParamTypes.insert(llvmParamTypes.begin(),
+                          llvm::PointerType::getUnqual(context()));
+  }
   llvm::FunctionType *funcType =
-      llvm::FunctionType::get(returnType, paramTypes, false);
+      llvm::FunctionType::get(llvmReturnType, llvmParamTypes, false);
 
   std::string mangledName = className + "_" + funcDecl->name;
   llvm::Function *function = module()->getFunction(mangledName);
@@ -2528,6 +2541,11 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   if (!function) {
     function = llvm::Function::Create(
         funcType, llvm::Function::ExternalLinkage, mangledName, module());
+  }
+
+  if (usesSret) {
+    sretFunctions_.insert(mangledName);
+    sretReturnTypes_[mangledName] = returnType;
   }
 
   if (funcDecl->body) {
@@ -2560,6 +2578,13 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     // 处理 self 指针（静态方法没有 self）。
     auto argIt = function->args().begin();
+    currentSretPtr_ = nullptr;
+    currentSretType_ = nullptr;
+    if (usesSret && argIt != function->args().end()) {
+      currentSretPtr_ = &(*argIt++);
+      currentSretPtr_->setName("sret");
+      currentSretType_ = returnType;
+    }
     llvm::Value *thisArg = nullptr;
     if (!funcDecl->isStatic) {
       thisArg = &(*argIt++);
@@ -2905,6 +2930,8 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
 
     currentFunction_ = prevFunction;
     currentClassName_ = prevClassName;
+    currentSretPtr_ = nullptr;
+    currentSretType_ = nullptr;
     currentSretPtr_ = nullptr;
     currentSretType_ = nullptr;
     deferExpressions_.clear();
@@ -4482,7 +4509,7 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
               for (auto &arg : call->args) {
                 callArgs.push_back(generateExpression(std::move(arg)));
               }
-              callArgs = coerceCallArguments(fnIt->second, callArgs);
+              callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
               if (emitSretCall(fnIt->second, targetName, callArgs, lhsPtr)) {
                 lateUninitialized_.erase(lateIt);
                 return lhsPtr;
@@ -5080,12 +5107,15 @@ llvm::Value *LLVMCodeGenerator::coerceCallArgument(llvm::Value *arg,
 }
 
 std::vector<llvm::Value *> LLVMCodeGenerator::coerceCallArguments(
-    llvm::Function *func, std::vector<llvm::Value *> args) {
+    llvm::Function *func, std::vector<llvm::Value *> args,
+    size_t argOffset) {
   if (!func) {
     return args;
   }
-  for (size_t i = 0; i < args.size() && i < func->arg_size(); ++i) {
-    args[i] = coerceCallArgument(args[i], func->getArg(i)->getType());
+  for (size_t i = 0; i < args.size() && i + argOffset < func->arg_size();
+       ++i) {
+    args[i] = coerceCallArgument(args[i],
+                                 func->getArg(i + argOffset)->getType());
   }
   return args;
 }
@@ -5330,6 +5360,10 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
       it = functions_.find(ownerClass + "_" + member->member);
     }
     if (it != functions_.end()) {
+      if (sretFunctions_.count(it->first) > 0) {
+        auto sretArgs = coerceCallArguments(it->second, args, 1);
+        return emitSretCall(it->second, it->first, sretArgs);
+      }
       if (it->second->getReturnType()->isVoidTy()) {
         return builder()->CreateCall(it->second, args);
       }
@@ -5339,6 +5373,10 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
     // 扩展方法/普通函数回退：把对象作为第一个参数
     it = functions_.find(member->member);
     if (it != functions_.end()) {
+      if (sretFunctions_.count(it->first) > 0) {
+        auto sretArgs = coerceCallArguments(it->second, args);
+        return emitSretCall(it->second, it->first, sretArgs);
+      }
       if (it->second->getReturnType()->isVoidTy()) {
         return builder()->CreateCall(it->second, args);
       }
@@ -5437,8 +5475,9 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   if (!callExpr->resolvedMangledName.empty()) {
     auto it = functions_.find(callExpr->resolvedMangledName);
     if (it != functions_.end()) {
-      auto callArgs = coerceCallArguments(it->second, args);
-      if (sretFunctions_.count(callExpr->resolvedMangledName) > 0) {
+      bool isSret = sretFunctions_.count(callExpr->resolvedMangledName) > 0;
+      auto callArgs = coerceCallArguments(it->second, args, isSret ? 1 : 0);
+      if (isSret) {
         auto *value = emitSretCall(it->second,
                                    callExpr->resolvedMangledName, callArgs);
         registerOutDestructors(it->second, outArgNames);
@@ -5487,8 +5526,9 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   // 用 LLVM 类型 mangled 名查找
   auto it = functions_.find(mangledName);
   if (it != functions_.end()) {
-    auto callArgs = coerceCallArguments(it->second, args);
-    if (sretFunctions_.count(mangledName) > 0) {
+    bool isSret = sretFunctions_.count(mangledName) > 0;
+    auto callArgs = coerceCallArguments(it->second, args, isSret ? 1 : 0);
+    if (isSret) {
       auto *value = emitSretCall(it->second, mangledName, callArgs);
       registerOutDestructors(it->second, outArgNames);
       return value;
@@ -5501,8 +5541,9 @@ LLVMCodeGenerator::generateCallExpr(std::unique_ptr<ast::CallExpr> callExpr) {
   // 回退到简单名查找（无参函数或 extern 函数）
   it = functions_.find(funcName);
   if (it != functions_.end()) {
-    auto callArgs = coerceCallArguments(it->second, args);
-    if (sretFunctions_.count(funcName) > 0) {
+    bool isSret = sretFunctions_.count(funcName) > 0;
+    auto callArgs = coerceCallArguments(it->second, args, isSret ? 1 : 0);
+    if (isSret) {
       auto *value = emitSretCall(it->second, funcName, callArgs);
       registerOutDestructors(it->second, outArgNames);
       return value;
@@ -6870,7 +6911,7 @@ llvm::Value *LLVMCodeGenerator::generateReturnStmt(
           for (auto &arg : call->args) {
             callArgs.push_back(generateExpression(std::move(arg)));
           }
-          callArgs = coerceCallArguments(fnIt->second, callArgs);
+          callArgs = coerceCallArguments(fnIt->second, callArgs, 1);
           if (emitSretCall(fnIt->second, targetName, callArgs,
                            currentSretPtr_)) {
             emitted = true;
