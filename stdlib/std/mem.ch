@@ -17,3 +17,20 @@ public func copy(int[] dst, int[] src) -> long {
     }
     return count;
 }
+public func fill(int[] data, int value) {
+    long i = 0;
+    while (i < data.len) {
+        data[i] = value;
+        i = i + 1;
+    }
+}
+
+public func equal(int[] a, int[] b) -> bool {
+    if (a.len != b.len) { return false; }
+    long i = 0;
+    while (i < a.len) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}

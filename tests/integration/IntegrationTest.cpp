@@ -1722,6 +1722,17 @@ TEST_CASE("Integration: stdlib modules", "[integration][stdlib]") {
       stdlibDir) == 42);
 
   REQUIRE(compileAndRunWithModules(
+      "import std.mem;\n"
+      "func main() -> int {\n"
+      "    int[3] a = [0; 3];\n"
+      "    int[3] b = [7, 7, 7];\n"
+      "    fill(a, 7);\n"
+      "    if (equal(a, b)) { return 42; }\n"
+      "    return 1;\n"
+      "}\n",
+      stdlibDir) == 42);
+
+  REQUIRE(compileAndRunWithModules(
       "import std.io.Console;\n"
       "func main() -> int {\n"
       "    print_int(42);\n"

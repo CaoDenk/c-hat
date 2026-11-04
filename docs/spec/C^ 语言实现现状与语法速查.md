@@ -308,7 +308,7 @@ extern "C" {
 - `+=` / `-=` / `*=` / `++` / `--`（本次修复）
 - `extern "C"` 调用 libc（如 `puts`）
 - `import` 模块递归加载并合并到主程序；支持限定函数/变量访问 `A.foo()` / `A.g` 和别名 `X.foo()`（基础 whole-program 模式，无独立模块 ABI）
-- 标准库模块已可导入并测试：`std.core`（min/max/abs/clamp）、`std.core.Types`、`std.math.basic`、`std.mem`（zero/copy）、`std.string`（length/equal/find/starts_with/ends_with）、`std.io.Console`（println/print_int/println_int/print_bool/print_long/println_long/print_double/println_double）
+- 标准库模块已可导入并测试：`std.core`（min/max/abs/clamp）、`std.core.Types`、`std.math.basic`、`std.mem`（zero/copy/fill/equal）、`std.string`（length/equal/find/starts_with/ends_with）、`std.io.Console`（println/print_int/println_int/print_bool/print_long/println_long/print_double/println_double）
 - `new T(args)` 会把构造参数传给构造函数（本次修复）
 - 类方法调用 `p.m()` / `p->m()`、裸字段名与 `self.x` 访问（本次修复）
 - 属性 getter/setter：`public get x -> T` / `public set x(value: T)`（本次修复）
