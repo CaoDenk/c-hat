@@ -293,6 +293,7 @@ extern "C" {
 - 变量声明、算术/比较/逻辑表达式；`&&` / `||` 支持短路求值；非 `late` 局部变量必须初始化
 - 顶层 `var` 全局变量支持字面量初始化、读取和赋值
 - `late`：仅限局部变量、必须有显式类型、不能带初始化器；`late let int x;` 通过 out 首次初始化；初始化检查是变量级
+- `T x = T(...)` 直接构造到 `x`；`late T t; t = T(...)` 首次赋值直接构造到预留存储
 - `sizeof(Type)`：编译期返回 `long` 类型大小（含固定数组/POD struct）
 - 数组字面量 `[...]`：固定数组上下文生成真正的数组值；切片上下文生成视图
 - 重复数组字面量 `[value; N]`：整数字面量 N 的批量初始化（标量/指针元素；大 N 生成循环）
@@ -355,6 +356,8 @@ extern "C" {
 - 元组比较、命名元组字段访问、元组整体赋值仍未完整实现。
 - `new T[n]` 对带默认构造的 class 逐元素构造，`delete[]` 逐元素析构；POD 元素仍只分配原始内存。
 - `late int[N] a;` 必须通过整体赋值或 `out T&` 初始化；逐元素写入不视为整体初始化。
+- `late T t; t = factory()` 目前仍先接收聚合返回值再写入 `t`；完整原地构造需要后续 sret 返回 ABI。
+- 拷贝/移动构造函数尚未实现；左值 class 复制目前仍是逐值/按位复制。
 - `[value; N]` 的 N 目前只支持整数字面量；`const int N` 作为长度后续支持。
 - 引用参数/局部引用/`out T&` 已端到端可用（标量、固定数组）。
 - `out T&` 已覆盖 POD struct/class、带析构对象、out 数组元素析构和 extern C 基础调用（gettimeofday 测试）。
@@ -406,7 +409,7 @@ extern "C" {
 
 ### 单元测试覆盖
 
-现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 65 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
+现有单元测试主要验证 lexer/parser/semantic/AST 形状；`tests/integration` 已有 66 个 JIT/端到端用例（函数、循环、类、结构体、match、foreach、异常、catch 类型匹配、defer 展开、数组/切片、元组、do-while/goto/enum、属性/继承/static/析构、虚方法/接口/模块）。不要把“单测通过”等同于“端到端可用”。
 
 ### 文档里出现过、但当前实现不支持
 

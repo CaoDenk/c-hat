@@ -714,6 +714,38 @@ llvm::Value *LLVMCodeGenerator::generateGlobalVariableDecl(
   return global;
 }
 
+bool LLVMCodeGenerator::emitConstructorInto(ast::CallExpr *call,
+                                             llvm::Value *dest,
+                                             llvm::Type *destType) {
+  if (!call || !dest || !destType) {
+    return false;
+  }
+  auto *callee = dynamic_cast<ast::Identifier *>(call->callee.get());
+  if (!callee) {
+    return false;
+  }
+  auto structIt = structTypes_.find(callee->name);
+  if (structIt == structTypes_.end()) {
+    return false;
+  }
+  auto ctorIt = functions_.find(callee->name + "_" + callee->name);
+  if (ctorIt == functions_.end()) {
+    return false;
+  }
+  std::vector<llvm::Value *> ctorArgs;
+  ctorArgs.push_back(dest);
+  for (auto &arg : call->args) {
+    llvm::Value *value = generateExpression(std::move(arg));
+    if (!value) {
+      return false;
+    }
+    ctorArgs.push_back(value);
+  }
+  auto callArgs = coerceCallArguments(ctorIt->second, ctorArgs);
+  builder()->CreateCall(ctorIt->second, callArgs);
+  return true;
+}
+
 llvm::Value *LLVMCodeGenerator::generateVariableDecl(
     std::unique_ptr<ast::VariableDecl> varDecl) {
   llvm::Type *varType = nullptr;
@@ -876,6 +908,25 @@ normal_var_path:
   }
 
   llvm::AllocaInst *alloca = createEntryAlloca(varType, varDecl->name);
+
+  if (varDecl->isLate) {
+    lateUninitialized_.insert(varDecl->name);
+  }
+
+  // 直接构造到目标存储：T x = T(args) 不生成临时对象。
+  if (varDecl->initializer && varType->isStructTy()) {
+    if (auto *call = dynamic_cast<ast::CallExpr *>(varDecl->initializer.get())) {
+      auto *callee = dynamic_cast<ast::Identifier *>(call->callee.get());
+      if (callee && structTypes_.count(callee->name) > 0 &&
+          functions_.count(callee->name + "_" + callee->name) > 0) {
+        if (emitConstructorInto(call, alloca, varType)) {
+          namedValues_[varDecl->name] = alloca;
+          maybeRegisterDestructor(varDecl.get(), alloca);
+          return alloca;
+        }
+      }
+    }
+  }
 
   // 切片初始化：数组字面量、数组变量、切片变量、new T[n] 或切片区间。
   if (isSliceType && sliceElementType && varDecl->initializer) {
@@ -1193,6 +1244,7 @@ llvm::Value *LLVMCodeGenerator::generateFunctionDecl(
   tryCleanupMarkers_.clear();
   deferStatements_.clear();
   lateVariables_.clear();
+  lateUninitialized_.clear();
 
   size_t paramIndex = 0;
   auto argIt = function->args().begin();
@@ -1639,6 +1691,8 @@ llvm::Value *LLVMCodeGenerator::generateFunctionBody(
   tryCleanupMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
+  lateUninitialized_.clear();
+    lateUninitialized_.clear();
 
     size_t paramIndex = 0;
     auto argIt = function->args().begin();
@@ -2417,6 +2471,7 @@ llvm::Value *LLVMCodeGenerator::generateClassMemberFunction(
   tryCleanupMarkers_.clear();
   deferStatements_.clear();
     lateVariables_.clear();
+  lateUninitialized_.clear();
 
     auto prevClassName = currentClassName_;
     currentClassName_ = className;
@@ -4316,6 +4371,22 @@ llvm::Value *LLVMCodeGenerator::generateBinaryExpr(
                                        arrayType->getNumElements()),
                 1);
             builder()->CreateStore(sliceValue, lhsPtr);
+            return lhsPtr;
+          }
+        }
+      }
+    }
+
+    // late 变量首次赋值：若右侧是构造调用，直接在预留存储中构造。
+    // leftExpr 在上面的 getExpressionLValue 中已被移动，不能继续解引用。
+    if (!leftName.empty()) {
+      auto lateIt = lateUninitialized_.find(leftName);
+      if (lateIt != lateUninitialized_.end()) {
+        if (auto *call =
+                dynamic_cast<ast::CallExpr *>(binaryExpr->right.get())) {
+          if (targetType && targetType->isStructTy() &&
+              emitConstructorInto(call, lhsPtr, targetType)) {
+            lateUninitialized_.erase(lateIt);
             return lhsPtr;
           }
         }

@@ -77,6 +77,8 @@ private:
   llvm::Value *generateDeclaration(std::unique_ptr<ast::Declaration> decl);
 
   llvm::Value *generateVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
+  bool emitConstructorInto(ast::CallExpr *call, llvm::Value *dest,
+                           llvm::Type *destType);
   llvm::Value *
   generateGlobalVariableDecl(std::unique_ptr<ast::VariableDecl> varDecl);
   llvm::Value *generateTupleDestructuringDecl(
@@ -393,6 +395,7 @@ private:
     ast::VariableDecl *decl;
   };
   std::unordered_map<std::string, LateVariableInfo> lateVariables_;
+  std::unordered_set<std::string> lateUninitialized_;
 
   // 协程状态
   bool currentFunctionIsCoroutine_ = false;

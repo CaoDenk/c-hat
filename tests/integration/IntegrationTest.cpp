@@ -1046,6 +1046,34 @@ TEST_CASE("Integration: interface values", "[integration][class][interface]") {
       "}\n") == 42);
 }
 
+TEST_CASE("Integration: prvalue construction elision",
+          "[integration][class]") {
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder {\n"
+      "    public Part p;\n"
+      "    public Holder() { value = value + 10; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    Holder h = Holder();\n"
+      "    return value;\n"
+      "}\n") == 11);
+
+  REQUIRE(compileAndRun(
+      "var value = 0;\n"
+      "class Part { public Part() { value = value + 1; } }\n"
+      "class Holder {\n"
+      "    public Part p;\n"
+      "    public Holder() { value = value + 10; }\n"
+      "}\n"
+      "func main() -> int {\n"
+      "    late Holder h;\n"
+      "    h = Holder();\n"
+      "    return value;\n"
+      "}\n") == 11);
+}
+
 TEST_CASE("Integration: class field initializers", "[integration][class]") {
   REQUIRE(compileAndRun(
       "class C {\n"
